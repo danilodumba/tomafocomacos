@@ -121,7 +121,7 @@ Pré-requisitos: `brew install xcodegen` (e opcional `brew install swiftlint`). 
 3. ~~Validar T-20 e ADR-8 à mão~~ ✅ feito em 2026-07-22 — bloqueio de sites confirmado funcionando.
 4. ~~T-21 — fluxo de "retomar" pós-crash~~ ✅ feito em 2026-07-22: evento puro `adoptRecovered` (só a partir de ocioso, preserva `endsAt`, não bloqueia se a fase for intervalo) + `SessionCoordinator.adoptRecoveredSession` + diálogo com "Retomar"/"Encerrar e liberar" mostrando fase/ciclo/restante.
 5. **T-12** — validação manual do bloqueio de apps (app fecha < 2s). T-13 (hosts) está suspenso pelo ADR-8.
-6. **T-25** — assinatura Developer ID + notarização + DMG.
+6. **T-25** 🟡 pipeline pronto (`scripts/release.sh`, `make release`, `docs/release.md`), validado até o DMG. Falta o que só o usuário faz: assinar o Apple Developer Program, emitir o certificado *Developer ID Application* e salvar a credencial `xcrun notarytool store-credentials tomafoco`.
 7. ~~`git init`~~ ✅ feito em 2026-07-22 (branch `main`, commit inicial `d374955`).
 8. ~~Decidir o destino do código parado~~ ✅ removido em 2026-07-22.
 

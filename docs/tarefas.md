@@ -157,7 +157,10 @@ Convenções: tarefas numeradas `T-XX`, agrupadas por épico. Cada tarefa lista 
 - **Dependências:** T-18..T-22
 - **CA:** checklist executado e arquivado em `docs/qa/` a cada release.
 
-### T-25 — Assinatura, notarização e empacotamento `[M]` (RNF-06)
+### T-25 — Assinatura, notarização e empacotamento `[M]` (RNF-06) 🟡 PIPELINE PRONTO (2026-07-22)
+- `scripts/release.sh` + `make release` / `make release-dry`; passo a passo em `docs/release.md`.
+- Validado até o DMG (build Release + `codesign --options runtime --timestamp` + entitlements + DMG assinado com atalho para `/Applications`).
+- **Bloqueado nos pré-requisitos do usuário:** não há certificado *Developer ID Application* nesta máquina (exige Apple Developer Program pago) nem credencial `notarytool`. O script falha no pré-flight explicando o que fazer.
 - Developer ID Application; hardened runtime; `notarytool` + stapling; DMG de distribuição; documento passo a passo em `docs/release.md`.
 - **Dependências:** T-24
 - **CA:** DMG abre em um Mac limpo sem aviso de Gatekeeper.

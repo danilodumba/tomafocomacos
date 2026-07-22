@@ -1,5 +1,5 @@
 # Atalhos de desenvolvimento do Tomafoco.
-.PHONY: test test-domain test-application test-infra project lint open help
+.PHONY: test test-domain test-application test-infra project lint open help release release-dry
 
 help:
 	@echo "Alvos:"
@@ -8,6 +8,8 @@ help:
 	@echo "  make project        - gera Tomafoco.xcodeproj via XcodeGen"
 	@echo "  make lint           - roda SwiftLint"
 	@echo "  make open           - gera o projeto e abre no Xcode"
+	@echo "  make release        - assina, notariza e gera o DMG (ver docs/release.md)"
+	@echo "  make release-dry    - empacota sem notarizar (teste local)"
 
 test: test-domain test-application test-infra
 
@@ -28,3 +30,9 @@ lint:
 
 open: project
 	open Tomafoco.xcodeproj
+
+release:
+	./scripts/release.sh
+
+release-dry:
+	SKIP_NOTARIZE=1 ./scripts/release.sh
