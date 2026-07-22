@@ -29,8 +29,10 @@ public struct BrowserTarget: Equatable, Sendable {
 
 /// Execução de AppleScript. Port para permitir teste sem disparar Apple Events de verdade.
 public protocol AppleScriptRunning: Sendable {
-    /// Executa e devolve o texto do resultado. Lança se o script falhar (app não autorizado, etc.).
-    func run(_ source: String) throws -> String
+    /// Executa e devolve o texto do resultado.
+    /// - Parameter application: alvo do `tell application`, usado só para reportar qual app
+    ///   negou a permissão — sem isso o erro não diria ao usuário o que autorizar.
+    func run(_ source: String, targeting application: String) throws -> String
 }
 
 /// Quais apps estão rodando agora. Existe para **não lançar** navegador fechado:

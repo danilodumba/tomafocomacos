@@ -23,11 +23,11 @@ final class AppleScriptBrowserBlockerTests: XCTestCase {
 
         var redirects: [String] { executed.filter { $0.contains("set URL of tab") } }
 
-        func run(_ source: String) throws -> String {
+        func run(_ source: String, targeting application: String) throws -> String {
             lock.lock(); _executed.append(source); lock.unlock()
 
-            if let app = failingApplications.first(where: { source.contains("\"\($0)\"") }) {
-                throw PrivilegeError.executionFailed("automação negada para \(app)")
+            if failingApplications.contains(application) {
+                throw AutomationError.permissionDenied(application: application)
             }
             guard source.contains("count of windows") else { return "" }
             let app = tabListing.keys.first { source.contains("\"\($0)\"") }

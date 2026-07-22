@@ -106,7 +106,8 @@ public final class AppleScriptBrowserBlocker: WebsiteBlocking, @unchecked Sendab
     }
 
     private func redirectBlockedTabs(in browser: BrowserTarget, domains: [BlockedDomain]) throws {
-        let output = try scriptRunner.run(BrowserScript.listTabs(in: browser))
+        let output = try scriptRunner.run(
+            BrowserScript.listTabs(in: browser), targeting: browser.applicationName)
         let blocked = BrowserScript.parseTabs(output)
             .filter { URLBlockingPolicy.isBlocked(urlString: $0.url, domains: domains) }
 
@@ -114,7 +115,8 @@ public final class AppleScriptBrowserBlocker: WebsiteBlocking, @unchecked Sendab
         // no meio da operação, os índices maiores são os que ficam inválidos primeiro.
         for tab in blocked.sorted(by: { $0.tabIndex > $1.tabIndex }) {
             try scriptRunner.run(
-                BrowserScript.redirect(tab: tab, in: browser, to: blockPageURL))
+                BrowserScript.redirect(tab: tab, in: browser, to: blockPageURL),
+                targeting: browser.applicationName)
         }
     }
 }
@@ -123,28 +125,33 @@ public final class AppleScriptBrowserBlocker: WebsiteBlocking, @unchecked Sendab
 
 #if canImport(AppKit)
 import AppKit
-import Carbon
 
 /// Executa AppleScript de verdade. `NSAppleScript` exige main thread.
 public final class NSAppleScriptRunner: AppleScriptRunning {
 
     public init() {}
 
-    public func run(_ source: String) throws -> String {
-        if Thread.isMainThread { return try execute(source) }
-        return try DispatchQueue.main.sync { try execute(source) }
+    /// Código do AppleScript para "Not authorized to send Apple events to <app>".
+    private static let notAuthorizedCode = -1743
+
+    public func run(_ source: String, targeting application: String) throws -> String {
+        if Thread.isMainThread { return try execute(source, application) }
+        return try DispatchQueue.main.sync { try execute(source, application) }
     }
 
-    private func execute(_ source: String) throws -> String {
+    private func execute(_ source: String, _ application: String) throws -> String {
         var errorInfo: NSDictionary?
         guard let script = NSAppleScript(source: source) else {
-            throw PrivilegeError.executionFailed("script inválido")
+            throw AutomationError.executionFailed("script inválido")
         }
         let result = script.executeAndReturnError(&errorInfo)
         if let errorInfo {
             let code = (errorInfo["NSAppleScriptErrorNumber"] as? Int) ?? 0
+            guard code != Self.notAuthorizedCode else {
+                throw AutomationError.permissionDenied(application: application)
+            }
             let message = (errorInfo["NSAppleScriptErrorMessage"] as? String) ?? "erro \(code)"
-            throw PrivilegeError.executionFailed("AppleScript \(code): \(message)")
+            throw AutomationError.executionFailed("AppleScript \(code): \(message)")
         }
         return result.stringValue ?? ""
     }

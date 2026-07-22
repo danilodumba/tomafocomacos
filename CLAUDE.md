@@ -100,7 +100,7 @@ Como ficou:
 - Entitlement `com.apple.security.automation.apple-events` + `NSAppleEventsUsageDescription`. Usuário autoriza cada navegador uma vez (TCC).
 - **Daemon root não é mais embarcado**: target `TomafocoHelper` saiu do `project.yml`.
 
-⚠️ **Código parado (compila, testado, mas NÃO usado pelo app):** `HostsFileEditor`, `HostsFileWebsiteBlocker`, `AppleScriptPrivilegeRunner`, `XPCWebsiteBlocker`, `XPCHostsHelperClient`, `PrivilegedHelperInstaller`, `HelperReadiness` e a pasta `Helper/`. Decidir depois se remove.
+🧹 **Código do hosts/helper XPC REMOVIDO (2026-07-22, commit após o inicial).** Saíram: `Helper/` inteiro, `HostsFileEditor`, `HostsFileWebsiteBlocker`, `XPCWebsiteBlocker`, `AppleScriptPrivilegeRunner`, `HostsHelperProtocol/Client`, `PrivilegedHelperInstaller`, `HelperReadiness` e o port `PrivilegeEscalating`. `PrivilegeError` virou `AutomationError` (`permissionDenied(application:)` mapeia o erro -1743 do AppleScript, `executionFailed`). Está tudo no histórico do git se precisar voltar.
 
 **🐛 Crash corrigido no mesmo dia:** `MainActor.assumeIsolated` dentro do closure `isHelperReady` derrubava o app (SIGTRAP) ao clicar "Iniciar foco" — `WebsiteBlocking.activate` é `nonisolated async` e roda no pool cooperativo. Trocado por `HelperReadiness` (snapshot com `NSLock`). **Regra: nunca usar `assumeIsolated` em código chamado pelos ports** — eles não têm garantia de main actor.
 
@@ -122,8 +122,8 @@ Pré-requisitos: `brew install xcodegen` (e opcional `brew install swiftlint`). 
 4. ~~T-21 — fluxo de "retomar" pós-crash~~ ✅ feito em 2026-07-22: evento puro `adoptRecovered` (só a partir de ocioso, preserva `endsAt`, não bloqueia se a fase for intervalo) + `SessionCoordinator.adoptRecoveredSession` + diálogo com "Retomar"/"Encerrar e liberar" mostrando fase/ciclo/restante.
 5. **T-12** — validação manual do bloqueio de apps (app fecha < 2s). T-13 (hosts) está suspenso pelo ADR-8.
 6. **T-25** — assinatura Developer ID + notarização + DMG.
-7. **`git init`** — o projeto ainda não tem versionamento; refatorações grandes estão sem rede de segurança.
-8. Decidir o destino do código parado do bloqueio por hosts/helper XPC (remover ou manter como alternativa documentada).
+7. ~~`git init`~~ ✅ feito em 2026-07-22 (branch `main`, commit inicial `d374955`).
+8. ~~Decidir o destino do código parado~~ ✅ removido em 2026-07-22.
 
 ## Convenções / gotchas
 

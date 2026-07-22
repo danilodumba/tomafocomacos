@@ -8,22 +8,15 @@ public protocol AppBlocking: AnyObject, Sendable {
     func deactivate()
 }
 
-/// Bloqueio de sites (RF-02). Implementado por `HostsFileWebsiteBlocker` na Infrastructure.
+/// Bloqueio de sites (RF-02). Implementado por `AppleScriptBrowserBlocker` na Infrastructure (ADR-8).
 ///
 /// Contrato de idempotência (RNF-01):
-/// - `activate` chamado 2x não duplica entradas.
-/// - `deactivate` sem bloco presente é no-op.
-/// - após um ciclo activate→deactivate, o arquivo hosts volta ao estado original.
+/// - `activate` chamado 2x não duplica efeito (só atualiza a lista vigente).
+/// - `deactivate` sem bloqueio ativo é no-op.
+/// - após um ciclo activate→deactivate, o sistema volta ao estado anterior — nenhum
+///   resíduo de bloqueio pode sobreviver ao fim da sessão (RNF-02).
 public protocol WebsiteBlocking: AnyObject, Sendable {
     func activate(domains: [BlockedDomain]) async throws
     func deactivate() async throws
     var isActive: Bool { get async }
-}
-
-/// Elevação de privilégio para operações que exigem root (editar `/etc/hosts`).
-/// MVP: AppleScript admin. v2: XPC helper — trocável por injeção (OCP/ADR-4).
-public protocol PrivilegeEscalating: Sendable {
-    /// Executa um comando shell com privilégio de administrador.
-    /// Lança `PrivilegeError.userCancelled` se o usuário cancelar o prompt.
-    func runPrivileged(command: String) async throws
 }

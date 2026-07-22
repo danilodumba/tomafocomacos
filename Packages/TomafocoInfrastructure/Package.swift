@@ -3,7 +3,7 @@ import PackageDescription
 
 // TomafocoInfrastructure — adapters do macOS que implementam os ports do Domain.
 // Depende de TomafocoDomain. Os adapters que usam AppKit são compilados condicionalmente
-// (`#if canImport(AppKit)`) para que a lógica pura (ex.: HostsFileEditor) também construa em CI Linux.
+// (`#if canImport(AppKit)`) para que a lógica pura (ex.: BrowserScript) também construa em CI Linux.
 let package = Package(
     name: "TomafocoInfrastructure",
     platforms: [.macOS(.v13)],
