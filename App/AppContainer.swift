@@ -51,10 +51,15 @@ final class AppContainer: ObservableObject {
         // Som + Dock pulando no fim de cada etapa, por cima da notificação do sistema (RF-08.1).
         // O decorador garante o aviso mesmo se o usuário tiver negado notificações.
         let notificationAdapter = UNNotificationAdapter()
-        let notifier = PhaseAlertNotifier(
-            wrapping: notificationAdapter,
-            sound: SystemSoundPlayer(),
-            attention: DockAttentionRequester()
+        // Aviso na tela quando o usuário tenta abrir um app bloqueado (RF-03).
+        let toastPresenter = BlockedAppToastPresenter()
+        let notifier = BlockedAppToastNotifier(
+            wrapping: PhaseAlertNotifier(
+                wrapping: notificationAdapter,
+                sound: SystemSoundPlayer(),
+                attention: DockAttentionRequester()
+            ),
+            presenter: toastPresenter
         )
 
         // Bloqueio de sites por automação do navegador (ADR-8). Substituiu o /etc/hosts:

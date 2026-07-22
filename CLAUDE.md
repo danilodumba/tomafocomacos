@@ -119,6 +119,12 @@ Como ficou:
 - Esc fecha; `OverlayWindow` sobrescreve `canBecomeKey` porque janela `borderless` não aceita foco de teclado por padrão.
 - `AppContainer` retém o presenter — sem referência forte a assinatura Combine morre e a tela nunca aparece.
 
+**🚫 Aviso na tela ao tentar abrir app bloqueado (2026-07-22):**
+- `BlockedAppAlertThrottle` (Application, pura — 6 testes): represa **por app**, 5s. Sem ela, clicar 3× no ícone geraria 3 avisos, e apps que relançam sozinhos (Slack/Teams) inundariam a tela. A carência conta da última exibição — tentativas represadas não a renovam, senão um app em loop nunca mais avisaria.
+- `App/UI/BlockedAppToast/`: `BlockedAppToastPresenter` (NSPanel `.statusBar`, `ignoresMouseEvents` — não rouba clique nem foco) + `BlockedAppToastView` (material translúcido).
+- Aparece no topo-centro da tela **onde está o cursor** (multi-monitor: avisar na tela que o usuário não olha é inútil). Some em 3,5s; janela é reaproveitada em vez de empilhar.
+- `BlockedAppToastNotifier` decora o notificador. Fica no App porque é apresentação — a Application só emite `NotificationEvent.appBlocked`. Reseta a represa em `.focusEnded`.
+
 ## Como retomar
 
 ```bash
