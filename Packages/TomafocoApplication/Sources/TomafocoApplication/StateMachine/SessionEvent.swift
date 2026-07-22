@@ -8,8 +8,8 @@ public enum SessionEvent: Equatable {
     case pause
     case resume
     case cancel
-    /// Usuário confirma o início do próximo foco após um intervalo (quando não há auto-início).
-    case beginNextFocus
+    /// Usuário confirma o início da próxima etapa (quando o avanço automático está desligado).
+    case beginNextPhase
     /// Readota uma sessão persistida após crash/reinício (UC-04): volta a valer de onde parou,
     /// com o mesmo `endsAt` absoluto — por isso o tempo perdido no crash não é devolvido.
     case adoptRecovered(PomodoroSession)

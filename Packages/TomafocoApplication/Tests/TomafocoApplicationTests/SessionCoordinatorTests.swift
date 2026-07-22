@@ -109,7 +109,8 @@ final class SessionCoordinatorTests: XCTestCase {
     /// Readotada perto do fim, a sessão precisa completar normalmente no primeiro tick —
     /// e não ficar presa mostrando 00:00.
     func test_adoptRecoveredSession_jaExpirada_completaNoPrimeiroTick() async throws {
-        let (sut, clock, appBlocker, _, _, notifier) = makeSUT()
+        let (sut, clock, appBlocker, _, _, notifier) = makeSUT(
+            config: PomodoroConfiguration(autoAdvancePhases: true))
         let quaseNoFim = PomodoroSession(
             id: UUID(), phase: .focus, startedAt: clock.now.addingTimeInterval(-1500),
             endsAt: clock.now.addingTimeInterval(1), reason: nil, cycleNumber: 1)
@@ -127,7 +128,8 @@ final class SessionCoordinatorTests: XCTestCase {
     // MARK: - skipPhase (RF-04.2)
 
     func test_skipPhase_noFoco_semHardcore_liberaBloqueioEVaiParaIntervalo() async throws {
-        let (sut, _, appBlocker, webBlocker, sessions, _) = makeSUT()
+        let (sut, _, appBlocker, webBlocker, sessions, _) = makeSUT(
+            config: PomodoroConfiguration(autoAdvancePhases: true))
         try await sut.startFocus(reason: nil)
 
         try await sut.skipPhase()
@@ -163,6 +165,7 @@ final class SessionCoordinatorTests: XCTestCase {
     /// A trava é do foco; um intervalo pode ser pulado mesmo com hardcore ligado.
     func test_skipPhase_noIntervalo_comHardcore_ePermitido() async throws {
         let config = PomodoroConfiguration(
+            autoAdvancePhases: true,
             hardcore: HardcoreOptions(isEnabled: true, minimumMinutesBeforeCancel: 5))
         let (sut, clock, _, _, _, _) = makeSUT(config: config)
         try await sut.startFocus(reason: "foco")
@@ -175,6 +178,25 @@ final class SessionCoordinatorTests: XCTestCase {
 
         try await sut.skipPhase()
 
-        XCTAssertEqual(sut.state, .awaitingNextFocus(nextCycle: 2))
+        // Com avanço automático ligado, pular o intervalo emenda direto no próximo foco.
+        guard case .running(let proximo) = sut.state else { return XCTFail("esperava running") }
+        XCTAssertEqual(proximo.phase, .focus)
+        XCTAssertEqual(proximo.cycleNumber, 2)
+    }
+
+    /// O bug relatado em 2026-07-22: com o avanço automático DESLIGADO, terminar o foco
+    /// não podia emendar o intervalo sozinho — o app tem que esperar confirmação.
+    func test_fimDoFoco_semAutoAvanco_naoEmendaIntervaloSozinho() async throws {
+        let (sut, clock, appBlocker, _, sessions, notifier) = makeSUT(
+            config: PomodoroConfiguration(focusDuration: 60, autoAdvancePhases: false))
+        try await sut.startFocus(reason: nil)
+
+        clock.advance(by: 61)
+        try await Task.sleep(nanoseconds: 100_000_000)   // o tick despacha numa Task
+
+        XCTAssertEqual(sut.state, .awaitingNext(phase: .shortBreak, cycle: 1))
+        XCTAssertTrue(notifier.events.contains(.focusEnded))
+        XCTAssertEqual(appBlocker.deactivateCallCount, 1)  // bloqueio cai mesmo aguardando
+        XCTAssertNil(sessions.active)
     }
 }

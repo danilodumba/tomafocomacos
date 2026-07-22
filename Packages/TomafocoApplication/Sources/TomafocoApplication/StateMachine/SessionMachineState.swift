@@ -7,14 +7,15 @@ public enum SessionMachineState: Equatable {
     case idle
     case running(PomodoroSession)
     case paused(session: PomodoroSession, remaining: TimeInterval)
-    /// Intervalo terminou e aguarda confirmação para o próximo foco (auto-início desligado).
-    case awaitingNextFocus(nextCycle: Int)
+    /// Uma etapa terminou e o app aguarda confirmação para iniciar a próxima
+    /// (avanço automático desligado). Vale tanto para foco → intervalo quanto intervalo → foco.
+    case awaitingNext(phase: SessionPhase, cycle: Int)
 
     public var currentSession: PomodoroSession? {
         switch self {
         case .running(let s): return s
         case .paused(let s, _): return s
-        case .idle, .awaitingNextFocus: return nil
+        case .idle, .awaitingNext: return nil
         }
     }
 }

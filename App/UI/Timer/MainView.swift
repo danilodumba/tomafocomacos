@@ -156,14 +156,14 @@ struct MainView: View {
     private var primaryLabel: String {
         if viewModel.isRunning { return "Pausar" }
         if viewModel.isPaused { return "Retomar" }
-        if viewModel.isAwaitingNextFocus { return "Iniciar próximo foco" }
+        if viewModel.isAwaitingNext { return "Iniciar \(viewModel.phase == .focus ? "foco" : "intervalo")" }
         return "Iniciar foco"
     }
 
     private func primaryAction() async {
         if viewModel.isRunning { return await viewModel.pause() }
         if viewModel.isPaused { return await viewModel.resume() }
-        if viewModel.isAwaitingNextFocus { return await viewModel.beginNextFocus() }
+        if viewModel.isAwaitingNext { return await viewModel.beginNextPhase() }
         await viewModel.startFocus()
     }
 }

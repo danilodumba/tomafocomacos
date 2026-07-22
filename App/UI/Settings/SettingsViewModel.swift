@@ -11,7 +11,7 @@ final class SettingsViewModel: ObservableObject {
     @Published var shortBreakMinutes: Double { didSet { save() } }
     @Published var longBreakMinutes: Double { didSet { save() } }
     @Published var cyclesBeforeLongBreak: Int { didSet { save() } }
-    @Published var autoStartNextFocus: Bool { didSet { save() } }
+    @Published var autoAdvancePhases: Bool { didSet { save() } }
     @Published var forceTerminateApps: Bool { didSet { save() } }
     @Published var hardcoreEnabled: Bool { didSet { save() } }
     @Published var hardcoreGraceMinutes: Int { didSet { save() } }
@@ -27,7 +27,7 @@ final class SettingsViewModel: ObservableObject {
         shortBreakMinutes = config.shortBreakDuration / 60
         longBreakMinutes = config.longBreakDuration / 60
         cyclesBeforeLongBreak = config.cyclesBeforeLongBreak
-        autoStartNextFocus = config.autoStartNextFocus
+        autoAdvancePhases = config.autoAdvancePhases
         forceTerminateApps = config.forceTerminateApps
         hardcoreEnabled = config.hardcore.isEnabled
         hardcoreGraceMinutes = config.hardcore.minimumMinutesBeforeCancel
@@ -41,7 +41,7 @@ final class SettingsViewModel: ObservableObject {
             shortBreakDuration: shortBreakMinutes * 60,
             longBreakDuration: longBreakMinutes * 60,
             cyclesBeforeLongBreak: cyclesBeforeLongBreak,
-            autoStartNextFocus: autoStartNextFocus,
+            autoAdvancePhases: autoAdvancePhases,
             forceTerminateApps: forceTerminateApps,
             hardcore: HardcoreOptions(
                 isEnabled: hardcoreEnabled,

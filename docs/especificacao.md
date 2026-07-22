@@ -34,8 +34,8 @@ O **Tomafoco** é um aplicativo de Pomodoro para macOS que, durante as sessões 
 ### RF-01 — Timer Pomodoro
 - **RF-01.1** — O usuário pode iniciar, pausar, retomar e cancelar uma sessão de foco.
 - **RF-01.2** — Durações configuráveis: foco (padrão 25 min), intervalo curto (padrão 5 min), intervalo longo (padrão 15 min), ciclos até o intervalo longo (padrão 4).
-- **RF-01.3** — Ao fim de uma sessão de foco, o app inicia automaticamente o intervalo (curto ou longo, conforme o ciclo) e notifica o usuário.
-- **RF-01.4** — Ao fim de um intervalo, o app notifica o usuário e aguarda confirmação para iniciar o próximo foco (auto-início configurável).
+- **RF-01.3** — Ao fim de uma sessão de foco, o app notifica o usuário e inicia o intervalo (curto ou longo, conforme o ciclo). O início é automático apenas se "avançar etapas automaticamente" estiver ligado; caso contrário aguarda confirmação. **Os bloqueios caem imediatamente ao fim do foco, mesmo aguardando confirmação.** *(alterado em 2026-07-22: antes o intervalo sempre emendava sozinho, o que contrariava a expectativa do usuário sobre o ajuste)*
+- **RF-01.4** — Ao fim de um intervalo, o app notifica o usuário e aguarda confirmação para iniciar o próximo foco (mesmo ajuste do RF-01.3).
 - **RF-01.5** — O estado da sessão (horário de término absoluto, não apenas tempo restante) é persistido em disco, de modo que crash/reinício do app não perca a sessão.
 
 ### RF-02 — Bloqueio de sites
@@ -70,7 +70,7 @@ O **Tomafoco** é um aplicativo de Pomodoro para macOS que, durante as sessões 
 - **RF-07.2** — Visualização de estatísticas por dia/semana (ciclos completos, tempo total de foco).
 
 ### RF-08 — Notificações
-- **RF-08.1** — Notificações locais (`UNUserNotificationCenter`) para: fim de foco, fim de intervalo, app bloqueado encerrado.
+- **RF-08.1** — Notificações locais (`UNUserNotificationCenter`) para: fim de foco, fim de intervalo, app bloqueado encerrado. Fim de etapa também toca **som de alerta** e faz o ícone do Dock pular — o som independe da permissão de notificação.
 - **RF-08.2** — Solicitação de permissão de notificação no primeiro uso, com degradação graciosa se negada.
 
 ---

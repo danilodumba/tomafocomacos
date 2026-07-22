@@ -6,16 +6,27 @@ public struct PomodoroConfiguration: Equatable, Codable, Sendable {
     public var shortBreakDuration: TimeInterval
     public var longBreakDuration: TimeInterval
     public var cyclesBeforeLongBreak: Int
-    public var autoStartNextFocus: Bool
+    /// Avança sozinho para a próxima etapa — foco → intervalo E intervalo → foco.
+    /// Desligado, cada etapa termina avisando e espera confirmação do usuário.
+    public var autoAdvancePhases: Bool
     public var forceTerminateApps: Bool
     public var hardcore: HardcoreOptions
+
+    /// A chave persistida continua sendo `autoStartNextFocus`: renomear quebraria a
+    /// decodificação das configurações já salvas, e o store cai silenciosamente no padrão
+    /// quando a decodificação falha — o usuário perderia durações e ajustes sem aviso.
+    private enum CodingKeys: String, CodingKey {
+        case focusDuration, shortBreakDuration, longBreakDuration, cyclesBeforeLongBreak
+        case autoAdvancePhases = "autoStartNextFocus"
+        case forceTerminateApps, hardcore
+    }
 
     public init(
         focusDuration: TimeInterval = 25 * 60,
         shortBreakDuration: TimeInterval = 5 * 60,
         longBreakDuration: TimeInterval = 15 * 60,
         cyclesBeforeLongBreak: Int = 4,
-        autoStartNextFocus: Bool = false,
+        autoAdvancePhases: Bool = false,
         forceTerminateApps: Bool = false,
         hardcore: HardcoreOptions = .init()
     ) {
@@ -23,7 +34,7 @@ public struct PomodoroConfiguration: Equatable, Codable, Sendable {
         self.shortBreakDuration = shortBreakDuration
         self.longBreakDuration = longBreakDuration
         self.cyclesBeforeLongBreak = cyclesBeforeLongBreak
-        self.autoStartNextFocus = autoStartNextFocus
+        self.autoAdvancePhases = autoAdvancePhases
         self.forceTerminateApps = forceTerminateApps
         self.hardcore = hardcore
     }

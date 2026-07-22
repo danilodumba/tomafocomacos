@@ -24,8 +24,9 @@ public enum SessionStateMachine {
         case .paused(let session, let remaining):
             return reducePaused(session: session, remaining: remaining, event: event,
                                 config: config, now: now, newID: newID)
-        case .awaitingNextFocus(let nextCycle):
-            return reduceAwaiting(nextCycle: nextCycle, event: event, config: config, now: now, newID: newID)
+        case .awaitingNext(let phase, let cycle):
+            return reduceAwaiting(phase: phase, cycle: cycle, event: event,
+                                  config: config, now: now, newID: newID)
         }
     }
 
@@ -72,7 +73,7 @@ public enum SessionStateMachine {
         case .skipPhase:
             return endPhase(session, outcome: .skipped, config: config, now: now, newID: newID)
 
-        case .startFocus, .resume, .beginNextFocus, .adoptRecovered:
+        case .startFocus, .resume, .beginNextPhase, .adoptRecovered:
             return (.running(session), [])
         }
     }
@@ -101,30 +102,36 @@ public enum SessionStateMachine {
 
         switch session.phase {
         case .focus:
-            // Fim do foco → desativa bloqueio, limpa failsafe e entra no intervalo.
+            // Fim do foco → sempre desativa bloqueio e limpa o failsafe, ANTES de decidir
+            // se o intervalo começa sozinho: ninguém pode ficar bloqueado esperando confirmação.
             let isLong = session.cycleNumber % config.cyclesBeforeLongBreak == 0
             let breakPhase: SessionPhase = isLong ? .longBreak : .shortBreak
+            let common: [SessionEffect] = [
+                .deactivateBlocking, .clearActive,
+                .recordHistory(record), .notify(.focusEnded)
+            ]
+            guard config.autoAdvancePhases else {
+                return (.awaitingNext(phase: breakPhase, cycle: session.cycleNumber), common)
+            }
             let breakSession = makeSession(
                 phase: breakPhase, cycle: session.cycleNumber, reason: nil,
                 config: config, now: now, id: newID
             )
-            return (.running(breakSession), [
-                .deactivateBlocking, .clearActive,
-                .recordHistory(record), .notify(.focusEnded)
-            ])
+            return (.running(breakSession), common)
 
         case .shortBreak, .longBreak:
-            // Fim do intervalo → próximo foco (auto ou aguardando confirmação — RF-01.4).
+            // Fim do intervalo → próximo foco (RF-01.4).
             let event: NotificationEvent = session.phase == .longBreak ? .longBreakEnded : .shortBreakEnded
             let nextCycle = session.cycleNumber + 1
-            if config.autoStartNextFocus {
-                let focus = makeFocus(cycle: nextCycle, reason: nil, config: config, now: now, id: newID)
-                return (.running(focus), [
-                    .recordHistory(record), .notify(event),
-                    .activateBlocking, .persistActive(focus)
-                ])
+            guard config.autoAdvancePhases else {
+                return (.awaitingNext(phase: .focus, cycle: nextCycle),
+                        [.recordHistory(record), .notify(event)])
             }
-            return (.awaitingNextFocus(nextCycle: nextCycle), [.recordHistory(record), .notify(event)])
+            let focus = makeFocus(cycle: nextCycle, reason: nil, config: config, now: now, id: newID)
+            return (.running(focus), [
+                .recordHistory(record), .notify(event),
+                .activateBlocking, .persistActive(focus)
+            ])
 
         case .idle:
             return (.running(session), [])  // estado impossível; sem transição
@@ -150,25 +157,30 @@ public enum SessionStateMachine {
             return (.idle, cancelEffects(for: session, now: now))
         case .skipPhase:
             return endPhase(session, outcome: .skipped, config: config, now: now, newID: newID)
-        case .tick, .pause, .startFocus, .beginNextFocus, .adoptRecovered:
+        case .tick, .pause, .startFocus, .beginNextPhase, .adoptRecovered:
             return (.paused(session: session, remaining: remaining), [])
         }
     }
 
-    // MARK: - awaitingNextFocus
+    // MARK: - awaitingNext
 
     private static func reduceAwaiting(
-        nextCycle: Int, event: SessionEvent,
+        phase: SessionPhase, cycle: Int, event: SessionEvent,
         config: PomodoroConfiguration, now: Date, newID: UUID
     ) -> (SessionMachineState, [SessionEffect]) {
         switch event {
-        case .beginNextFocus, .startFocus:
-            let focus = makeFocus(cycle: nextCycle, reason: nil, config: config, now: now, id: newID)
-            return (.running(focus), [.activateBlocking, .persistActive(focus)])
+        case .beginNextPhase, .startFocus:
+            let next = makeSession(
+                phase: phase, cycle: cycle, reason: nil, config: config, now: now, id: newID)
+            // Só o foco bloqueia: confirmar um intervalo não pode ligar bloqueio nenhum.
+            let effects: [SessionEffect] = phase.appliesBlocking
+                ? [.activateBlocking, .persistActive(next)]
+                : []
+            return (.running(next), effects)
         case .cancel:
             return (.idle, [])
         case .tick, .pause, .resume, .skipPhase, .adoptRecovered:
-            return (.awaitingNextFocus(nextCycle: nextCycle), [])
+            return (.awaitingNext(phase: phase, cycle: cycle), [])
         }
     }
 

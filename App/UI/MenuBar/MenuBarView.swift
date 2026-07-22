@@ -75,7 +75,7 @@ struct MenuBarView: View {
     private func primaryAction() async {
         if viewModel.isRunning { return await viewModel.pause() }
         if viewModel.isPaused { return await viewModel.resume() }
-        if viewModel.isAwaitingNextFocus { return await viewModel.beginNextFocus() }
+        if viewModel.isAwaitingNext { return await viewModel.beginNextPhase() }
         await viewModel.startFocus()
     }
 

@@ -10,9 +10,13 @@ import UserNotifications
 public final class UNNotificationAdapter: UserNotifying, @unchecked Sendable {
 
     private let center: UNUserNotificationCenter
+    /// Retido aqui: `UNUserNotificationCenter.delegate` é `weak` e o delegate seria liberado
+    /// na hora, deixando as notificações invisíveis com o app em primeiro plano.
+    private let presenter = ForegroundPresenter()
 
     public init(center: UNUserNotificationCenter = .current()) {
         self.center = center
+        center.delegate = presenter
     }
 
     /// Solicita autorização no primeiro uso. Chamar no onboarding.
@@ -44,6 +48,19 @@ public final class UNNotificationAdapter: UserNotifying, @unchecked Sendable {
         let request = UNNotificationRequest(
             identifier: UUID().uuidString, content: content, trigger: nil)
         center.add(request, withCompletionHandler: nil)
+    }
+}
+
+/// Sem delegate, o macOS **esconde** a notificação quando o app está em primeiro plano.
+/// Como o Tomafoco costuma estar aberto justamente quando a etapa termina, esse é o caso
+/// comum — sem isso o usuário simplesmente não veria o aviso de fim de foco.
+private final class ForegroundPresenter: NSObject, UNUserNotificationCenterDelegate {
+    func userNotificationCenter(
+        _ center: UNUserNotificationCenter,
+        willPresent notification: UNNotification,
+        withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
+    ) {
+        completionHandler([.banner, .sound, .list])
     }
 }
 #endif

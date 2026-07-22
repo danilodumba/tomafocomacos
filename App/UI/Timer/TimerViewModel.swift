@@ -14,7 +14,7 @@ final class TimerViewModel: ObservableObject {
     @Published private(set) var isRunning = false
     @Published private(set) var isPaused = false
     @Published private(set) var isIdle = true
-    @Published private(set) var isAwaitingNextFocus = false
+    @Published private(set) var isAwaitingNext = false
     /// Fração já decorrida da fase atual (0…1) — alimenta o anel de progresso.
     @Published private(set) var progress: Double = 0
     /// Fase corrente, usada só para escolher o acento visual.
@@ -60,12 +60,12 @@ final class TimerViewModel: ObservableObject {
 
     func pause() async { await coordinator.pause() }
     func resume() async { await coordinator.resume() }
-    func beginNextFocus() async { await coordinator.beginNextFocus() }
+    func beginNextPhase() async { await coordinator.beginNextPhase() }
 
     /// SKIP: pula a fase corrente — foco vai para o intervalo, intervalo vai para o próximo foco (RF-04.2).
     func skip() async {
         errorMessage = nil
-        guard !isAwaitingNextFocus else { return await coordinator.beginNextFocus() }
+        guard !isAwaitingNext else { return await coordinator.beginNextPhase() }
         do {
             try await coordinator.skipPhase()
         } catch DomainError.cancellationBlockedByHardcore(let remaining) {
@@ -120,7 +120,7 @@ final class TimerViewModel: ObservableObject {
         isIdle = false
         isRunning = false
         isPaused = false
-        isAwaitingNextFocus = false
+        isAwaitingNext = false
 
         switch state {
         case .idle:
@@ -154,15 +154,16 @@ final class TimerViewModel: ObservableObject {
             canSkip = true
             menuBarLabel = "⏸ \(format(remaining))"
 
-        case .awaitingNextFocus(let nextCycle):
-            isAwaitingNextFocus = true
-            phase = .idle
-            phaseTitle = "Intervalo concluído"
-            cycleText = "Próximo: ciclo \(nextCycle)"
-            timeText = format(settings.loadConfiguration().focusDuration)
+        case .awaitingNext(let next, let cycle):
+            isAwaitingNext = true
+            // Mostra a fase que VAI começar: o anel e o botão já aparecem na cor dela.
+            phase = next
+            phaseTitle = "\(title(for: next)) em espera"
+            cycleText = next == .focus ? "Próximo: ciclo \(cycle)" : "Ciclo \(cycle)"
+            timeText = format(settings.loadConfiguration().duration(for: next))
             progress = 0
-            canSkip = true
-            menuBarLabel = "▶️"
+            canSkip = false
+            menuBarLabel = "▶️ \(format(settings.loadConfiguration().duration(for: next)))"
         }
     }
 

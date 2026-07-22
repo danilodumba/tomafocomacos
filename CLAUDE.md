@@ -104,6 +104,14 @@ Como ficou:
 
 **🐛 Crash corrigido no mesmo dia:** `MainActor.assumeIsolated` dentro do closure `isHelperReady` derrubava o app (SIGTRAP) ao clicar "Iniciar foco" — `WebsiteBlocking.activate` é `nonisolated async` e roda no pool cooperativo. Trocado por `HelperReadiness` (snapshot com `NSLock`). **Regra: nunca usar `assumeIsolated` em código chamado pelos ports** — eles não têm garantia de main actor.
 
+**🔔 Avanço manual de etapas + alerta sonoro (2026-07-22):**
+- **Bug corrigido:** com "iniciar próximo foco automaticamente" desligado, o intervalo emendava sozinho ao fim do foco. O código seguia o RF-01.3 antigo (intervalo sempre automático), mas contrariava a expectativa do usuário. **A spec foi alterada**: o ajuste agora vale para as DUAS transições.
+- `PomodoroConfiguration.autoStartNextFocus` → `autoAdvancePhases`. **A chave persistida continua `autoStartNextFocus`** via `CodingKeys`: o `UserDefaultsSettingsStore` cai no padrão quando a decodificação falha, então renomear a chave apagaria as configurações do usuário em silêncio.
+- Estado `awaitingNextFocus(nextCycle:)` → `awaitingNext(phase:cycle:)`; evento `beginNextFocus` → `beginNextPhase`. Confirmar um intervalo não emite `activateBlocking`.
+- **Invariante:** ao fim do foco o bloqueio cai SEMPRE, mesmo aguardando confirmação — ninguém pode ficar bloqueado esperando clicar.
+- `PhaseAlertNotifier` (decorador de `UserNotifying`): som + ícone do Dock pulando no fim de cada etapa. É decorador para o som tocar mesmo se a permissão de notificação tiver sido negada. Só fim de etapa alerta — `appBlocked` dispara repetido e viraria ruído.
+- `UNNotificationAdapter` ganhou delegate `ForegroundPresenter`: sem ele o macOS **esconde** a notificação com o app em primeiro plano, que é justamente o caso comum aqui.
+
 ## Como retomar
 
 ```bash

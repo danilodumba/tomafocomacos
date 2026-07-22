@@ -10,11 +10,11 @@ final class SessionStateMachineTests: XCTestCase {
 
     private func config(
         focus: TimeInterval = 1500, short: TimeInterval = 300, long: TimeInterval = 900,
-        cycles: Int = 4, autoStart: Bool = false
+        cycles: Int = 4, autoAdvance: Bool = false
     ) -> PomodoroConfiguration {
         PomodoroConfiguration(
             focusDuration: focus, shortBreakDuration: short, longBreakDuration: long,
-            cyclesBeforeLongBreak: cycles, autoStartNextFocus: autoStart
+            cyclesBeforeLongBreak: cycles, autoAdvancePhases: autoAdvance
         )
     }
 
@@ -56,27 +56,54 @@ final class SessionStateMachineTests: XCTestCase {
         XCTAssertTrue(effects.isEmpty)
     }
 
-    func test_running_focoExpira_ciclo1_vaiParaShortBreak() {
+    /// Sem avanço automático o intervalo NÃO começa sozinho — mas o bloqueio cai na hora:
+    /// ninguém pode ficar bloqueado esperando confirmação.
+    func test_running_focoExpira_semAutoAvanco_aguardaIntervaloMasLiberaBloqueio() {
         let s = focusSession(cycle: 1, startedAt: now)
         let end = now.addingTimeInterval(1500)
         let (state, effects) = SessionStateMachine.reduce(
-            state: .running(s), event: .tick, config: config(), now: end, newID: id)
-        guard case .running(let br) = state else { return XCTFail() }
-        XCTAssertEqual(br.phase, .shortBreak)
-        XCTAssertEqual(br.cycleNumber, 1)
+            state: .running(s), event: .tick, config: config(autoAdvance: false), now: end, newID: id)
+
+        XCTAssertEqual(state, .awaitingNext(phase: .shortBreak, cycle: 1))
         XCTAssertTrue(effects.contains(.deactivateBlocking))
         XCTAssertTrue(effects.contains(.clearActive))
         XCTAssertTrue(effects.contains(.notify(.focusEnded)))
         XCTAssertTrue(effects.contains { if case .recordHistory = $0 { return true }; return false })
     }
 
+    func test_running_focoExpira_comAutoAvanco_ciclo1_iniciaShortBreak() {
+        let s = focusSession(cycle: 1, startedAt: now)
+        let end = now.addingTimeInterval(1500)
+        let (state, effects) = SessionStateMachine.reduce(
+            state: .running(s), event: .tick, config: config(autoAdvance: true), now: end, newID: id)
+
+        guard case .running(let br) = state else { return XCTFail() }
+        XCTAssertEqual(br.phase, .shortBreak)
+        XCTAssertEqual(br.cycleNumber, 1)
+        XCTAssertTrue(effects.contains(.deactivateBlocking))
+        XCTAssertTrue(effects.contains(.notify(.focusEnded)))
+    }
+
     func test_running_focoExpira_ciclo4_vaiParaLongBreak() {
         let s = focusSession(cycle: 4, startedAt: now)
         let end = now.addingTimeInterval(1500)
         let (state, _) = SessionStateMachine.reduce(
-            state: .running(s), event: .tick, config: config(cycles: 4), now: end, newID: id)
+            state: .running(s), event: .tick, config: config(cycles: 4, autoAdvance: true),
+            now: end, newID: id)
         guard case .running(let br) = state else { return XCTFail() }
         XCTAssertEqual(br.phase, .longBreak)
+    }
+
+    /// A etapa em espera guarda QUAL fase vem — confirmar um intervalo não pode ligar bloqueio.
+    func test_awaiting_beginNextPhase_deIntervalo_naoAtivaBloqueio() {
+        let (state, effects) = SessionStateMachine.reduce(
+            state: .awaitingNext(phase: .shortBreak, cycle: 2), event: .beginNextPhase,
+            config: config(), now: now, newID: id)
+
+        guard case .running(let br) = state else { return XCTFail("esperava running") }
+        XCTAssertEqual(br.phase, .shortBreak)
+        XCTAssertEqual(br.cycleNumber, 2)
+        XCTAssertTrue(effects.isEmpty)
     }
 
     // MARK: fim de intervalo
@@ -85,8 +112,8 @@ final class SessionStateMachineTests: XCTestCase {
         let br = focusSession(cycle: 1, startedAt: now, duration: 300, phase: .shortBreak)
         let end = now.addingTimeInterval(300)
         let (state, effects) = SessionStateMachine.reduce(
-            state: .running(br), event: .tick, config: config(autoStart: false), now: end, newID: id)
-        XCTAssertEqual(state, .awaitingNextFocus(nextCycle: 2))
+            state: .running(br), event: .tick, config: config(autoAdvance: false), now: end, newID: id)
+        XCTAssertEqual(state, .awaitingNext(phase: .focus, cycle: 2))
         XCTAssertTrue(effects.contains(.notify(.shortBreakEnded)))
         XCTAssertFalse(effects.contains(.activateBlocking))
     }
@@ -95,7 +122,7 @@ final class SessionStateMachineTests: XCTestCase {
         let br = focusSession(cycle: 1, startedAt: now, duration: 300, phase: .shortBreak)
         let end = now.addingTimeInterval(300)
         let (state, effects) = SessionStateMachine.reduce(
-            state: .running(br), event: .tick, config: config(autoStart: true), now: end, newID: id)
+            state: .running(br), event: .tick, config: config(autoAdvance: true), now: end, newID: id)
         guard case .running(let focus) = state else { return XCTFail() }
         XCTAssertEqual(focus.phase, .focus)
         XCTAssertEqual(focus.cycleNumber, 2)
@@ -146,9 +173,9 @@ final class SessionStateMachineTests: XCTestCase {
         XCTAssertTrue(effects.contains { if case .recordHistory(let r) = $0 { return r.outcome == .cancelled }; return false })
     }
 
-    func test_awaiting_beginNextFocus_iniciaFocoComBloqueio() {
+    func test_awaiting_beginNextPhase_iniciaFocoComBloqueio() {
         let (state, effects) = SessionStateMachine.reduce(
-            state: .awaitingNextFocus(nextCycle: 3), event: .beginNextFocus,
+            state: .awaitingNext(phase: .focus, cycle: 3), event: .beginNextPhase,
             config: config(), now: now, newID: id)
         guard case .running(let focus) = state else { return XCTFail() }
         XCTAssertEqual(focus.cycleNumber, 3)
@@ -207,10 +234,10 @@ final class SessionStateMachineTests: XCTestCase {
     func test_skipPhase_duranteIntervalo_semAutoStart_vaiParaAwaiting() {
         let br = focusSession(cycle: 2, startedAt: now, duration: 300, phase: .shortBreak)
         let (state, effects) = SessionStateMachine.reduce(
-            state: .running(br), event: .skipPhase, config: config(autoStart: false),
+            state: .running(br), event: .skipPhase, config: config(autoAdvance: false),
             now: now.addingTimeInterval(60), newID: id)
 
-        XCTAssertEqual(state, .awaitingNextFocus(nextCycle: 3))
+        XCTAssertEqual(state, .awaitingNext(phase: .focus, cycle: 3))
         XCTAssertTrue(effects.contains(.notify(.shortBreakEnded)))
         XCTAssertFalse(effects.contains(.activateBlocking))
     }
@@ -218,7 +245,7 @@ final class SessionStateMachineTests: XCTestCase {
     func test_skipPhase_duranteIntervalo_comAutoStart_iniciaProximoFoco() {
         let br = focusSession(cycle: 2, startedAt: now, duration: 300, phase: .shortBreak)
         let (state, effects) = SessionStateMachine.reduce(
-            state: .running(br), event: .skipPhase, config: config(autoStart: true),
+            state: .running(br), event: .skipPhase, config: config(autoAdvance: true),
             now: now.addingTimeInterval(60), newID: id)
 
         guard case .running(let focus) = state else { return XCTFail("esperava running") }
@@ -243,12 +270,14 @@ final class SessionStateMachineTests: XCTestCase {
         XCTAssertEqual(record?.phase, .longBreak)
     }
 
-    /// Pular o foco encerra o bloqueio e cai no intervalo — mesma transição do término natural.
+    /// Pular o foco encerra o bloqueio e cai no intervalo — mesma transição do término natural,
+    /// inclusive respeitando o avanço automático.
     func test_skipPhase_duranteFoco_vaiParaIntervaloEDesativaBloqueio() {
         let s = focusSession(cycle: 1, startedAt: now)
         let skipAt = now.addingTimeInterval(30)
         let (state, effects) = SessionStateMachine.reduce(
-            state: .running(s), event: .skipPhase, config: config(), now: skipAt, newID: id)
+            state: .running(s), event: .skipPhase, config: config(autoAdvance: true),
+            now: skipAt, newID: id)
 
         guard case .running(let br) = state else { return XCTFail("esperava running") }
         XCTAssertEqual(br.phase, .shortBreak)
@@ -262,7 +291,7 @@ final class SessionStateMachineTests: XCTestCase {
     func test_skipPhase_duranteFoco_noCicloDoLongBreak_vaiParaIntervaloLongo() {
         let s = focusSession(cycle: 4, startedAt: now)
         let (state, _) = SessionStateMachine.reduce(
-            state: .running(s), event: .skipPhase, config: config(cycles: 4),
+            state: .running(s), event: .skipPhase, config: config(cycles: 4, autoAdvance: true),
             now: now.addingTimeInterval(10), newID: id)
 
         guard case .running(let br) = state else { return XCTFail("esperava running") }
@@ -273,16 +302,16 @@ final class SessionStateMachineTests: XCTestCase {
         let br = focusSession(cycle: 1, startedAt: now, duration: 300, phase: .shortBreak)
         let (state, _) = SessionStateMachine.reduce(
             state: .paused(session: br, remaining: 120), event: .skipPhase,
-            config: config(autoStart: false), now: now.addingTimeInterval(180), newID: id)
+            config: config(autoAdvance: false), now: now.addingTimeInterval(180), newID: id)
 
-        XCTAssertEqual(state, .awaitingNextFocus(nextCycle: 2))
+        XCTAssertEqual(state, .awaitingNext(phase: .focus, cycle: 2))
     }
 
     func test_skipPhase_focoPausado_tambemPulaParaIntervalo() {
         let s = focusSession(cycle: 1, startedAt: now)
         let (state, effects) = SessionStateMachine.reduce(
             state: .paused(session: s, remaining: 600), event: .skipPhase,
-            config: config(), now: now.addingTimeInterval(900), newID: id)
+            config: config(autoAdvance: true), now: now.addingTimeInterval(900), newID: id)
 
         guard case .running(let br) = state else { return XCTFail("esperava running") }
         XCTAssertEqual(br.phase, .shortBreak)
@@ -296,9 +325,9 @@ final class SessionStateMachineTests: XCTestCase {
         XCTAssertTrue(idleEffects.isEmpty)
 
         let (awaitingState, awaitingEffects) = SessionStateMachine.reduce(
-            state: .awaitingNextFocus(nextCycle: 2), event: .skipPhase,
+            state: .awaitingNext(phase: .focus, cycle: 2), event: .skipPhase,
             config: config(), now: now, newID: id)
-        XCTAssertEqual(awaitingState, .awaitingNextFocus(nextCycle: 2))
+        XCTAssertEqual(awaitingState, .awaitingNext(phase: .focus, cycle: 2))
         XCTAssertTrue(awaitingEffects.isEmpty)
     }
 }

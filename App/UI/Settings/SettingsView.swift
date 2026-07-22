@@ -35,8 +35,9 @@ struct SettingsView: View {
             }
 
             Section("Comportamento") {
-                toggleRow("Iniciar próximo foco automaticamente",
-                          isOn: $settingsViewModel.autoStartNextFocus)
+                toggleRow("Avançar etapas automaticamente",
+                          help: "Desligado, cada etapa termina avisando e espera você confirmar a próxima.",
+                          isOn: $settingsViewModel.autoAdvancePhases)
                 toggleRow("Forçar encerramento de apps",
                           help: "Usa force-terminate: fecha na marra, o app pode perder dados não salvos.",
                           isOn: $settingsViewModel.forceTerminateApps)

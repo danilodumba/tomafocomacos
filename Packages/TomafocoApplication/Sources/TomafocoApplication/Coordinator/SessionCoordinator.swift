@@ -104,9 +104,9 @@ public final class SessionCoordinator {
         ensureTicking()
     }
 
-    /// RF-01.4 — confirma o início do próximo foco após um intervalo.
-    public func beginNextFocus() async {
-        await dispatch(.beginNextFocus)
+    /// RF-01.4 — confirma o início da próxima etapa quando o avanço automático está desligado.
+    public func beginNextPhase() async {
+        await dispatch(.beginNextPhase)
         ensureTicking()
     }
 

@@ -44,7 +44,14 @@ final class AppContainer: ObservableObject {
 
     /// Monta o grafo real de dependências do macOS.
     static func live() -> AppContainer {
-        let notifier = UNNotificationAdapter()
+        // Som + Dock pulando no fim de cada etapa, por cima da notificação do sistema (RF-08.1).
+        // O decorador garante o aviso mesmo se o usuário tiver negado notificações.
+        let notificationAdapter = UNNotificationAdapter()
+        let notifier = PhaseAlertNotifier(
+            wrapping: notificationAdapter,
+            sound: SystemSoundPlayer(),
+            attention: DockAttentionRequester()
+        )
 
         // Bloqueio de sites por automação do navegador (ADR-8). Substituiu o /etc/hosts:
         // sem root, sem senha e imune a DNS de VPN / DNS-over-HTTPS. Ver `AppleScriptBrowserBlocker`.
@@ -69,11 +76,11 @@ final class AppContainer: ObservableObject {
         let manageBlockList = ManageBlockListUseCase(settings: settings)
         let appPicker = NSOpenPanelApplicationPicker()
 
-        notifier.requestAuthorization()
+        notificationAdapter.requestAuthorization()
 
         return AppContainer(
             coordinator: coordinator, recover: recover, manageBlockList: manageBlockList,
-            settings: settings, appPicker: appPicker, notificationAdapter: notifier
+            settings: settings, appPicker: appPicker, notificationAdapter: notificationAdapter
         )
     }
 
