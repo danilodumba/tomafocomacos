@@ -50,10 +50,13 @@ ok "Certificado: $IDENTITY"
 
 if [[ -z "${SKIP_NOTARIZE:-}" ]]; then
     xcrun notarytool history --keychain-profile "$KEYCHAIN_PROFILE" >/dev/null 2>&1 \
-        || fail "Credencial de notarização '$KEYCHAIN_PROFILE' não encontrada.
-   Crie com:  xcrun notarytool store-credentials $KEYCHAIN_PROFILE \\
-                --apple-id SEU_APPLE_ID --team-id SEU_TEAM_ID --password SENHA_DE_APP
-   (a senha é uma 'app-specific password' de appleid.apple.com, não a senha da conta)"
+        || fail "Credencial de notarização '$KEYCHAIN_PROFILE' inválida ou ausente.
+   Crie em modo interativo (a senha não vai para o histórico do shell):
+     xcrun notarytool store-credentials $KEYCHAIN_PROFILE
+   Ou, melhor, com chave de API do App Store Connect (sem Apple ID/2FA):
+     xcrun notarytool store-credentials $KEYCHAIN_PROFILE \\
+       --key AuthKey_XXXX.p8 --key-id XXXX --issuer <UUID>
+   Erro 401 recorrente? Ver a seção de diagnóstico em docs/release.md."
     ok "Credencial de notarização: $KEYCHAIN_PROFILE"
 fi
 

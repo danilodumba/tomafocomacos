@@ -36,20 +36,50 @@ security find-identity -v -p codesigning | grep "Developer ID Application"
 
 ### 3. Credencial de notarização
 
-A notarização usa uma **senha específica do app**, nunca a senha da conta Apple:
+O `release.sh` lê a credencial de um **perfil no chaveiro** chamado `tomafoco`. Existem dois
+jeitos de criar esse perfil — o de chave de API é o recomendado.
 
-1. https://appleid.apple.com → Segurança → Senhas específicas de app → gerar
-2. Salve no chaveiro:
+#### Opção A — chave de API do App Store Connect (recomendado)
+
+Não envolve Apple ID, senha nem 2FA, e não quebra quando a senha da conta muda.
+
+1. https://appstoreconnect.apple.com/access/integrations/api → **+**
+2. Função **Developer**; baixe o `AuthKey_XXXXXXXX.p8` (**só é possível baixar uma vez**)
+3. Anote o **Key ID** (no nome do arquivo) e o **Issuer ID** (topo da página)
 
 ```bash
 xcrun notarytool store-credentials tomafoco \
-  --apple-id SEU_APPLE_ID \
-  --team-id CJQ7T4KV7H \
-  --password SENHA_ESPECIFICA_DE_APP
+  --key ~/private_keys/AuthKey_XXXXXXXX.p8 \
+  --key-id XXXXXXXX \
+  --issuer 00000000-0000-0000-0000-000000000000
 ```
 
-> O perfil é lido do chaveiro pelo nome (`tomafoco`); a senha **não** fica no repositório.
-> Para usar outro nome: `KEYCHAIN_PROFILE=outro ./scripts/release.sh`.
+Guarde o `.p8` fora do repositório (ex.: `~/private_keys/`, permissão `600`). Quem tiver esse
+arquivo pode agir na sua conta do App Store Connect.
+
+#### Opção B — senha específica de app
+
+```bash
+xcrun notarytool store-credentials tomafoco    # modo interativo: a senha não vai para o histórico
+```
+
+Responda: Apple ID (e-mail), senha específica de app (formato `abcd-efgh-ijkl-mnop`, gerada em
+appleid.apple.com → Segurança), Team ID `CJQ7T4KV7H`.
+
+> Nunca passe `--password` na linha de comando: a senha fica no histórico do shell e o zsh ainda
+> pode interpretar `!` e `$` antes de o comando recebê-la.
+
+#### Erro 401 "Invalid credentials"
+
+Em ordem de probabilidade:
+
+1. A senha específica de app foi gerada em **outra Apple ID** (o navegador estava logado em outra conta).
+2. A senha foi passada por `--password` e o shell alterou algum caractere.
+3. A senha da conta Apple foi usada no lugar da específica de app — com 2FA, sempre falha.
+4. Há **contrato pendente** de aceite em https://developer.apple.com/account (banner no topo).
+5. O Apple ID não é membro do time `CJQ7T4KV7H`.
+
+Se persistir, use a Opção A: ela não passa por nenhum desses caminhos.
 
 ---
 
