@@ -82,7 +82,7 @@ Já existe e está no disco:
 - Testes novos: `XPCWebsiteBlockerTests` (9), `PrivilegedHelperInstallerTests` (11), `HelperReadinessTests` (3). Infra: 20 → **43 testes**.
 - Um teste é regressão explícita do crash: verifica que `isHelperReady` é chamado FORA da main thread.
 
-**🔀 PIVÔ — bloqueio de sites agora é por automação do navegador (ADR-8, 2026-07-22).** Substituiu o `/etc/hosts` como mecanismo principal. **Este é o estado atual do produto.**
+**🔀 PIVÔ — bloqueio de sites agora é por automação do navegador (ADR-8, 2026-07-22). ✅ VALIDADO À MÃO pelo usuário: aba bloqueada vira `blocked.html`.** Substituiu o `/etc/hosts` como mecanismo principal. **Este é o estado atual do produto.**
 
 Por que trocou (depuração longa, não repetir):
 1. `dscacheutil -flushcache` **não** faz o `mDNSResponder` reler o `/etc/hosts` — só limpa cache.
@@ -118,7 +118,7 @@ Pré-requisitos: `brew install xcodegen` (e opcional `brew install swiftlint`). 
 
 1. ~~Validar build/testes reais no Mac~~ ✅ feito em 2026-07-22.
 2. ~~T-20 — UI de adicionar apps via `NSOpenPanel`~~ ✅ feito em 2026-07-22 (falta smoke test manual).
-3. **Validar T-20 e ADR-8 à mão** — picker de apps; e o bloqueio por navegador (autorizar Automação, ver a aba virar `blocked.html`).
+3. ~~Validar T-20 e ADR-8 à mão~~ ✅ feito em 2026-07-22 — bloqueio de sites confirmado funcionando.
 4. ~~T-21 — fluxo de "retomar" pós-crash~~ ✅ feito em 2026-07-22: evento puro `adoptRecovered` (só a partir de ocioso, preserva `endsAt`, não bloqueia se a fase for intervalo) + `SessionCoordinator.adoptRecoveredSession` + diálogo com "Retomar"/"Encerrar e liberar" mostrando fase/ciclo/restante.
 5. **T-12** — validação manual do bloqueio de apps (app fecha < 2s). T-13 (hosts) está suspenso pelo ADR-8.
 6. **T-25** — assinatura Developer ID + notarização + DMG.
