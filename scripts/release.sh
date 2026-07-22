@@ -99,6 +99,22 @@ codesign --force --options runtime --timestamp \
 codesign --verify --strict --verbose=2 "$APP_PATH" 2>&1 | tail -2
 ok "Assinado e verificado"
 
+# ------------------------------------------------- notarização do .app
+
+# O .app é notarizado ANTES de entrar no DMG para receber o próprio ticket.
+# Grampear só o DMG não basta: ao arrastar o app para /Applications, o ticket fica
+# para trás, e num Mac sem rede o Gatekeeper barra a primeira abertura.
+if [[ -z "${SKIP_NOTARIZE:-}" ]]; then
+    info "Notarizando o app (1/2)…"
+    APP_ZIP="$BUILD_DIR/${APP_NAME}.zip"
+    # `ditto -c -k --keepParent` preserva a estrutura do bundle; `zip` comum corrompe symlinks.
+    ditto -c -k --keepParent "$APP_PATH" "$APP_ZIP"
+    xcrun notarytool submit "$APP_ZIP" --keychain-profile "$KEYCHAIN_PROFILE" --wait
+    xcrun stapler staple "$APP_PATH"
+    rm -f "$APP_ZIP"
+    ok "App notarizado e grampeado"
+fi
+
 # ---------------------------------------------------------------- dmg
 
 info "Montando o DMG…"
@@ -128,7 +144,7 @@ fi
 
 # ---------------------------------------------------------------- notarização
 
-info "Enviando para notarização (pode levar alguns minutos)…"
+info "Notarizando o DMG (2/2)…"
 xcrun notarytool submit "$DMG_PATH" \
     --keychain-profile "$KEYCHAIN_PROFILE" \
     --wait

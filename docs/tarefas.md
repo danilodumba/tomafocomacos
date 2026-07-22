@@ -157,10 +157,12 @@ Convenções: tarefas numeradas `T-XX`, agrupadas por épico. Cada tarefa lista 
 - **Dependências:** T-18..T-22
 - **CA:** checklist executado e arquivado em `docs/qa/` a cada release.
 
-### T-25 — Assinatura, notarização e empacotamento `[M]` (RNF-06) 🟡 PIPELINE PRONTO (2026-07-22)
+### T-25 — Assinatura, notarização e empacotamento `[M]` (RNF-06) ✅ FEITO (2026-07-22)
 - `scripts/release.sh` + `make release` / `make release-dry`; passo a passo em `docs/release.md`.
 - Validado até o DMG (build Release + `codesign --options runtime --timestamp` + entitlements + DMG assinado com atalho para `/Applications`).
-- **Bloqueado nos pré-requisitos do usuário:** não há certificado *Developer ID Application* nesta máquina (exige Apple Developer Program pago) nem credencial `notarytool`. O script falha no pré-flight explicando o que fazer.
+- **Notarizado com sucesso pela Apple** (status `Accepted`); DMG final 889 KB, `spctl` → `source=Notarized Developer ID`.
+- Notariza em dois passos: primeiro o `.app` (que recebe ticket próprio), depois o DMG. Grampear só o DMG deixaria o app sem ticket ao ser arrastado para `/Applications` — num Mac offline, o Gatekeeper barraria a primeira abertura.
+- Credencial via **chave de API do App Store Connect** (`xcrun notarytool store-credentials tomafoco --key ...`): Apple ID + senha específica de app dava 401 persistente.
 - Developer ID Application; hardened runtime; `notarytool` + stapling; DMG de distribuição; documento passo a passo em `docs/release.md`.
 - **Dependências:** T-24
 - **CA:** DMG abre em um Mac limpo sem aviso de Gatekeeper.
