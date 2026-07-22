@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!--
+      App distribuído FORA da Mac App Store (ADR-2): sandbox DESLIGADO para poder
+      encerrar apps de terceiros (NSWorkspace) e automatizar navegadores.
+      Hardened Runtime permanece ligado (necessário para notarização — RNF-06).
+    -->
+    <key>com.apple.security.app-sandbox</key>
+    <false/>
+
+    <!--
+      Bloqueio de sites por automação do navegador (ADR-8): o app lê as abas abertas e
+      redireciona as bloqueadas. Sob Hardened Runtime, enviar Apple Events exige este
+      entitlement; além dele, o usuário autoriza cada navegador uma vez (TCC).
+    -->
+    <key>com.apple.security.automation.apple-events</key>
+    <true/>
+</dict>
+</plist>

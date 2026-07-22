@@ -1,0 +1,50 @@
+# XcodeGen — gera o Tomafoco.xcodeproj de forma determinística (ADR-5).
+# Uso:  brew install xcodegen && xcodegen generate && open Tomafoco.xcodeproj
+name: Tomafoco
+options:
+  bundleIdPrefix: com.dsdumba
+  deploymentTarget:
+    macOS: "13.0"
+  createIntermediateGroups: true
+
+packages:
+  TomafocoDomain:
+    path: Packages/TomafocoDomain
+  TomafocoApplication:
+    path: Packages/TomafocoApplication
+  TomafocoInfrastructure:
+    path: Packages/TomafocoInfrastructure
+
+targets:
+  Tomafoco:
+    type: application
+    platform: macOS
+    sources:
+      - path: App
+    dependencies:
+      - package: TomafocoDomain
+      - package: TomafocoApplication
+      - package: TomafocoInfrastructure
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.dsdumba.tomafoco
+        PRODUCT_NAME: Tomafoco
+        MARKETING_VERSION: "1.0"
+        CURRENT_PROJECT_VERSION: "1"
+        SWIFT_VERSION: "5.9"
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ENABLE_HARDENED_RUNTIME: YES
+        DEVELOPMENT_TEAM: CJQ7T4KV7H
+        CODE_SIGN_ENTITLEMENTS: App/Resources/Tomafoco.entitlements
+        DEVELOPMENT_LANGUAGE: pt-BR
+    # Info.plist gerado pelo XcodeGen (fonte única aqui; evita conflito com INFOPLIST_KEY_*).
+    info:
+      path: App/Resources/Info.generated.plist
+      properties:
+        CFBundleDisplayName: Tomafoco
+        LSApplicationCategoryType: public.app-category.productivity
+        LSMinimumSystemVersion: "13.0"
+        LSUIElement: false
+        NSHumanReadableCopyright: "© 2026 Danilo"
+        # Exigido pelo macOS ao pedir permissão de automação de cada navegador (ADR-8).
+        NSAppleEventsUsageDescription: "O Tomafoco precisa controlar seu navegador para redirecionar os sites bloqueados durante as sessões de foco."

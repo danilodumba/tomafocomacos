@@ -1,0 +1,18 @@
+# Xcode / SPM
+.DS_Store
+build/
+DerivedData/
+# Gerado por XcodeGen — project.yml é a fonte da verdade.
+# (comentário precisa ficar em linha própria: o git não aceita comentário no fim do padrão)
+*.xcodeproj/
+.swiftpm/
+Packages/*/.build/
+App/Resources/Info.generated.plist
+
+# Assinatura / notarização
+*.p12
+*.provisionprofile
+notarization.log
+
+# Sistema
+*.dmg
