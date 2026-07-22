@@ -22,6 +22,9 @@ final class AppContainer: ObservableObject {
     let timerViewModel: TimerViewModel
     let settingsViewModel: SettingsViewModel
     let blockListViewModel: BlockListViewModel
+    /// Retido pelo container: sem uma referência forte, a assinatura Combine morre e a tela
+    /// cheia do intervalo nunca aparece.
+    private let breakOverlay: BreakOverlayPresenter
 
     private let notificationAdapter: UNNotificationAdapter?
 
@@ -40,6 +43,7 @@ final class AppContainer: ObservableObject {
         self.timerViewModel = TimerViewModel(coordinator: coordinator, settings: settings)
         self.settingsViewModel = SettingsViewModel(settings: settings)
         self.blockListViewModel = BlockListViewModel(useCase: manageBlockList, appPicker: appPicker)
+        self.breakOverlay = BreakOverlayPresenter(viewModel: self.timerViewModel)
     }
 
     /// Monta o grafo real de dependências do macOS.

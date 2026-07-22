@@ -112,6 +112,13 @@ Como ficou:
 - `PhaseAlertNotifier` (decorador de `UserNotifying`): som + ícone do Dock pulando no fim de cada etapa. É decorador para o som tocar mesmo se a permissão de notificação tiver sido negada. Só fim de etapa alerta — `appBlocked` dispara repetido e viraria ruído.
 - `UNNotificationAdapter` ganhou delegate `ForegroundPresenter`: sem ele o macOS **esconde** a notificação com o app em primeiro plano, que é justamente o caso comum aqui.
 
+**🖥️ Tela cheia de intervalo (2026-07-22):**
+- `BreakOverlayPolicy` (Application, pura e testada — 10 testes): devolve uma **chave** por intervalo, não um `Bool`, para que dispensar a tela de um intervalo não esconda a do próximo. Mostra em intervalo rodando/pausado e enquanto aguarda confirmação de intervalo; nunca durante o foco.
+- `App/UI/BreakOverlay/`: `BreakOverlayPresenter` (uma `NSWindow` **por monitor** — cobrir só o principal deixaria escapar para o outro) + `BreakOverlayView`.
+- Nível `.floating`, não `.screenSaver`: ⌘Tab continua funcionando. O produto é de autodisciplina, não de controle parental (ver "o que o produto NÃO é" na especificação).
+- Esc fecha; `OverlayWindow` sobrescreve `canBecomeKey` porque janela `borderless` não aceita foco de teclado por padrão.
+- `AppContainer` retém o presenter — sem referência forte a assinatura Combine morre e a tela nunca aparece.
+
 ## Como retomar
 
 ```bash

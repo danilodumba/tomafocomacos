@@ -27,6 +27,12 @@ final class TimerViewModel: ObservableObject {
 
     /// Rótulo curto para o item da barra de menus.
     @Published private(set) var menuBarLabel = "🍅"
+    /// `true` quando a tela cheia de intervalo deve estar visível (RF-01.3).
+    @Published private(set) var showsBreakOverlay = false
+
+    /// Chave do intervalo cuja tela o usuário dispensou. Guardada por intervalo para que
+    /// fechar a tela de um não esconda a do próximo.
+    private var dismissedOverlayKey: String?
 
     private let coordinator: SessionCoordinator
     private let settings: SettingsRepository
@@ -116,11 +122,20 @@ final class TimerViewModel: ObservableObject {
 
     // MARK: - Render
 
+    /// Fecha a tela cheia do intervalo atual. O próximo intervalo volta a exibi-la.
+    func dismissBreakOverlay() {
+        dismissedOverlayKey = BreakOverlayPolicy.presentationKey(for: coordinator.state)
+        showsBreakOverlay = false
+    }
+
     private func render(_ state: SessionMachineState) {
         isIdle = false
         isRunning = false
         isPaused = false
         isAwaitingNext = false
+
+        let overlayKey = BreakOverlayPolicy.presentationKey(for: state)
+        showsBreakOverlay = overlayKey != nil && overlayKey != dismissedOverlayKey
 
         switch state {
         case .idle:
