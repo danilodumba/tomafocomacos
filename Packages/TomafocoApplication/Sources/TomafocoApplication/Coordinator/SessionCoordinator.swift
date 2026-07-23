@@ -1,4 +1,5 @@
 import Foundation
+import os
 import TomafocoDomain
 
 /// Orquestrador de runtime da sessão Pomodoro. É a fachada que a camada de apresentação usa.
@@ -30,6 +31,10 @@ public final class SessionCoordinator {
     private let notifier: UserNotifying
     private let makeID: () -> UUID
 
+    /// Falha de persistência não interrompe a sessão (o timer é mais importante que o snapshot),
+    /// mas jamais pode ser silenciosa: sem log, um failsafe morto (RNF-02) só aparece no crash.
+    private static let logger = Logger(subsystem: "com.dsdumba.tomafoco", category: "SessionCoordinator")
+
     private var subscription: ClockSubscription?
 
     public init(
@@ -52,14 +57,15 @@ public final class SessionCoordinator {
 
     // MARK: - Casos de uso expostos
 
-    /// UC-01 — inicia uma sessão de foco. Valida a exigência de motivo do modo hardcore (RF-06.2).
-    public func startFocus(reason: String?) async throws {
+    /// UC-01 — inicia uma sessão de foco, opcionalmente vinculada a uma tarefa (RF-09).
+    /// Valida a exigência de motivo do modo hardcore (RF-06.2).
+    public func startFocus(reason: String?, taskID: UUID? = nil) async throws {
         let config = settings.loadConfiguration()
         if config.hardcore.isEnabled, config.hardcore.requireReason {
             let trimmed = reason?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
             guard !trimmed.isEmpty else { throw DomainError.reasonRequired }
         }
-        await dispatch(.startFocus(reason: reason))
+        await dispatch(.startFocus(reason: reason, taskID: taskID))
         ensureTicking()
     }
 
@@ -130,13 +136,21 @@ public final class SessionCoordinator {
                 await activateBlocking()
             case .deactivateBlocking:
                 appBlocker.deactivate()
-                try? await websiteBlocker.deactivate()
+                do { try await websiteBlocker.deactivate() } catch {
+                    Self.logger.error("Falha ao desativar bloqueio de sites: \(String(describing: error), privacy: .public)")
+                }
             case .persistActive(let session):
-                try? sessions.saveActive(session)
+                do { try sessions.saveActive(session) } catch {
+                    Self.logger.error("Falha ao persistir sessão ativa (failsafe RNF-02): \(String(describing: error), privacy: .public)")
+                }
             case .clearActive:
-                try? sessions.clearActive()
+                do { try sessions.clearActive() } catch {
+                    Self.logger.error("Falha ao limpar sessão ativa: \(String(describing: error), privacy: .public)")
+                }
             case .recordHistory(let record):
-                try? sessions.appendToHistory(record)
+                do { try sessions.appendToHistory(record) } catch {
+                    Self.logger.error("Falha ao gravar histórico: \(String(describing: error), privacy: .public)")
+                }
             case .notify(let event):
                 notifier.notify(event)
             }

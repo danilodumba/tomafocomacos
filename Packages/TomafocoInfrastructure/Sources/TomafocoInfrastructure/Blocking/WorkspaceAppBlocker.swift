@@ -27,6 +27,9 @@ public final class WorkspaceAppBlocker: AppBlocking, @unchecked Sendable {
     }
 
     public func activate(blockedBundleIDs: Set<String>) {
+        // Idempotência (RNF-01): reativar sem desativar antes sobrescreveria `observer` e vazaria
+        // o anterior — cada relançamento passaria a gerar terminate + aviso em dobro.
+        deactivate()
         self.blockedBundleIDs = blockedBundleIDs
         terminateRunning(in: blockedBundleIDs)
 

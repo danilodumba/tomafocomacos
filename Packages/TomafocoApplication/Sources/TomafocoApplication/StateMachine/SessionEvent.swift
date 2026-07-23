@@ -3,7 +3,7 @@ import TomafocoDomain
 
 /// Eventos que dirigem a máquina de estados do Pomodoro.
 public enum SessionEvent: Equatable {
-    case startFocus(reason: String?)
+    case startFocus(reason: String?, taskID: UUID?)
     case tick
     case pause
     case resume

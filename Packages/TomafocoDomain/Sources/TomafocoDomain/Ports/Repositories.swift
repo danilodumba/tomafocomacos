@@ -6,6 +6,14 @@ public protocol SessionRepository: AnyObject {
     func loadActive() throws -> PomodoroSession?
     func clearActive() throws
     func appendToHistory(_ record: SessionRecord) throws
+    func loadHistory() throws -> [SessionRecord]
+}
+
+/// Persistência das tarefas de foco (RF-09). Lista inteira de uma vez — volume pequeno,
+/// mesma estratégia de escrita atômica dos snapshots.
+public protocol TaskRepository: AnyObject {
+    func loadTasks() throws -> [FocusTask]
+    func saveTasks(_ tasks: [FocusTask]) throws
 }
 
 /// Persistência de configuração e listas de bloqueio (RF-05).

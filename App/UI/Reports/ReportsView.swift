@@ -1,0 +1,196 @@
+import SwiftUI
+import Charts
+import TomafocoApplication
+
+/// Aba Relatórios (RF-10): resumo, horas por dia, intervalos por dia e horas por tarefa.
+/// Dois gráficos separados de propósito — nunca eixo Y duplo; cada medida tem seu gráfico.
+struct ReportsView: View {
+    @ObservedObject var viewModel: ReportsViewModel
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 18) {
+                Picker("Período", selection: $viewModel.period) {
+                    ForEach(ReportsViewModel.Period.allCases) { period in
+                        Text(period.rawValue).tag(period)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+
+                if let report = viewModel.report {
+                    if report.dailyTotals.isEmpty {
+                        emptyState
+                    } else {
+                        summaryTiles(report.summary)
+                        dailyFocusChart(report.dailyTotals)
+                        dailyBreaksChart(report.dailyTotals)
+                        taskTable(report.taskTotals)
+                    }
+                }
+            }
+            .padding(16)
+        }
+        .onAppear { viewModel.reload() }
+    }
+
+    private var emptyState: some View {
+        VStack(spacing: 8) {
+            Image(systemName: "chart.bar")
+                .font(.system(size: 28))
+                .foregroundStyle(Brand.textFaint)
+            Text("Sem sessões no período. Complete um foco e volte aqui.")
+                .font(.system(size: 12))
+                .foregroundStyle(Brand.textSecondary)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 40)
+    }
+
+    // MARK: - Resumo (stat tiles)
+
+    private func summaryTiles(_ summary: FocusReport.Summary) -> some View {
+        let tiles: [(String, String)] = [
+            ("Foco total", ReportsViewModel.formatDuration(summary.focusTotal)),
+            ("Intervalos", ReportsViewModel.formatDuration(summary.breakTotal)),
+            ("Média/dia", ReportsViewModel.formatDuration(summary.dailyFocusAverage)),
+            ("Sequência", "\(summary.streakDays) dia\(summary.streakDays == 1 ? "" : "s")"),
+            ("Focos ✓", "\(summary.completedFocusCount)"),
+            ("Cancelados", "\(summary.cancelledFocusCount)")
+        ]
+        return LazyVGrid(columns: [GridItem(.adaptive(minimum: 110), spacing: 10)], spacing: 10) {
+            ForEach(tiles, id: \.0) { title, value in
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(title.uppercased())
+                        .font(.system(size: 9, weight: .semibold))
+                        .tracking(1.1)
+                        .foregroundStyle(Brand.textFaint)
+                    Text(value)
+                        .font(.system(size: 17, weight: .semibold, design: .rounded))
+                        .foregroundStyle(Brand.textPrimary)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(10)
+                .background(
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .fill(Brand.surface)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                .strokeBorder(Brand.surfaceStroke, lineWidth: 1)
+                        )
+                )
+            }
+        }
+    }
+
+    // MARK: - Gráficos (uma série cada — o título nomeia; sem legenda)
+
+    private func dailyFocusChart(_ days: [FocusReport.DailyTotal]) -> some View {
+        chartCard("Horas focadas por dia") {
+            Chart(days, id: \.day) { day in
+                BarMark(
+                    x: .value("Dia", day.day, unit: .day),
+                    y: .value("Horas", day.focusTime / 3600)
+                )
+                .foregroundStyle(Brand.cyan)
+                .cornerRadius(3)
+            }
+            .chartYAxis {
+                AxisMarks { value in
+                    AxisGridLine().foregroundStyle(Brand.surfaceStroke)
+                    AxisValueLabel {
+                        if let hours = value.as(Double.self) {
+                            Text("\(hours, specifier: "%.0f")h")
+                                .foregroundStyle(Brand.textFaint)
+                        }
+                    }
+                }
+            }
+            .chartXAxis { dayAxis }
+        }
+    }
+
+    private func dailyBreaksChart(_ days: [FocusReport.DailyTotal]) -> some View {
+        chartCard("Intervalos por dia") {
+            Chart(days, id: \.day) { day in
+                BarMark(
+                    x: .value("Dia", day.day, unit: .day),
+                    y: .value("Intervalos", day.breakCount)
+                )
+                .foregroundStyle(Brand.cyanDeep)
+                .cornerRadius(3)
+            }
+            .chartYAxis {
+                AxisMarks { value in
+                    AxisGridLine().foregroundStyle(Brand.surfaceStroke)
+                    AxisValueLabel()
+                        .foregroundStyle(Brand.textFaint)
+                }
+            }
+            .chartXAxis { dayAxis }
+        }
+    }
+
+    private var dayAxis: some AxisContent {
+        AxisMarks(values: .stride(by: .day)) { _ in
+            AxisValueLabel(format: .dateTime.day().month(.twoDigits), centered: true)
+                .foregroundStyle(Brand.textFaint)
+        }
+    }
+
+    private func chartCard(_ title: String, @ViewBuilder content: () -> some View) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(title)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(Brand.textSecondary)
+            content()
+                .frame(height: 140)
+        }
+        .padding(12)
+        .background(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(Brand.surface)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .strokeBorder(Brand.surfaceStroke, lineWidth: 1)
+                )
+        )
+    }
+
+    // MARK: - Horas por tarefa (tabela — identidade + valor, sem gráfico)
+
+    private func taskTable(_ totals: [FocusReport.TaskTotal]) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Horas por tarefa")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(Brand.textSecondary)
+
+            ForEach(Array(totals.enumerated()), id: \.offset) { _, total in
+                HStack {
+                    Text(total.title)
+                        .foregroundStyle(Brand.textPrimary)
+                        .lineLimit(1)
+                    Spacer()
+                    Text("\(total.sessionCount) sessão\(total.sessionCount == 1 ? "" : "s")")
+                        .font(.system(size: 11))
+                        .foregroundStyle(Brand.textFaint)
+                    Text(ReportsViewModel.formatDuration(total.focusTime))
+                        .font(.system(size: 12, weight: .semibold, design: .rounded))
+                        .foregroundStyle(Brand.textPrimary)
+                        .frame(minWidth: 64, alignment: .trailing)
+                }
+                .padding(.vertical, 6)
+                .padding(.horizontal, 10)
+                .background(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .fill(Brand.surface)
+                )
+            }
+        }
+        .padding(12)
+        .background(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .strokeBorder(Brand.surfaceStroke, lineWidth: 1)
+        )
+    }
+}

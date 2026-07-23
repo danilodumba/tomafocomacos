@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<title>Bloqueado — Tomafoco</title>
+<style>
+  :root { color-scheme: light dark; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; min-height: 100vh;
+    display: flex; align-items: center; justify-content: center;
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
+    background: linear-gradient(180deg, #08143E 0%, #0F2360 100%);
+    color: #fff;
+  }
+  .card { text-align: center; padding: 48px 32px; max-width: 460px; }
+  .ring {
+    width: 96px; height: 96px; margin: 0 auto 28px;
+    border-radius: 50%; border: 5px solid rgba(255,255,255,.12);
+    border-top-color: #17B9EB; border-right-color: #17B9EB;
+    transform: rotate(-45deg);
+  }
+  h1 { font-size: 26px; font-weight: 600; margin: 0 0 12px; letter-spacing: -.2px; }
+  p { font-size: 15px; line-height: 1.55; color: rgba(255,255,255,.66); margin: 0; }
+  .tag {
+    display: inline-block; margin-top: 28px; padding: 7px 14px;
+    border: 1px solid rgba(255,255,255,.14); border-radius: 999px;
+    font-size: 11px; letter-spacing: 1.4px; text-transform: uppercase;
+    color: #17B9EB;
+  }
+</style>
+</head>
+<body>
+  <div class="card">
+    <div class="ring"></div>
+    <h1>Este site está bloqueado</h1>
+    <p>Você está em uma sessão de foco. A página volta a abrir quando o foco terminar.</p>
+    <div class="tag">Tomafoco</div>
+  </div>
+</body>
+</html>

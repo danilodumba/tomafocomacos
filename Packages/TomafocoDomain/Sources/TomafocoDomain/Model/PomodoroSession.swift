@@ -10,6 +10,8 @@ public struct PomodoroSession: Equatable, Codable, Sendable, Identifiable {
     public let endsAt: Date
     public let reason: String?
     public let cycleNumber: Int
+    /// Tarefa em foco (RF-09). Opcional: snapshot antigo sem a chave decodifica `nil`.
+    public let taskID: UUID?
 
     public init(
         id: UUID,
@@ -17,7 +19,8 @@ public struct PomodoroSession: Equatable, Codable, Sendable, Identifiable {
         startedAt: Date,
         endsAt: Date,
         reason: String?,
-        cycleNumber: Int
+        cycleNumber: Int,
+        taskID: UUID?
     ) {
         self.id = id
         self.phase = phase
@@ -25,6 +28,7 @@ public struct PomodoroSession: Equatable, Codable, Sendable, Identifiable {
         self.endsAt = endsAt
         self.reason = reason
         self.cycleNumber = cycleNumber
+        self.taskID = taskID
     }
 
     /// Tempo restante (nunca negativo) relativo a um instante `now` injetado — nunca use `Date()` aqui.

@@ -9,7 +9,8 @@ public enum SessionMachineState: Equatable {
     case paused(session: PomodoroSession, remaining: TimeInterval)
     /// Uma etapa terminou e o app aguarda confirmação para iniciar a próxima
     /// (avanço automático desligado). Vale tanto para foco → intervalo quanto intervalo → foco.
-    case awaitingNext(phase: SessionPhase, cycle: Int)
+    /// Carrega o `taskID` para a tarefa atravessar o ciclo inteiro (RF-09).
+    case awaitingNext(phase: SessionPhase, cycle: Int, taskID: UUID?)
 
     public var currentSession: PomodoroSession? {
         switch self {

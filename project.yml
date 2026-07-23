@@ -48,3 +48,7 @@ targets:
         NSHumanReadableCopyright: "© 2026 Danilo"
         # Exigido pelo macOS ao pedir permissão de automação de cada navegador (ADR-8).
         NSAppleEventsUsageDescription: "O Tomafoco precisa controlar seu navegador para redirecionar os sites bloqueados durante as sessões de foco."
+        # Importação de tarefas do app Lembretes (RF-09). macOS 14+ usa a chave FullAccess;
+        # a antiga cobre macOS 13.
+        NSRemindersUsageDescription: "O Tomafoco importa suas tarefas do Lembretes para você registrar o tempo de foco em cada uma."
+        NSRemindersFullAccessUsageDescription: "O Tomafoco importa suas tarefas do Lembretes para você registrar o tempo de foco em cada uma."

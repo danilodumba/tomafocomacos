@@ -17,6 +17,10 @@ public final class AppleScriptBrowserBlocker: WebsiteBlocking, @unchecked Sendab
 
     private let browsers: [BrowserTarget]
     private let blockPageURL: String
+    /// Site de redirecionamento configurado pelo usuário (cru). Lido a cada varredura, então
+    /// mudar nas Configurações reflete na próxima passada sem religar o bloqueio. `nil`/vazio
+    /// → `blockPageURL`.
+    private let redirectURLProvider: @Sendable () -> String?
     private let pollInterval: TimeInterval
     private let scriptRunner: AppleScriptRunning
     private let runningApps: RunningApplicationsProviding
@@ -28,81 +32,88 @@ public final class AppleScriptBrowserBlocker: WebsiteBlocking, @unchecked Sendab
     /// Navegadores que recusaram automação — para não insistir a cada segundo.
     private var deniedBundleIDs: Set<String> = []
 
+    /// `pollInterval` padrão de 2s: o `NSAppleScript` executa na main thread, então cada varredura
+    /// custa tempo de UI — 1s de intervalo com navegador aberto vira jank contínuo durante toda a
+    /// sessão de foco. 2s corta esse custo pela metade e a aba bloqueada ainda cai em ≤2s.
     public init(
         blockPageURL: String,
         scriptRunner: AppleScriptRunning,
         runningApps: RunningApplicationsProviding,
         browsers: [BrowserTarget] = BrowserTarget.all,
-        pollInterval: TimeInterval = 1
+        pollInterval: TimeInterval = 2,
+        redirectURLProvider: @escaping @Sendable () -> String? = { nil }
     ) {
         self.blockPageURL = blockPageURL
         self.scriptRunner = scriptRunner
         self.runningApps = runningApps
         self.browsers = browsers
         self.pollInterval = pollInterval
+        self.redirectURLProvider = redirectURLProvider
     }
 
     // MARK: - WebsiteBlocking
 
     public func activate(domains: [BlockedDomain]) async throws {
-        lock.lock()
-        blockedDomains = domains
-        deniedBundleIDs = []
-        let alreadyRunning = timer != nil
-        lock.unlock()
+        // O timer nasce dentro do lock: checar `timer != nil` e criar fora dele permitiria a duas
+        // ativações concorrentes criarem dois timers — um vazaria varrendo para sempre.
+        let timerToStart: DispatchSourceTimer? = withLock {
+            blockedDomains = domains
+            deniedBundleIDs = []
+            guard timer == nil, !domains.isEmpty else { return nil }
+            let source = DispatchSource.makeTimerSource(queue: queue)
+            source.schedule(deadline: .now() + pollInterval, repeating: pollInterval)
+            source.setEventHandler { [weak self] in self?.sweep() }
+            timer = source
+            return source
+        }
 
         // Passada imediata: a aba aberta agora não espera o próximo tick para ser bloqueada.
         sweep()
-
-        guard !alreadyRunning, !domains.isEmpty else { return }
-        startTimer()
+        timerToStart?.resume()
     }
 
     public func deactivate() async throws {
-        lock.lock()
-        blockedDomains = []
-        let current = timer
-        timer = nil
-        lock.unlock()
+        let current: DispatchSourceTimer? = withLock {
+            blockedDomains = []
+            let current = timer
+            timer = nil
+            return current
+        }
         current?.cancel()
     }
 
     public var isActive: Bool {
-        get async {
-            lock.lock(); defer { lock.unlock() }
-            return timer != nil
-        }
+        get async { withLock { timer != nil } }
     }
 
     // MARK: - Varredura
 
-    private func startTimer() {
-        let source = DispatchSource.makeTimerSource(queue: queue)
-        source.schedule(deadline: .now() + pollInterval, repeating: pollInterval)
-        source.setEventHandler { [weak self] in self?.sweep() }
-        lock.lock(); timer = source; lock.unlock()
-        source.resume()
-    }
-
     /// Uma passada por todos os navegadores em execução.
     func sweep() {
-        lock.lock()
-        let domains = blockedDomains
-        var denied = deniedBundleIDs
-        lock.unlock()
+        let (domains, denied) = withLock { (blockedDomains, deniedBundleIDs) }
         guard !domains.isEmpty else { return }
 
+        var newlyDenied: Set<String> = []
         let running = runningApps.runningBundleIDs()
         for browser in browsers where running.contains(browser.bundleID) && !denied.contains(browser.bundleID) {
             do {
                 try redirectBlockedTabs(in: browser, domains: domains)
+            } catch AutomationError.permissionDenied {
+                // Sem permissão de Automação não adianta insistir: cada tentativa repetiria o
+                // erro a cada tick. Só volta a tentar na próxima ativação.
+                newlyDenied.insert(browser.bundleID)
             } catch {
-                // Permissão negada ou navegador ocupado: para de tentar até a próxima ativação.
-                denied.insert(browser.bundleID)
+                // Falha transiente (navegador ocupado, diálogo modal aberto): NÃO marca como
+                // negado — um soluço não pode deixar o navegador sem bloqueio pelo resto da
+                // sessão. Tenta de novo no próximo tick.
             }
         }
 
-        lock.lock(); deniedBundleIDs = denied; lock.unlock()
+        // Une em vez de sobrescrever: se `activate` zerou a lista no meio desta varredura,
+        // sobrescrever restauraria negações antigas que acabaram de ser perdoadas.
+        if !newlyDenied.isEmpty {
+            withLock { deniedBundleIDs.formUnion(newlyDenied) }
+        }
     }
 
     private func redirectBlockedTabs(in browser: BrowserTarget, domains: [BlockedDomain]) throws {
@@ -111,13 +122,41 @@ public final class AppleScriptBrowserBlocker: WebsiteBlocking, @unchecked Sendab
         let blocked = BrowserScript.parseTabs(output)
             .filter { URLBlockingPolicy.isBlocked(urlString: $0.url, domains: domains) }
 
+        let target = redirectTarget(domains: domains)
+
         // De trás para frente: redirecionar não muda índices, mas se o navegador fechar uma aba
         // no meio da operação, os índices maiores são os que ficam inválidos primeiro.
         for tab in blocked.sorted(by: { $0.tabIndex > $1.tabIndex }) {
-            try scriptRunner.run(
-                BrowserScript.redirect(tab: tab, in: browser, to: blockPageURL),
+            _ = try scriptRunner.run(
+                BrowserScript.redirect(tab: tab, in: browser, to: target),
                 targeting: browser.applicationName)
         }
+    }
+
+    /// URL de destino da aba bloqueada: o site configurado (normalizado) ou `blockPageURL`.
+    /// Se o destino configurado for ele mesmo bloqueado, cai no `blockPageURL` — senão a aba
+    /// entraria em laço de redirecionamento a cada varredura.
+    func redirectTarget(domains: [BlockedDomain]) -> String {
+        guard let custom = Self.normalizedRedirect(redirectURLProvider()),
+              !URLBlockingPolicy.isBlocked(urlString: custom, domains: domains)
+        else { return blockPageURL }
+        return custom
+    }
+
+    /// Normaliza o site cru das Configurações: trim, vazio → `nil`, e adiciona `https://`
+    /// quando falta esquema (o AppleScript `set URL` exige URL absoluta).
+    static func normalizedRedirect(_ raw: String?) -> String? {
+        guard let trimmed = raw?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !trimmed.isEmpty else { return nil }
+        if trimmed.contains("://") { return trimmed }
+        return "https://\(trimmed)"
+    }
+
+    /// Ponto único de exclusão. Função síncrona de propósito: chamar `NSLock.lock()` direto num
+    /// contexto async gera warning (erro no Swift 6) — e o corpo aqui nunca suspende.
+    private func withLock<T>(_ body: () -> T) -> T {
+        lock.lock(); defer { lock.unlock() }
+        return body()
     }
 }
 

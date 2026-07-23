@@ -16,7 +16,7 @@ public enum BreakOverlayPolicy {
             guard !session.phase.appliesBlocking, session.phase != .idle else { return nil }
             return "running-\(session.id.uuidString)"
 
-        case .awaitingNext(let phase, let cycle):
+        case .awaitingNext(let phase, let cycle, _):
             // Foco terminou e o intervalo aguarda confirmação: é justamente a hora de chamar
             // a atenção — o usuário pode estar em outro app sem perceber que a etapa acabou.
             guard !phase.appliesBlocking else { return nil }

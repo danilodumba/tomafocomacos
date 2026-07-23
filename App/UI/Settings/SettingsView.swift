@@ -41,6 +41,18 @@ struct SettingsView: View {
                 toggleRow("Forçar encerramento de apps",
                           help: "Usa force-terminate: fecha na marra, o app pode perder dados não salvos.",
                           isOn: $settingsViewModel.forceTerminateApps)
+                toggleRow("Iniciar junto com o macOS",
+                          help: "Registra o Tomafoco como item de login do sistema.",
+                          isOn: $settingsViewModel.launchAtLogin)
+                toggleRow("Sincronizar conclusão com o Lembretes",
+                          help: "Concluir ou reabrir uma tarefa importada espelha o mesmo estado no app Lembretes.",
+                          isOn: $settingsViewModel.syncReminderCompletion)
+                if let error = settingsViewModel.launchAtLoginError {
+                    Text(error)
+                        .font(.system(size: 11))
+                        .foregroundStyle(Brand.danger)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
 
             Section("Modo hardcore") {
@@ -54,9 +66,20 @@ struct SettingsView: View {
                 }
                 .disabled(!settingsViewModel.hardcoreEnabled)
             }
+
+            Section {
+                HStack {
+                    Spacer()
+                    Text(AppInfo.display)
+                        .font(.system(size: 11))
+                        .foregroundStyle(Brand.textFaint)
+                    Spacer()
+                }
+            }
         }
         .formStyle(.grouped)
         .scrollContentBackground(.hidden)
+        .onAppear { settingsViewModel.refreshLaunchAtLogin() }
     }
 
     // MARK: Linhas do formulário
@@ -145,6 +168,20 @@ struct SettingsView: View {
                     }
                     .padding(.vertical, 2)
                 }
+            }
+
+            Divider().padding(.vertical, 4)
+
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Redirecionar aba bloqueada para")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(Brand.textSecondary)
+                TextField("exemplo.com", text: $settingsViewModel.blockedRedirectURL)
+                    .textFieldStyle(.roundedBorder)
+                Text("Deixe vazio para usar a página de bloqueio padrão. Sem “https://”, ele é adicionado.")
+                    .font(.system(size: 11))
+                    .foregroundStyle(Brand.textFaint)
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
         .padding(20)

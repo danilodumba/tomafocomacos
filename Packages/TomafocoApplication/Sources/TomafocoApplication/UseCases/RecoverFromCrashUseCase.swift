@@ -41,7 +41,8 @@ public final class RecoverFromCrashUseCase {
             let record = SessionRecord(
                 sessionID: session.id, phase: session.phase,
                 startedAt: session.startedAt, endedAt: session.endsAt,
-                outcome: .recovered, cycleNumber: session.cycleNumber
+                outcome: .recovered, cycleNumber: session.cycleNumber,
+                taskID: session.taskID
             )
             try? sessions.appendToHistory(record)
             try? sessions.clearActive()

@@ -10,7 +10,7 @@ final class BreakOverlayPolicyTests: XCTestCase {
 
     private func session(_ phase: SessionPhase, cycle: Int = 1, id: UUID = UUID()) -> PomodoroSession {
         PomodoroSession(id: id, phase: phase, startedAt: now,
-                        endsAt: now.addingTimeInterval(300), reason: nil, cycleNumber: cycle)
+                        endsAt: now.addingTimeInterval(300), reason: nil, cycleNumber: cycle, taskID: nil)
     }
 
     // MARK: - Mostra
@@ -26,7 +26,7 @@ final class BreakOverlayPolicyTests: XCTestCase {
     /// Foco acabou e o intervalo espera confirmação: é o momento de chamar a atenção.
     func test_aguardandoIntervalo_mostra() {
         XCTAssertNotNil(
-            BreakOverlayPolicy.presentationKey(for: .awaitingNext(phase: .shortBreak, cycle: 2)))
+            BreakOverlayPolicy.presentationKey(for: .awaitingNext(phase: .shortBreak, cycle: 2, taskID: nil)))
     }
 
     func test_intervaloPausado_continuaMostrando() {
@@ -48,7 +48,7 @@ final class BreakOverlayPolicyTests: XCTestCase {
 
     /// Aguardando o próximo FOCO o intervalo já acabou — a tela tem que sair.
     func test_aguardandoProximoFoco_naoMostra() {
-        XCTAssertNil(BreakOverlayPolicy.presentationKey(for: .awaitingNext(phase: .focus, cycle: 3)))
+        XCTAssertNil(BreakOverlayPolicy.presentationKey(for: .awaitingNext(phase: .focus, cycle: 3, taskID: nil)))
     }
 
     func test_ocioso_naoMostra() {
@@ -74,14 +74,14 @@ final class BreakOverlayPolicyTests: XCTestCase {
     /// A espera e o intervalo já iniciado são momentos distintos: se compartilhassem a chave,
     /// dispensar o aviso faria a tela do intervalo em si nunca aparecer.
     func test_esperaEIntervaloIniciado_naoCompartilhamChave() {
-        let esperando = BreakOverlayPolicy.presentationKey(for: .awaitingNext(phase: .shortBreak, cycle: 1))
+        let esperando = BreakOverlayPolicy.presentationKey(for: .awaitingNext(phase: .shortBreak, cycle: 1, taskID: nil))
         let rodando = BreakOverlayPolicy.presentationKey(for: .running(session(.shortBreak, cycle: 1)))
         XCTAssertNotEqual(esperando, rodando)
     }
 
     func test_ciclosDiferentesNaEspera_temChavesDiferentes() {
-        let c1 = BreakOverlayPolicy.presentationKey(for: .awaitingNext(phase: .shortBreak, cycle: 1))
-        let c2 = BreakOverlayPolicy.presentationKey(for: .awaitingNext(phase: .shortBreak, cycle: 2))
+        let c1 = BreakOverlayPolicy.presentationKey(for: .awaitingNext(phase: .shortBreak, cycle: 1, taskID: nil))
+        let c2 = BreakOverlayPolicy.presentationKey(for: .awaitingNext(phase: .shortBreak, cycle: 2, taskID: nil))
         XCTAssertNotEqual(c1, c2)
     }
 }

@@ -5,6 +5,7 @@ import TomafocoDomain
 /// Layout em três faixas: cabeçalho, anel de progresso e controles — identidade DDS.TEC.
 struct MainView: View {
     @ObservedObject var viewModel: TimerViewModel
+    @Environment(\.openWindow) private var openWindow
 
     var body: some View {
         ZStack {
@@ -44,11 +45,12 @@ struct MainView: View {
 
     private var overflowMenu: some View {
         Menu {
+            Button("Tarefas & Relatórios…") { openWindow(id: "tasks") }
             settingsButton
             Divider()
             Button("Sair do Tomafoco") { NSApplication.shared.terminate(nil) }
         } label: {
-            Image(systemName: "ellipsis")
+            Image(systemName: "gearshape")
                 .font(.system(size: 15, weight: .semibold))
                 .foregroundStyle(Brand.textSecondary)
                 .frame(width: 28, height: 24)
@@ -88,6 +90,20 @@ struct MainView: View {
                         .tracking(1.4)
                         .foregroundStyle(Brand.textFaint)
                 }
+
+                if let task = viewModel.currentTaskTitle {
+                    HStack(spacing: 4) {
+                        Image(systemName: "checklist")
+                            .font(.system(size: 9))
+                        Text(task)
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+                    }
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(Brand.textSecondary)
+                    .frame(maxWidth: 150)
+                    .accessibilityLabel("Tarefa em foco: \(task)")
+                }
             }
         }
         .frame(width: 232, height: 232)
@@ -98,6 +114,10 @@ struct MainView: View {
 
     private var footer: some View {
         VStack(spacing: 18) {
+            if viewModel.isIdle && !viewModel.availableTasks.isEmpty {
+                taskPicker
+            }
+
             if viewModel.isIdle && viewModel.requiresReason {
                 TextField("Motivo do foco", text: $viewModel.reason)
                     .textFieldStyle(.plain)
@@ -126,6 +146,36 @@ struct MainView: View {
 
             controls
         }
+    }
+
+    /// Seletor compacto da tarefa do próximo foco (RF-09). Só aparece ocioso e com tarefas.
+    private var taskPicker: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "checklist")
+                .font(.system(size: 12))
+                .foregroundStyle(Brand.textFaint)
+
+            Picker("Tarefa", selection: $viewModel.selectedTaskID) {
+                Text("Sem tarefa").tag(UUID?.none)
+                ForEach(viewModel.availableTasks) { task in
+                    Text(task.title).tag(Optional(task.id))
+                }
+            }
+            .labelsHidden()
+            .pickerStyle(.menu)
+            .tint(Brand.textPrimary)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 6)
+        .background(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(Brand.surface)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .strokeBorder(Brand.surfaceStroke, lineWidth: 1)
+                )
+        )
+        .accessibilityLabel("Tarefa do próximo foco")
     }
 
     private var controls: some View {

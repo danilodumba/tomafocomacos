@@ -25,6 +25,18 @@ final class TimerViewModel: ObservableObject {
     @Published var errorMessage: String?
     @Published var pendingRecovery: PomodoroSession?
 
+    /// Tarefa escolhida para o próximo foco (RF-09). `nil` = focar sem tarefa.
+    @Published var selectedTaskID: UUID?
+    /// Tarefas disponíveis no seletor — recarregadas sempre que o timer fica ocioso.
+    @Published private(set) var availableTasks: [FocusTask] = []
+    /// Título da tarefa da sessão corrente — visível no anel durante toda a sessão,
+    /// para o usuário nunca perder de vista no que deveria estar focando.
+    @Published private(set) var currentTaskTitle: String?
+
+    /// Último título resolvido, por tarefa. Evita ir ao disco a cada tick (1/s) e preserva
+    /// o título caso a tarefa seja apagada/concluída no meio da sessão.
+    private var resolvedTaskTitle: (id: UUID, title: String)?
+
     /// Rótulo curto para o item da barra de menus.
     @Published private(set) var menuBarLabel = "🍅"
     /// `true` quando a tela cheia de intervalo deve estar visível (RF-01.3).
@@ -36,6 +48,7 @@ final class TimerViewModel: ObservableObject {
 
     private let coordinator: SessionCoordinator
     private let settings: SettingsRepository
+    private let manageTasks: ManageTasksUseCase
     private var recover: RecoverFromCrashUseCase?
 
     var requiresReason: Bool {
@@ -43,9 +56,10 @@ final class TimerViewModel: ObservableObject {
         return hc.isEnabled && hc.requireReason
     }
 
-    init(coordinator: SessionCoordinator, settings: SettingsRepository) {
+    init(coordinator: SessionCoordinator, settings: SettingsRepository, manageTasks: ManageTasksUseCase) {
         self.coordinator = coordinator
         self.settings = settings
+        self.manageTasks = manageTasks
         coordinator.onStateChange = { [weak self] state in self?.render(state) }
         render(coordinator.state)
     }
@@ -55,7 +69,8 @@ final class TimerViewModel: ObservableObject {
     func startFocus() async {
         errorMessage = nil
         do {
-            try await coordinator.startFocus(reason: reason.isEmpty ? nil : reason)
+            try await coordinator.startFocus(
+                reason: reason.isEmpty ? nil : reason, taskID: selectedTaskID)
             reason = ""
         } catch DomainError.reasonRequired {
             errorMessage = "Informe um motivo para iniciar o foco (modo hardcore)."
@@ -137,6 +152,8 @@ final class TimerViewModel: ObservableObject {
         let overlayKey = BreakOverlayPolicy.presentationKey(for: state)
         showsBreakOverlay = overlayKey != nil && overlayKey != dismissedOverlayKey
 
+        currentTaskTitle = resolveTaskTitle(for: state)
+
         switch state {
         case .idle:
             isIdle = true
@@ -147,6 +164,7 @@ final class TimerViewModel: ObservableObject {
             progress = 0
             canSkip = false
             menuBarLabel = "🍅"
+            reloadAvailableTasks()
 
         case .running(let session):
             isRunning = true
@@ -169,7 +187,7 @@ final class TimerViewModel: ObservableObject {
             canSkip = true
             menuBarLabel = "⏸ \(format(remaining))"
 
-        case .awaitingNext(let next, let cycle):
+        case .awaitingNext(let next, let cycle, _):
             isAwaitingNext = true
             // Mostra a fase que VAI começar: o anel e o botão já aparecem na cor dela.
             phase = next
@@ -179,6 +197,38 @@ final class TimerViewModel: ObservableObject {
             progress = 0
             canSkip = false
             menuBarLabel = "▶️ \(format(settings.loadConfiguration().duration(for: next)))"
+        }
+    }
+
+    /// Título da tarefa vinculada ao estado corrente. Ocioso mostra a SELEÇÃO (o picker já
+    /// exibe, então devolve `nil`); nos demais estados, a tarefa que atravessa o ciclo.
+    private func resolveTaskTitle(for state: SessionMachineState) -> String? {
+        let taskID: UUID?
+        switch state {
+        case .idle: taskID = nil
+        case .running(let session), .paused(let session, _): taskID = session.taskID
+        case .awaitingNext(_, _, let id): taskID = id
+        }
+        guard let taskID else {
+            resolvedTaskTitle = nil
+            return nil
+        }
+        if let cached = resolvedTaskTitle, cached.id == taskID { return cached.title }
+
+        // Fora do cache: procura nas ativas já carregadas e, em último caso, no disco
+        // (uma vez por sessão — o cache segura os ticks seguintes).
+        let title = availableTasks.first { $0.id == taskID }?.title
+            ?? (try? manageTasks.allTasks())?.first { $0.id == taskID }?.title
+        if let title { resolvedTaskTitle = (taskID, title) }
+        return title
+    }
+
+    /// Recarrega o seletor de tarefas. Chamado ao ficar ocioso e pela janela de tarefas
+    /// após qualquer mudança (criar/concluir/importar) — a seleção morta é limpa.
+    func reloadAvailableTasks() {
+        availableTasks = (try? manageTasks.activeTasks()) ?? []
+        if let selected = selectedTaskID, !availableTasks.contains(where: { $0.id == selected }) {
+            selectedTaskID = nil
         }
     }
 

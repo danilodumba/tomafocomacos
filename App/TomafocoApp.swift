@@ -14,10 +14,17 @@ struct TomafocoApp: App {
         .windowResizability(.contentSize)
         .windowStyle(.hiddenTitleBar)
 
+        Window("Tarefas & Relatórios", id: "tasks") {
+            TasksReportsWindow(
+                tasksViewModel: container.tasksViewModel,
+                reportsViewModel: container.reportsViewModel
+            )
+        }
+
         MenuBarExtra {
             MenuBarView(viewModel: container.timerViewModel)
         } label: {
-            Text(container.timerViewModel.menuBarLabel)
+            MenuBarLabel(viewModel: container.timerViewModel)
         }
         .menuBarExtraStyle(.window)
 
@@ -27,5 +34,16 @@ struct TomafocoApp: App {
                 blockListViewModel: container.blockListViewModel
             )
         }
+    }
+}
+
+/// O rótulo do `MenuBarExtra` precisa observar o `TimerViewModel` DIRETAMENTE: `AppContainer`
+/// nunca publica mudanças, então ler `container.timerViewModel.menuBarLabel` no body do App
+/// congelaria o texto no valor inicial — o countdown jamais apareceria na barra de menus.
+private struct MenuBarLabel: View {
+    @ObservedObject var viewModel: TimerViewModel
+
+    var body: some View {
+        Text(viewModel.menuBarLabel)
     }
 }

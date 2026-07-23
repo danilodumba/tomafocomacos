@@ -10,4 +10,6 @@ public enum DomainError: Error, Equatable {
     case cancellationBlockedByHardcore(remainingSeconds: Int)
     /// Motivo obrigatório (modo hardcore) não informado ao iniciar a sessão.
     case reasonRequired
+    /// Título de tarefa vazio após normalização (RF-09).
+    case emptyTaskTitle
 }

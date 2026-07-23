@@ -15,6 +15,8 @@ public struct SessionRecord: Equatable, Codable, Sendable {
     public let endedAt: Date
     public let outcome: Outcome
     public let cycleNumber: Int
+    /// Tarefa vinculada (RF-09). Histórico antigo sem a chave decodifica `nil` → "Sem tarefa".
+    public let taskID: UUID?
 
     public init(
         sessionID: UUID,
@@ -22,7 +24,8 @@ public struct SessionRecord: Equatable, Codable, Sendable {
         startedAt: Date,
         endedAt: Date,
         outcome: Outcome,
-        cycleNumber: Int
+        cycleNumber: Int,
+        taskID: UUID?
     ) {
         self.sessionID = sessionID
         self.phase = phase
@@ -30,5 +33,6 @@ public struct SessionRecord: Equatable, Codable, Sendable {
         self.endedAt = endedAt
         self.outcome = outcome
         self.cycleNumber = cycleNumber
+        self.taskID = taskID
     }
 }

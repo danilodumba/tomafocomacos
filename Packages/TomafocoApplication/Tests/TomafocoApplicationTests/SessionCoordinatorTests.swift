@@ -95,7 +95,7 @@ final class SessionCoordinatorTests: XCTestCase {
             blockList: BlockList(domains: [try BlockedDomain(raw: "globo.com")], apps: apps))
         let pendente = PomodoroSession(
             id: UUID(), phase: .focus, startedAt: clock.now.addingTimeInterval(-600),
-            endsAt: clock.now.addingTimeInterval(900), reason: "código", cycleNumber: 2)
+            endsAt: clock.now.addingTimeInterval(900), reason: "código", cycleNumber: 2, taskID: nil)
 
         await sut.adoptRecoveredSession(pendente)
 
@@ -113,7 +113,7 @@ final class SessionCoordinatorTests: XCTestCase {
             config: PomodoroConfiguration(autoAdvancePhases: true))
         let quaseNoFim = PomodoroSession(
             id: UUID(), phase: .focus, startedAt: clock.now.addingTimeInterval(-1500),
-            endsAt: clock.now.addingTimeInterval(1), reason: nil, cycleNumber: 1)
+            endsAt: clock.now.addingTimeInterval(1), reason: nil, cycleNumber: 1, taskID: nil)
 
         await sut.adoptRecoveredSession(quaseNoFim)
         clock.advance(by: 2)
@@ -194,7 +194,7 @@ final class SessionCoordinatorTests: XCTestCase {
         clock.advance(by: 61)
         try await Task.sleep(nanoseconds: 100_000_000)   // o tick despacha numa Task
 
-        XCTAssertEqual(sut.state, .awaitingNext(phase: .shortBreak, cycle: 1))
+        XCTAssertEqual(sut.state, .awaitingNext(phase: .shortBreak, cycle: 1, taskID: nil))
         XCTAssertTrue(notifier.events.contains(.focusEnded))
         XCTAssertEqual(appBlocker.deactivateCallCount, 1)  // bloqueio cai mesmo aguardando
         XCTAssertNil(sessions.active)

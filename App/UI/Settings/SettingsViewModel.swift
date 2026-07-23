@@ -16,11 +16,25 @@ final class SettingsViewModel: ObservableObject {
     @Published var hardcoreEnabled: Bool { didSet { save() } }
     @Published var hardcoreGraceMinutes: Int { didSet { save() } }
     @Published var hardcoreRequireReason: Bool { didSet { save() } }
+    /// Site para onde a aba bloqueada é redirecionada. Vazio → página de bloqueio padrão.
+    @Published var blockedRedirectURL: String { didSet { save() } }
+    /// Espelha conclusão/reabertura de tarefas importadas de volta no app Lembretes.
+    @Published var syncReminderCompletion: Bool { didSet { save() } }
+
+    /// Iniciar junto com o macOS (item de login). NÃO vive na `PomodoroConfiguration`:
+    /// a fonte da verdade é o sistema (`SMAppService`), que o usuário pode mudar por fora.
+    @Published var launchAtLogin: Bool { didSet { applyLaunchAtLogin(oldValue) } }
+    @Published var launchAtLoginError: String?
+    /// Suprime o `didSet` quando o valor vem DO sistema (refresh/reversão) — sem isso,
+    /// reverter após falha chamaria `setEnabled` de novo, em loop.
+    private var isSyncingLoginItem = false
 
     private let settings: SettingsRepository
+    private let loginItem: LoginItemManaging
 
-    init(settings: SettingsRepository) {
+    init(settings: SettingsRepository, loginItem: LoginItemManaging) {
         self.settings = settings
+        self.loginItem = loginItem
         // Observadores de propriedade não disparam durante a init — nenhum save espúrio aqui.
         let config = settings.loadConfiguration()
         focusMinutes = config.focusDuration / 60
@@ -32,6 +46,30 @@ final class SettingsViewModel: ObservableObject {
         hardcoreEnabled = config.hardcore.isEnabled
         hardcoreGraceMinutes = config.hardcore.minimumMinutesBeforeCancel
         hardcoreRequireReason = config.hardcore.requireReason
+        blockedRedirectURL = config.blockedRedirectURL ?? ""
+        syncReminderCompletion = config.syncReminderCompletion
+        launchAtLogin = loginItem.isEnabled
+    }
+
+    /// Relê o estado do sistema — chamado quando a janela aparece, porque o usuário pode
+    /// ter removido o item de login pelos Ajustes do Sistema.
+    func refreshLaunchAtLogin() {
+        isSyncingLoginItem = true
+        launchAtLogin = loginItem.isEnabled
+        isSyncingLoginItem = false
+    }
+
+    private func applyLaunchAtLogin(_ oldValue: Bool) {
+        guard !isSyncingLoginItem, launchAtLogin != oldValue else { return }
+        do {
+            try loginItem.setEnabled(launchAtLogin)
+            launchAtLoginError = nil
+        } catch {
+            isSyncingLoginItem = true
+            launchAtLogin = oldValue
+            isSyncingLoginItem = false
+            launchAtLoginError = "Não foi possível alterar o item de login: \(error.localizedDescription)"
+        }
     }
 
     /// Persiste a configuração atual.
@@ -47,7 +85,11 @@ final class SettingsViewModel: ObservableObject {
                 isEnabled: hardcoreEnabled,
                 minimumMinutesBeforeCancel: hardcoreGraceMinutes,
                 requireReason: hardcoreRequireReason
-            )
+            ),
+            // Vazio vira nil: o blocker interpreta nil como "página padrão".
+            blockedRedirectURL: blockedRedirectURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                ? nil : blockedRedirectURL.trimmingCharacters(in: .whitespacesAndNewlines),
+            syncReminderCompletion: syncReminderCompletion
         )
         settings.save(config)
     }

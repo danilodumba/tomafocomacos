@@ -12,7 +12,7 @@ final class PomodoroSessionTests: XCTestCase {
             startedAt: epoch,
             endsAt: epoch.addingTimeInterval(duration),
             reason: nil,
-            cycleNumber: 1
+            cycleNumber: 1, taskID: nil
         )
     }
 

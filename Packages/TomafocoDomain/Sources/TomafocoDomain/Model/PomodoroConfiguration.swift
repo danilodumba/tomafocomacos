@@ -11,6 +11,11 @@ public struct PomodoroConfiguration: Equatable, Codable, Sendable {
     public var autoAdvancePhases: Bool
     public var forceTerminateApps: Bool
     public var hardcore: HardcoreOptions
+    /// Site para onde a aba bloqueada é redirecionada. `nil`/vazio → página de bloqueio padrão
+    /// (`blocked.html`). A normalização (adicionar esquema) fica na Infra, onde é aplicada.
+    public var blockedRedirectURL: String?
+    /// Espelha a conclusão/reabertura de tarefas importadas de volta no app Lembretes (RF-09.3).
+    public var syncReminderCompletion: Bool
 
     /// A chave persistida continua sendo `autoStartNextFocus`: renomear quebraria a
     /// decodificação das configurações já salvas, e o store cai silenciosamente no padrão
@@ -18,7 +23,7 @@ public struct PomodoroConfiguration: Equatable, Codable, Sendable {
     private enum CodingKeys: String, CodingKey {
         case focusDuration, shortBreakDuration, longBreakDuration, cyclesBeforeLongBreak
         case autoAdvancePhases = "autoStartNextFocus"
-        case forceTerminateApps, hardcore
+        case forceTerminateApps, hardcore, blockedRedirectURL, syncReminderCompletion
     }
 
     public init(
@@ -28,7 +33,9 @@ public struct PomodoroConfiguration: Equatable, Codable, Sendable {
         cyclesBeforeLongBreak: Int = 4,
         autoAdvancePhases: Bool = false,
         forceTerminateApps: Bool = false,
-        hardcore: HardcoreOptions = .init()
+        hardcore: HardcoreOptions = .init(),
+        blockedRedirectURL: String? = nil,
+        syncReminderCompletion: Bool = true
     ) {
         self.focusDuration = focusDuration
         self.shortBreakDuration = shortBreakDuration
@@ -37,6 +44,25 @@ public struct PomodoroConfiguration: Equatable, Codable, Sendable {
         self.autoAdvancePhases = autoAdvancePhases
         self.forceTerminateApps = forceTerminateApps
         self.hardcore = hardcore
+        self.blockedRedirectURL = blockedRedirectURL
+        self.syncReminderCompletion = syncReminderCompletion
+    }
+
+    // Decode tolerante a chaves ausentes: `syncReminderCompletion` (e qualquer campo futuro)
+    // gravado antes de existir cai no padrão em vez de derrubar TODA a config para o padrão
+    // (o store reseta tudo se a decodificação lançar). `encode` continua sintetizado.
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let d = PomodoroConfiguration()
+        focusDuration = try c.decodeIfPresent(TimeInterval.self, forKey: .focusDuration) ?? d.focusDuration
+        shortBreakDuration = try c.decodeIfPresent(TimeInterval.self, forKey: .shortBreakDuration) ?? d.shortBreakDuration
+        longBreakDuration = try c.decodeIfPresent(TimeInterval.self, forKey: .longBreakDuration) ?? d.longBreakDuration
+        cyclesBeforeLongBreak = try c.decodeIfPresent(Int.self, forKey: .cyclesBeforeLongBreak) ?? d.cyclesBeforeLongBreak
+        autoAdvancePhases = try c.decodeIfPresent(Bool.self, forKey: .autoAdvancePhases) ?? d.autoAdvancePhases
+        forceTerminateApps = try c.decodeIfPresent(Bool.self, forKey: .forceTerminateApps) ?? d.forceTerminateApps
+        hardcore = try c.decodeIfPresent(HardcoreOptions.self, forKey: .hardcore) ?? d.hardcore
+        blockedRedirectURL = try c.decodeIfPresent(String.self, forKey: .blockedRedirectURL)
+        syncReminderCompletion = try c.decodeIfPresent(Bool.self, forKey: .syncReminderCompletion) ?? d.syncReminderCompletion
     }
 
     /// Duração de uma dada fase segundo esta configuração.

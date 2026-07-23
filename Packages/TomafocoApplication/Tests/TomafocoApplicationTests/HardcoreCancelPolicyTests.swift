@@ -8,7 +8,7 @@ final class HardcoreCancelPolicyTests: XCTestCase {
 
     private func focus(now start: Date) -> PomodoroSession {
         PomodoroSession(id: UUID(), phase: .focus, startedAt: start,
-                        endsAt: start.addingTimeInterval(1500), reason: "x", cycleNumber: 1)
+                        endsAt: start.addingTimeInterval(1500), reason: "x", cycleNumber: 1, taskID: nil)
     }
 
     /// `Result<Void, _>` não é `Equatable`, então comparamos pelo caso concreto.
@@ -54,7 +54,7 @@ final class HardcoreCancelPolicyTests: XCTestCase {
     func test_hardcoreLigado_masNaoEhFoco_permite() {
         let config = PomodoroConfiguration(hardcore: .init(isEnabled: true, minimumMinutesBeforeCancel: 5))
         let br = PomodoroSession(id: UUID(), phase: .shortBreak, startedAt: start,
-                                 endsAt: start.addingTimeInterval(300), reason: nil, cycleNumber: 1)
+                                 endsAt: start.addingTimeInterval(300), reason: nil, cycleNumber: 1, taskID: nil)
         let result = HardcoreCancelPolicy.validate(session: br, config: config, now: start)
         assertSuccess(result)
     }

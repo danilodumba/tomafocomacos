@@ -22,6 +22,8 @@ final class AppContainer: ObservableObject {
     let timerViewModel: TimerViewModel
     let settingsViewModel: SettingsViewModel
     let blockListViewModel: BlockListViewModel
+    let tasksViewModel: TasksViewModel
+    let reportsViewModel: ReportsViewModel
     /// Retido pelo container: sem uma referência forte, a assinatura Combine morre e a tela
     /// cheia do intervalo nunca aparece.
     private let breakOverlay: BreakOverlayPresenter
@@ -32,7 +34,10 @@ final class AppContainer: ObservableObject {
         coordinator: SessionCoordinator,
         recover: RecoverFromCrashUseCase,
         manageBlockList: ManageBlockListUseCase,
+        manageTasks: ManageTasksUseCase,
         settings: SettingsRepository,
+        sessions: SessionRepository,
+        tasks: TaskRepository,
         appPicker: ApplicationPicking,
         notificationAdapter: UNNotificationAdapter?
     ) {
@@ -40,9 +45,17 @@ final class AppContainer: ObservableObject {
         self.recover = recover
         self.manageBlockList = manageBlockList
         self.notificationAdapter = notificationAdapter
-        self.timerViewModel = TimerViewModel(coordinator: coordinator, settings: settings)
-        self.settingsViewModel = SettingsViewModel(settings: settings)
+        self.timerViewModel = TimerViewModel(
+            coordinator: coordinator, settings: settings, manageTasks: manageTasks)
+        self.settingsViewModel = SettingsViewModel(
+            settings: settings, loginItem: SMAppServiceLoginItem())
         self.blockListViewModel = BlockListViewModel(useCase: manageBlockList, appPicker: appPicker)
+        // Mudança na lista de tarefas precisa refletir no seletor do timer na hora.
+        let timerViewModel = self.timerViewModel
+        self.tasksViewModel = TasksViewModel(useCase: manageTasks) {
+            timerViewModel.reloadAvailableTasks()
+        }
+        self.reportsViewModel = ReportsViewModel(sessions: sessions, tasks: tasks)
         self.breakOverlay = BreakOverlayPresenter(viewModel: self.timerViewModel)
     }
 
@@ -64,15 +77,17 @@ final class AppContainer: ObservableObject {
 
         // Bloqueio de sites por automação do navegador (ADR-8). Substituiu o /etc/hosts:
         // sem root, sem senha e imune a DNS de VPN / DNS-over-HTTPS. Ver `AppleScriptBrowserBlocker`.
+        let settings = UserDefaultsSettingsStore()
         let websiteBlocker = AppleScriptBrowserBlocker(
             blockPageURL: Self.blockPageURL,
             scriptRunner: NSAppleScriptRunner(),
-            runningApps: WorkspaceRunningApplications()
+            runningApps: WorkspaceRunningApplications(),
+            // Relê a cada varredura: mudar o site nas Configurações vale na próxima passada.
+            redirectURLProvider: { settings.loadConfiguration().blockedRedirectURL }
         )
         let appBlocker = WorkspaceAppBlocker(notifier: notifier)
         let clock = DispatchSessionClock()
         let sessions = FileSessionSnapshotStore()
-        let settings = UserDefaultsSettingsStore()
 
         let coordinator = SessionCoordinator(
             clock: clock, appBlocker: appBlocker, websiteBlocker: websiteBlocker,
@@ -85,11 +100,18 @@ final class AppContainer: ObservableObject {
         let manageBlockList = ManageBlockListUseCase(settings: settings)
         let appPicker = NSOpenPanelApplicationPicker()
 
+        // Tarefas + importação do Lembretes (RF-09).
+        let taskStore = FileTaskStore()
+        let manageTasks = ManageTasksUseCase(
+            tasks: taskStore, importer: EventKitReminderImporter(), now: { clock.now },
+            shouldSyncReminderCompletion: { settings.loadConfiguration().syncReminderCompletion })
+
         notificationAdapter.requestAuthorization()
 
         return AppContainer(
             coordinator: coordinator, recover: recover, manageBlockList: manageBlockList,
-            settings: settings, appPicker: appPicker, notificationAdapter: notificationAdapter
+            manageTasks: manageTasks, settings: settings, sessions: sessions, tasks: taskStore,
+            appPicker: appPicker, notificationAdapter: notificationAdapter
         )
     }
 

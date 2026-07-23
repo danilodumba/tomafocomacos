@@ -50,6 +50,12 @@ final class BreakOverlayPresenter {
         }
 
         windows.forEach { $0.orderFrontRegardless() }
+        // O Esc chega via `cancelOperation` da KEY window — `orderFrontRegardless` não torna
+        // key, então sem isto o atalho cairia na janela principal e a tela nunca fecharia.
+        // Key na tela onde está o cursor: é onde o usuário vai apertar Esc.
+        let mouseScreen = NSScreen.screens.first { NSMouseInRect(NSEvent.mouseLocation, $0.frame, false) }
+        let keyWindow = windows.first { $0.screen == mouseScreen } ?? windows.first
+        keyWindow?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
     }
 

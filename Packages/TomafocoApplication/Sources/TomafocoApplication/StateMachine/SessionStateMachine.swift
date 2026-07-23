@@ -24,8 +24,8 @@ public enum SessionStateMachine {
         case .paused(let session, let remaining):
             return reducePaused(session: session, remaining: remaining, event: event,
                                 config: config, now: now, newID: newID)
-        case .awaitingNext(let phase, let cycle):
-            return reduceAwaiting(phase: phase, cycle: cycle, event: event,
+        case .awaitingNext(let phase, let cycle, let taskID):
+            return reduceAwaiting(phase: phase, cycle: cycle, taskID: taskID, event: event,
                                   config: config, now: now, newID: newID)
         }
     }
@@ -36,8 +36,9 @@ public enum SessionStateMachine {
         event: SessionEvent, config: PomodoroConfiguration, now: Date, newID: UUID
     ) -> (SessionMachineState, [SessionEffect]) {
         switch event {
-        case .startFocus(let reason):
-            let session = makeFocus(cycle: 1, reason: reason, config: config, now: now, id: newID)
+        case .startFocus(let reason, let taskID):
+            let session = makeFocus(
+                cycle: 1, reason: reason, taskID: taskID, config: config, now: now, id: newID)
             return (.running(session), [.activateBlocking, .persistActive(session)])
 
         case .adoptRecovered(let session):
@@ -97,25 +98,29 @@ public enum SessionStateMachine {
             sessionID: session.id, phase: session.phase,
             startedAt: session.startedAt,
             endedAt: outcome == .completed ? session.endsAt : now,
-            outcome: outcome, cycleNumber: session.cycleNumber
+            outcome: outcome, cycleNumber: session.cycleNumber,
+            taskID: session.taskID
         )
 
         switch session.phase {
         case .focus:
             // Fim do foco → sempre desativa bloqueio e limpa o failsafe, ANTES de decidir
             // se o intervalo começa sozinho: ninguém pode ficar bloqueado esperando confirmação.
-            let isLong = session.cycleNumber % config.cyclesBeforeLongBreak == 0
+            // `max(1, …)`: a UI limita a 1...12, mas a config vem de UserDefaults decodificado sem
+            // validação — um plist editado ou versão antiga com 0 causaria crash de módulo por zero.
+            let isLong = session.cycleNumber % max(1, config.cyclesBeforeLongBreak) == 0
             let breakPhase: SessionPhase = isLong ? .longBreak : .shortBreak
             let common: [SessionEffect] = [
                 .deactivateBlocking, .clearActive,
                 .recordHistory(record), .notify(.focusEnded)
             ]
             guard config.autoAdvancePhases else {
-                return (.awaitingNext(phase: breakPhase, cycle: session.cycleNumber), common)
+                return (.awaitingNext(phase: breakPhase, cycle: session.cycleNumber,
+                                      taskID: session.taskID), common)
             }
             let breakSession = makeSession(
                 phase: breakPhase, cycle: session.cycleNumber, reason: nil,
-                config: config, now: now, id: newID
+                taskID: session.taskID, config: config, now: now, id: newID
             )
             return (.running(breakSession), common)
 
@@ -124,10 +129,11 @@ public enum SessionStateMachine {
             let event: NotificationEvent = session.phase == .longBreak ? .longBreakEnded : .shortBreakEnded
             let nextCycle = session.cycleNumber + 1
             guard config.autoAdvancePhases else {
-                return (.awaitingNext(phase: .focus, cycle: nextCycle),
+                return (.awaitingNext(phase: .focus, cycle: nextCycle, taskID: session.taskID),
                         [.recordHistory(record), .notify(event)])
             }
-            let focus = makeFocus(cycle: nextCycle, reason: nil, config: config, now: now, id: newID)
+            let focus = makeFocus(cycle: nextCycle, reason: nil, taskID: session.taskID,
+                                  config: config, now: now, id: newID)
             return (.running(focus), [
                 .recordHistory(record), .notify(event),
                 .activateBlocking, .persistActive(focus)
@@ -149,7 +155,7 @@ public enum SessionStateMachine {
             let resumed = PomodoroSession(
                 id: session.id, phase: session.phase, startedAt: session.startedAt,
                 endsAt: now.addingTimeInterval(remaining), reason: session.reason,
-                cycleNumber: session.cycleNumber
+                cycleNumber: session.cycleNumber, taskID: session.taskID
             )
             let effects: [SessionEffect] = session.phase.appliesBlocking ? [.persistActive(resumed)] : []
             return (.running(resumed), effects)
@@ -165,13 +171,14 @@ public enum SessionStateMachine {
     // MARK: - awaitingNext
 
     private static func reduceAwaiting(
-        phase: SessionPhase, cycle: Int, event: SessionEvent,
+        phase: SessionPhase, cycle: Int, taskID: UUID?, event: SessionEvent,
         config: PomodoroConfiguration, now: Date, newID: UUID
     ) -> (SessionMachineState, [SessionEffect]) {
         switch event {
         case .beginNextPhase, .startFocus:
             let next = makeSession(
-                phase: phase, cycle: cycle, reason: nil, config: config, now: now, id: newID)
+                phase: phase, cycle: cycle, reason: nil, taskID: taskID,
+                config: config, now: now, id: newID)
             // Só o foco bloqueia: confirmar um intervalo não pode ligar bloqueio nenhum.
             let effects: [SessionEffect] = phase.appliesBlocking
                 ? [.activateBlocking, .persistActive(next)]
@@ -180,7 +187,7 @@ public enum SessionStateMachine {
         case .cancel:
             return (.idle, [])
         case .tick, .pause, .resume, .skipPhase, .adoptRecovered:
-            return (.awaitingNext(phase: phase, cycle: cycle), [])
+            return (.awaitingNext(phase: phase, cycle: cycle, taskID: taskID), [])
         }
     }
 
@@ -192,7 +199,8 @@ public enum SessionStateMachine {
         let record = SessionRecord(
             sessionID: session.id, phase: session.phase,
             startedAt: session.startedAt, endedAt: now,
-            outcome: .cancelled, cycleNumber: session.cycleNumber
+            outcome: .cancelled, cycleNumber: session.cycleNumber,
+            taskID: session.taskID
         )
         var effects: [SessionEffect] = []
         if session.phase.appliesBlocking { effects.append(.deactivateBlocking) }
@@ -202,19 +210,21 @@ public enum SessionStateMachine {
     }
 
     private static func makeFocus(
-        cycle: Int, reason: String?, config: PomodoroConfiguration, now: Date, id: UUID
+        cycle: Int, reason: String?, taskID: UUID?,
+        config: PomodoroConfiguration, now: Date, id: UUID
     ) -> PomodoroSession {
-        makeSession(phase: .focus, cycle: cycle, reason: reason, config: config, now: now, id: id)
+        makeSession(phase: .focus, cycle: cycle, reason: reason, taskID: taskID,
+                    config: config, now: now, id: id)
     }
 
     private static func makeSession(
-        phase: SessionPhase, cycle: Int, reason: String?,
+        phase: SessionPhase, cycle: Int, reason: String?, taskID: UUID?,
         config: PomodoroConfiguration, now: Date, id: UUID
     ) -> PomodoroSession {
         PomodoroSession(
             id: id, phase: phase, startedAt: now,
             endsAt: now.addingTimeInterval(config.duration(for: phase)),
-            reason: reason, cycleNumber: cycle
+            reason: reason, cycleNumber: cycle, taskID: taskID
         )
     }
 }

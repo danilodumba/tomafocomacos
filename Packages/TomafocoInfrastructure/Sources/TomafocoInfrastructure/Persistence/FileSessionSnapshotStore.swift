@@ -7,6 +7,8 @@ public final class FileSessionSnapshotStore: SessionRepository {
 
     private let activeURL: URL
     private let historyURL: URL
+    /// Destino do histórico corrompido — preservado em vez de apagado (ver `appendToHistory`).
+    private let historyBackupURL: URL
     private let fileManager: FileManager
     private let encoder: JSONEncoder
     private let decoder: JSONDecoder
@@ -17,6 +19,7 @@ public final class FileSessionSnapshotStore: SessionRepository {
         try? fileManager.createDirectory(at: base, withIntermediateDirectories: true)
         self.activeURL = base.appendingPathComponent("active-session.json")
         self.historyURL = base.appendingPathComponent("history.json")
+        self.historyBackupURL = base.appendingPathComponent("history.json.bak")
 
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
@@ -45,7 +48,16 @@ public final class FileSessionSnapshotStore: SessionRepository {
     }
 
     public func appendToHistory(_ record: SessionRecord) throws {
-        var records = (try? loadHistory()) ?? []
+        var records: [SessionRecord]
+        do {
+            records = try loadHistory()
+        } catch {
+            // Arquivo ilegível NÃO pode ser sobrescrito em silêncio — apagaria todo o histórico
+            // do usuário por um byte corrompido. Preserva como .bak para diagnóstico e recomeça.
+            try? fileManager.removeItem(at: historyBackupURL)
+            try? fileManager.moveItem(at: historyURL, to: historyBackupURL)
+            records = []
+        }
         records.append(record)
         let data = try encoder.encode(records)
         try data.write(to: historyURL, options: .atomic)

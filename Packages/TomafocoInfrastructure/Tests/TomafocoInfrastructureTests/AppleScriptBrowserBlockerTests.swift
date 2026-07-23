@@ -15,6 +15,8 @@ final class AppleScriptBrowserBlockerTests: XCTestCase {
         /// Saída devolvida para scripts de listagem, por nome de aplicativo.
         var tabListing: [String: String] = [:]
         var failingApplications: Set<String> = []
+        /// Apps que falham com erro transiente (`executionFailed`) — navegador ocupado, não permissão.
+        var busyApplications: Set<String> = []
 
         var executed: [String] {
             lock.lock(); defer { lock.unlock() }
@@ -28,6 +30,9 @@ final class AppleScriptBrowserBlockerTests: XCTestCase {
 
             if failingApplications.contains(application) {
                 throw AutomationError.permissionDenied(application: application)
+            }
+            if busyApplications.contains(application) {
+                throw AutomationError.executionFailed("navegador ocupado")
             }
             guard source.contains("count of windows") else { return "" }
             let app = tabListing.keys.first { source.contains("\"\($0)\"") }
@@ -53,7 +58,8 @@ final class AppleScriptBrowserBlockerTests: XCTestCase {
 
     private func makeSUT(
         running: Set<String> = [BrowserTarget.safari.bundleID],
-        browsers: [BrowserTarget] = [.safari]
+        browsers: [BrowserTarget] = [.safari],
+        redirectURL: String? = nil
     ) -> (AppleScriptBrowserBlocker, SpyScriptRunner) {
         let runner = SpyScriptRunner()
         let sut = AppleScriptBrowserBlocker(
@@ -61,7 +67,8 @@ final class AppleScriptBrowserBlockerTests: XCTestCase {
             scriptRunner: runner,
             runningApps: StubRunningApps(bundleIDs: running),
             browsers: browsers,
-            pollInterval: 60          // varredura periódica não interfere: os testes chamam sweep()
+            pollInterval: 60,          // varredura periódica não interfere: os testes chamam sweep()
+            redirectURLProvider: { redirectURL }
         )
         return (sut, runner)
     }
@@ -110,6 +117,54 @@ final class AppleScriptBrowserBlockerTests: XCTestCase {
         try await sut.activate(domains: try domains("globo.com"))
 
         XCTAssertTrue(runner.redirects.isEmpty)
+    }
+
+    // MARK: - Site de redirecionamento configurável
+
+    func test_redirectConfigurado_abaVaiParaEleEmVezDaPaginaPadrao() async throws {
+        let (sut, runner) = makeSUT(redirectURL: "https://example.com")
+        runner.tabListing = ["Safari": listing([(1, 1, "https://globo.com")])]
+
+        try await sut.activate(domains: try domains("globo.com"))
+
+        XCTAssertEqual(runner.redirects.count, 1)
+        XCTAssertTrue(runner.redirects[0].contains("https://example.com"))
+        XCTAssertFalse(runner.redirects[0].contains(Self.blockPage))
+    }
+
+    func test_redirectSemEsquema_recebeHTTPS() async throws {
+        let (sut, runner) = makeSUT(redirectURL: "example.com/foco")
+        runner.tabListing = ["Safari": listing([(1, 1, "https://globo.com")])]
+
+        try await sut.activate(domains: try domains("globo.com"))
+
+        XCTAssertTrue(runner.redirects[0].contains("https://example.com/foco"))
+    }
+
+    func test_redirectVazio_caiNaPaginaPadrao() async throws {
+        let (sut, runner) = makeSUT(redirectURL: "   ")
+        runner.tabListing = ["Safari": listing([(1, 1, "https://globo.com")])]
+
+        try await sut.activate(domains: try domains("globo.com"))
+
+        XCTAssertTrue(runner.redirects[0].contains(Self.blockPage))
+    }
+
+    /// Destino configurado que ele mesmo está bloqueado viraria laço — cai na página padrão.
+    func test_redirectParaSiteBloqueado_evitaLoopUsandoPaginaPadrao() async throws {
+        let (sut, runner) = makeSUT(redirectURL: "https://globo.com/home")
+        runner.tabListing = ["Safari": listing([(1, 1, "https://globo.com")])]
+
+        try await sut.activate(domains: try domains("globo.com"))
+
+        XCTAssertTrue(runner.redirects[0].contains(Self.blockPage))
+    }
+
+    func test_normalizedRedirect_regras() {
+        XCTAssertNil(AppleScriptBrowserBlocker.normalizedRedirect(nil))
+        XCTAssertNil(AppleScriptBrowserBlocker.normalizedRedirect("  "))
+        XCTAssertEqual(AppleScriptBrowserBlocker.normalizedRedirect(" site.com "), "https://site.com")
+        XCTAssertEqual(AppleScriptBrowserBlocker.normalizedRedirect("http://a.com"), "http://a.com")
     }
 
     // MARK: - Navegadores
@@ -165,6 +220,35 @@ final class AppleScriptBrowserBlockerTests: XCTestCase {
         sut.sweep()
 
         XCTAssertEqual(runner.executed.count, afterFirst)
+    }
+
+    /// Erro transiente (navegador ocupado) NÃO pode virar negação permanente — um soluço
+    /// deixaria o navegador sem bloqueio pelo resto da sessão.
+    func test_falhaTransiente_tentaDeNovoNaProximaVarredura() async throws {
+        let (sut, runner) = makeSUT()
+        runner.busyApplications = ["Safari"]
+
+        try await sut.activate(domains: try domains("globo.com"))
+        let afterFirst = runner.executed.count
+        sut.sweep()
+
+        XCTAssertGreaterThan(runner.executed.count, afterFirst,
+                             "falha transiente deveria ser tentada de novo, não banida")
+    }
+
+    /// E quando o navegador "desocupa", a varredura volta a redirecionar normalmente.
+    func test_falhaTransiente_depoisQuePassa_voltaARedirecionar() async throws {
+        let (sut, runner) = makeSUT()
+        runner.busyApplications = ["Safari"]
+        runner.tabListing = ["Safari": listing([(1, 1, "https://globo.com")])]
+
+        try await sut.activate(domains: try domains("globo.com"))
+        XCTAssertTrue(runner.redirects.isEmpty)
+
+        runner.busyApplications = []
+        sut.sweep()
+
+        XCTAssertEqual(runner.redirects.count, 1)
     }
 
     // MARK: - Ciclo de vida

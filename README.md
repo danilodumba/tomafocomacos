@@ -4,6 +4,19 @@ App de Pomodoro para macOS que bloqueia sites e apps distrativos durante o foco.
 
 > Documentação de produto/arquitetura em [`docs/`](docs/): `especificacao.md`, `arquitetura.md`, `tarefas.md`.
 
+## Funcionalidades
+
+- **Timer Pomodoro** — foco/intervalo curto/intervalo longo, ciclos configuráveis, avanço manual ou automático das etapas.
+- **Bloqueio de sites** por automação do navegador (ADR-8): redireciona abas bloqueadas para uma página local — sem root, sem senha, imune a DNS de VPN/DoH. Safari, Chrome, Edge, Brave, Opera, Vivaldi (Firefox não expõe abas por AppleScript).
+  - Site de redirecionamento configurável nas Configurações › Sites (vazio = página padrão).
+- **Bloqueio de apps** — `NSWorkspace` encerra e observa relançamentos; aviso na tela ao tentar reabrir.
+- **Tela cheia de intervalo** — cobre todos os monitores; Esc dispensa.
+- **Modo hardcore** — restringe cancelar/pular o foco durante a carência.
+- **Tarefas** — CRUD manual, tags livres, importação do app Lembretes (EventKit), vínculo tarefa↔sessão.
+- **Relatórios** — horas por tarefa/dia, intervalos, streak (Swift Charts).
+- **Sobrevive a crash/sleep/reboot** — estado com término absoluto (`endsAt`) + fluxo de recuperação.
+- **Iniciar com o macOS** (item de login), alerta sonoro no fim de cada etapa.
+
 ## Arquitetura
 
 Clean Architecture com pacotes SPM por camada, dependências apontando sempre para o domínio:
@@ -13,10 +26,12 @@ Presentation (App/, SwiftUI)  →  TomafocoApplication  →  TomafocoDomain  ←
 ```
 
 - **TomafocoDomain** — núcleo puro (entidades, value objects, ports). Sem AppKit. Roda em qualquer plataforma.
-- **TomafocoApplication** — casos de uso + máquina de estados pura. Depende só do Domain.
-- **TomafocoInfrastructure** — adapters do macOS (`NSWorkspace`, `/etc/hosts`, AppleScript, notificações).
-- **App/** — Composition Root (`AppContainer`) + SwiftUI (janela, menu bar, preferências).
+- **TomafocoApplication** — casos de uso + `SessionStateMachine` pura + `SessionCoordinator`. Depende só do Domain.
+- **TomafocoInfrastructure** — adapters do macOS (automação de navegador, `NSWorkspace`, EventKit, clock, persistência, notificações). AppKit sob `#if canImport(AppKit)`.
+- **App/** — Composition Root (`AppContainer`) + SwiftUI (janela, menu bar, preferências, tarefas/relatórios).
 - **TomafocoTestSupport** — fakes/spies dos ports compartilhados pelos testes.
+
+Regras de ouro: nada de `Date()`/`Timer` no Domain/Application (tudo via `SessionClock`); efeitos colaterais saem da máquina como `SessionEffect` e quem executa é o `SessionCoordinator`.
 
 ## Pré-requisitos
 
@@ -29,21 +44,21 @@ Presentation (App/, SwiftUI)  →  TomafocoApplication  →  TomafocoDomain  ←
 ```bash
 make project      # gera Tomafoco.xcodeproj a partir de project.yml
 make open         # gera e abre no Xcode
-make test         # roda os testes de todos os pacotes
+make test         # roda os testes de todos os pacotes SPM
 ```
 
 O `.xcodeproj` NÃO é versionado — `project.yml` é a fonte da verdade (ADR-5). Rode `make project` após clonar.
 
 ## Estado atual
 
-Núcleo SOLID implementado e testado (72 testes verdes; app compila e roda):
+Núcleo SOLID implementado e testado (~190 testes verdes: Domain 39, Application 108, Infrastructure 43; app compila e roda):
 
 - ✅ Domain: modelo, ports e validações (com testes)
-- ✅ Application: `SessionStateMachine` pura, `SessionCoordinator`, casos de uso (com testes de tabela)
-- ✅ Infrastructure: `HostsFileEditor` (RNF-01) + `HostsFileWebsiteBlocker`, `WorkspaceAppBlocker`, `AppleScriptPrivilegeRunner`, `NSOpenPanelApplicationPicker`, clock, persistência, notificações
-- ✅ App: Composition Root + UI (timer, menu bar, preferências) com a identidade DDS.TEC
+- ✅ Application: `SessionStateMachine` pura, `SessionCoordinator`, casos de uso + `ReportBuilder`/`ManageTasksUseCase` (testes de tabela)
+- ✅ Infrastructure: `AppleScriptBrowserBlocker` (ADR-8), `WorkspaceAppBlocker`, `NSOpenPanelApplicationPicker`, `EventKitReminderImporter`, clock, persistência (`FileSessionSnapshotStore`/`FileTaskStore`), notificações
+- ✅ App: Composition Root + UI (timer, menu bar, preferências, tarefas/relatórios) com a identidade DDS.TEC
 
-Próximas tarefas: ver `docs/tarefas.md` (T-21 recuperação pós-crash, T-12/T-13 validação manual dos bloqueios, T-25 assinatura/notarização).
+Próximas tarefas: ver `docs/tarefas.md`.
 
 ## Identidade visual
 
@@ -58,15 +73,21 @@ Paleta e símbolo vêm da marca **DDS.TEC** (`Brand.swift`):
 
 Todos os tokens semânticos são adaptativos claro/escuro via `Color.adaptive` (`NSColor` dinâmico) — nenhuma View precisa ler `@Environment(\.colorScheme)`.
 
-## ⚠️ Emergência — bloqueio órfão no /etc/hosts
+## Permissões (TCC)
 
-Se por algum motivo um bloqueio ficar preso (o failsafe do app deve evitar isso — RNF-02), remova o bloco manualmente:
+- **Automação** (Ajustes do Sistema › Privacidade › Automação): autoriza o Tomafoco a pilotar cada navegador — pedida uma vez por navegador. Sem ela, o site não bloqueia.
+- **Lembretes**: só se você importar tarefas do app Lembretes.
 
-```bash
-sudo sed -i '' '/# Tomafoco-START/,/# Tomafoco-END/d' /etc/hosts
-sudo dscacheutil -flushcache; sudo killall -HUP mDNSResponder
-```
+Se um site não bloquear, o problema é permissão de Automação, navegador não suportado (Firefox) ou navegador fechado — **não** há mais DNS/rede no caminho.
 
 ## Distribuição
 
-Fora da Mac App Store, assinado com Developer ID e notarizado (Gatekeeper). Passo a passo: T-25 em `docs/tarefas.md`.
+Fora da Mac App Store, assinado com Developer ID e notarizado (Gatekeeper). `make release` gera o `.dmg` assinado, notarizado e grampeado. Detalhes em `docs/tarefas.md` (T-25).
+
+## Emergência (legado)
+
+O bloqueio de sites deixou de usar `/etc/hosts` no ADR-8. Se sua máquina ainda tiver um bloco órfão de uma versão antiga:
+
+```bash
+sudo sed -i '' '/# Tomafoco-START/,/# Tomafoco-END/d' /etc/hosts
+```
