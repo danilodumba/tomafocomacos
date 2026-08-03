@@ -61,11 +61,15 @@ public final class EventKitReminderImporter: TaskImporting {
     }
 
     public func setReminderCompleted(reminderID: String, completed: Bool) async -> Bool {
+        // Sem pedir acesso NESTE processo o EventKit responde como se o banco estivesse vazio:
+        // `calendarItem(withIdentifier:)` devolve nil e a conclusão nunca chegava ao Lembretes.
+        // Era o caso comum — concluir uma tarefa numa sessão em que nada foi importado.
+        // Já autorizado, `requestFullAccessToReminders` volta na hora e sem prompt.
+        guard await requestAccess() else { return false }
+
         // `isCompleted = true` já preenche o completionDate; `false` limpa. Best-effort:
-        // lembrete apagado no app Lembretes → `calendarItem` devolve nil.
-        guard let reminder = store.calendarItem(withIdentifier: reminderID) as? EKReminder else {
-            return false
-        }
+        // lembrete apagado no app Lembretes → não encontra e devolve `false`.
+        guard let reminder = await findReminder(withID: reminderID) else { return false }
         reminder.isCompleted = completed
         do {
             try store.save(reminder, commit: true)
@@ -73,6 +77,21 @@ public final class EventKitReminderImporter: TaskImporting {
         } catch {
             return false
         }
+    }
+
+    /// Busca o lembrete pelo `calendarItemIdentifier`.
+    ///
+    /// O caminho direto (`calendarItem(withIdentifier:)`) falha para lembretes em algumas versões
+    /// do macOS — daí o plano B varrendo os lembretes de todas as listas (inclusive concluídos,
+    /// necessário para reabrir).
+    private func findReminder(withID id: String) async -> EKReminder? {
+        if let reminder = store.calendarItem(withIdentifier: id) as? EKReminder { return reminder }
+
+        let predicate = store.predicateForReminders(in: nil)
+        let all = await withCheckedContinuation { continuation in
+            store.fetchReminders(matching: predicate) { continuation.resume(returning: $0 ?? []) }
+        }
+        return all.first { $0.calendarItemIdentifier == id }
     }
 }
 #endif

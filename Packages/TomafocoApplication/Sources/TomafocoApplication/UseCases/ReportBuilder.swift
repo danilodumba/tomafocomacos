@@ -105,15 +105,27 @@ public enum ReportBuilder {
 
     private static func taskTotals(focus: [SessionRecord], tasks: [FocusTask]) -> [FocusReport.TaskTotal] {
         let titles = Dictionary(uniqueKeysWithValues: tasks.map { ($0.id, $0.title) })
-        let groups = Dictionary(grouping: focus, by: \.taskID)
-        return groups
-            .map { taskID, records in
+        // Foco multi-tarefa (RF-09.4): uma sessão com N tarefas dá o tempo CHEIO a cada uma
+        // (decisão de produto — a soma dos totais pode passar do tempo real de foco). Registro
+        // sem tarefa (`taskIDs` vazio) agrupa sob a chave `nil` → "Sem tarefa".
+        var focusTimeByTask: [UUID?: TimeInterval] = [:]
+        var sessionsByTask: [UUID?: Int] = [:]
+        for record in focus {
+            let dur = duration(record)
+            let keys: [UUID?] = record.taskIDs.isEmpty ? [nil] : record.taskIDs.map { $0 }
+            for key in keys {
+                focusTimeByTask[key, default: 0] += dur
+                sessionsByTask[key, default: 0] += 1
+            }
+        }
+        return focusTimeByTask
+            .map { taskID, focusTime in
                 FocusReport.TaskTotal(
                     taskID: taskID,
                     // Tarefa apagada depois de usada não pode sumir do relatório — vira "Tarefa removida".
                     title: taskID.map { titles[$0] ?? "Tarefa removida" } ?? "Sem tarefa",
-                    focusTime: records.reduce(0) { $0 + duration($1) },
-                    sessionCount: records.count
+                    focusTime: focusTime,
+                    sessionCount: sessionsByTask[taskID] ?? 0
                 )
             }
             .sorted { lhs, rhs in

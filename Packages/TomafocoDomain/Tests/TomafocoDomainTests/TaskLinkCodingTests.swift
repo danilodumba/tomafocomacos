@@ -11,26 +11,45 @@ final class TaskLinkCodingTests: XCTestCase {
         return decoder
     }()
 
-    func test_sessionRecordAntigoSemTaskID_decodificaComNil() throws {
+    func test_sessionRecordAntigoSemTaskID_decodificaVazio() throws {
         let json = """
         {"sessionID":"00000000-0000-0000-0000-0000000000AA","phase":"focus",
          "startedAt":"2026-07-20T09:00:00Z","endedAt":"2026-07-20T09:25:00Z",
          "outcome":"completed","cycleNumber":1}
         """
         let record = try decoder.decode(SessionRecord.self, from: Data(json.utf8))
-        XCTAssertNil(record.taskID)
+        XCTAssertEqual(record.taskIDs, [])
         XCTAssertEqual(record.outcome, .completed)
     }
 
-    func test_pomodoroSessionAntigaSemTaskID_decodificaComNil() throws {
+    func test_pomodoroSessionAntigaSemTaskID_decodificaVazio() throws {
         let json = """
         {"id":"00000000-0000-0000-0000-0000000000AA","phase":"focus",
          "startedAt":"2026-07-20T09:00:00Z","endsAt":"2026-07-20T09:25:00Z",
          "cycleNumber":1}
         """
         let session = try decoder.decode(PomodoroSession.self, from: Data(json.utf8))
-        XCTAssertNil(session.taskID)
-        XCTAssertNil(session.reason)
+        XCTAssertEqual(session.taskIDs, [])
+    }
+
+    /// Migração da chave singular `taskID` (antes do foco multi-tarefa) para o array `taskIDs`.
+    func test_sessionComTaskIDSingular_migraParaArray() throws {
+        let single = "00000000-0000-0000-0000-0000000000CC"
+        let sessionJSON = """
+        {"id":"00000000-0000-0000-0000-0000000000AA","phase":"focus",
+         "startedAt":"2026-07-20T09:00:00Z","endsAt":"2026-07-20T09:25:00Z",
+         "cycleNumber":1,"taskID":"\(single)"}
+        """
+        let session = try decoder.decode(PomodoroSession.self, from: Data(sessionJSON.utf8))
+        XCTAssertEqual(session.taskIDs, [UUID(uuidString: single)!])
+
+        let recordJSON = """
+        {"sessionID":"00000000-0000-0000-0000-0000000000AA","phase":"focus",
+         "startedAt":"2026-07-20T09:00:00Z","endedAt":"2026-07-20T09:25:00Z",
+         "outcome":"completed","cycleNumber":1,"taskID":"\(single)"}
+        """
+        let record = try decoder.decode(SessionRecord.self, from: Data(recordJSON.utf8))
+        XCTAssertEqual(record.taskIDs, [UUID(uuidString: single)!])
     }
 
     func test_focusTaskAntigaSemTags_decodificaComListaVazia() throws {
@@ -91,17 +110,17 @@ final class TaskLinkCodingTests: XCTestCase {
         XCTAssertEqual(decoded.tags, ["x", "y"])
     }
 
-    func test_roundtripComTaskID_preserva() throws {
+    func test_roundtripComTaskIDs_preserva() throws {
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
-        let taskID = UUID()
+        let taskIDs = [UUID(), UUID()]
         let record = SessionRecord(
             sessionID: UUID(), phase: .focus,
             startedAt: Date(timeIntervalSince1970: 1_000_000),
             endedAt: Date(timeIntervalSince1970: 1_001_500),
-            outcome: .completed, cycleNumber: 1, taskID: taskID
+            outcome: .completed, cycleNumber: 1, taskIDs: taskIDs
         )
         let decoded = try decoder.decode(SessionRecord.self, from: encoder.encode(record))
-        XCTAssertEqual(decoded.taskID, taskID)
+        XCTAssertEqual(decoded.taskIDs, taskIDs)
     }
 }

@@ -14,6 +14,11 @@ packages:
     path: Packages/TomafocoApplication
   TomafocoInfrastructure:
     path: Packages/TomafocoInfrastructure
+  # Atualização automática fora da Mac App Store (ADR-9). Só o target do app depende
+  # do Sparkle — os pacotes de domínio/aplicação seguem puros.
+  Sparkle:
+    url: https://github.com/sparkle-project/Sparkle
+    from: "2.6.0"
 
 targets:
   Tomafoco:
@@ -25,12 +30,13 @@ targets:
       - package: TomafocoDomain
       - package: TomafocoApplication
       - package: TomafocoInfrastructure
+      - package: Sparkle
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.dsdumba.tomafoco
         PRODUCT_NAME: Tomafoco
-        MARKETING_VERSION: "1.0"
-        CURRENT_PROJECT_VERSION: "1"
+        MARKETING_VERSION: "1.7"
+        CURRENT_PROJECT_VERSION: "8"
         SWIFT_VERSION: "5.9"
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         ENABLE_HARDENED_RUNTIME: YES
@@ -42,13 +48,30 @@ targets:
       path: App/Resources/Info.generated.plist
       properties:
         CFBundleDisplayName: Tomafoco
+        # Versão: fonte única = MARKETING_VERSION/CURRENT_PROJECT_VERSION (settings acima).
+        # Sem isso o XcodeGen grava o default 1.0/1 e o bump de versão não pega.
+        CFBundleShortVersionString: "$(MARKETING_VERSION)"
+        CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
         LSApplicationCategoryType: public.app-category.productivity
         LSMinimumSystemVersion: "13.0"
+        # App normal: ícone no Dock. A barra de menus é só atalho (MenuBarExtra compacto).
         LSUIElement: false
-        NSHumanReadableCopyright: "© 2026 Danilo"
+        NSHumanReadableCopyright: "© 2026 DDS.TECH. Todos os direitos reservados."
         # Exigido pelo macOS ao pedir permissão de automação de cada navegador (ADR-8).
         NSAppleEventsUsageDescription: "O Tomafoco precisa controlar seu navegador para redirecionar os sites bloqueados durante as sessões de foco."
         # Importação de tarefas do app Lembretes (RF-09). macOS 14+ usa a chave FullAccess;
         # a antiga cobre macOS 13.
         NSRemindersUsageDescription: "O Tomafoco importa suas tarefas do Lembretes para você registrar o tempo de foco em cada uma."
         NSRemindersFullAccessUsageDescription: "O Tomafoco importa suas tarefas do Lembretes para você registrar o tempo de foco em cada uma."
+        # --- Atualização automática (Sparkle, ADR-9) ---------------------------------
+        # Feed consultado pelo Sparkle. Publicado pelo `scripts/release.sh` junto com o DMG.
+        SUFeedURL: https://tomafoco.dds.tec.br/downloads/appcast.xml
+        # Chave pública EdDSA. O appcast é assinado com a privada (guardada no chaveiro, NUNCA
+        # no repositório) — sem isso qualquer um que controle o servidor ou a rede entregaria
+        # um "update" arbitrário como root do Mac do usuário.
+        SUPublicEDKey: u+xEBQBnQjhtr5BjpWwuRmlXdpxSGyCNxZJTUtXOtTA=
+        # Checagem periódica: 1×/dia. A primeira execução PERGUNTA se pode checar sozinho.
+        SUScheduledCheckInterval: 86400
+        # Só baixa depois do usuário confirmar no diálogo (decisão de produto: num app de
+        # foco, trocar de versão sozinho pode cair no meio de uma sessão).
+        SUAutomaticallyUpdate: false

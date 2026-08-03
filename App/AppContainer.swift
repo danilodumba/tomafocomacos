@@ -24,6 +24,9 @@ final class AppContainer: ObservableObject {
     let blockListViewModel: BlockListViewModel
     let tasksViewModel: TasksViewModel
     let reportsViewModel: ReportsViewModel
+    /// Atualização automática (ADR-9). Criado aqui — e não sob demanda numa View — porque o
+    /// Sparkle precisa subir junto com o app para agendar a checagem periódica.
+    let updater = UpdaterController()
     /// Retido pelo container: sem uma referência forte, a assinatura Combine morre e a tela
     /// cheia do intervalo nunca aparece.
     private let breakOverlay: BreakOverlayPresenter
@@ -104,7 +107,8 @@ final class AppContainer: ObservableObject {
         let taskStore = FileTaskStore()
         let manageTasks = ManageTasksUseCase(
             tasks: taskStore, importer: EventKitReminderImporter(), now: { clock.now },
-            shouldSyncReminderCompletion: { settings.loadConfiguration().syncReminderCompletion })
+            shouldSyncReminderCompletion: { settings.loadConfiguration().syncReminderCompletion },
+            tagCatalog: UserDefaultsTagCatalog())
 
         notificationAdapter.requestAuthorization()
 

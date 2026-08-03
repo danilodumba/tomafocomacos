@@ -20,6 +20,15 @@ public struct ImportTasksResult: Equatable {
     }
 }
 
+/// O que aconteceu com o espelhamento da conclusão no app Lembretes (RF-09.3).
+public enum ReminderSyncOutcome: Equatable, Sendable {
+    /// Tarefa manual, ou importada com o toggle de sincronização desligado — nada a espelhar.
+    case notApplicable
+    case synced
+    /// Lembrete apagado no app Lembretes, acesso negado ou falha de gravação.
+    case failed
+}
+
 /// CRUD de tarefas de foco + importação do Lembretes (RF-09).
 /// Persistência falível é engolida com log? Não — aqui os erros de disco sobem para a UI
 /// tratar (diferente do coordinator, salvar tarefa é a ação principal, não efeito colateral).
@@ -31,6 +40,7 @@ public final class ManageTasksUseCase {
     /// Lê o toggle "sincronizar conclusão com o Lembretes" a cada operação (mudar nas
     /// Configurações vale na próxima ação, sem religar). Default `false` nos testes.
     private let shouldSyncReminderCompletion: () -> Bool
+    private let tagCatalog: TagCatalog
 
     // `now` sem default de propósito: `Date()` é proibido na Application (testabilidade) —
     // o Composition Root injeta o relógio real.
@@ -39,13 +49,15 @@ public final class ManageTasksUseCase {
         importer: TaskImporting,
         now: @escaping () -> Date,
         makeID: @escaping () -> UUID = { UUID() },
-        shouldSyncReminderCompletion: @escaping () -> Bool = { false }
+        shouldSyncReminderCompletion: @escaping () -> Bool = { false },
+        tagCatalog: TagCatalog = EphemeralTagCatalog()
     ) {
         self.tasks = tasks
         self.importer = importer
         self.now = now
         self.makeID = makeID
         self.shouldSyncReminderCompletion = shouldSyncReminderCompletion
+        self.tagCatalog = tagCatalog
     }
 
     public func allTasks() throws -> [FocusTask] { try tasks.loadTasks() }
@@ -76,34 +88,136 @@ public final class ManageTasksUseCase {
         return task
     }
 
-    /// Substitui as tags de uma tarefa (normalizadas). Tarefa inexistente é no-op.
-    public func setTags(id: UUID, tags: [String]) throws {
-        try update(id: id) { $0.tags = FocusTask.normalizeTags(tags) }
+    /// Edição completa de uma tarefa (RF-09.6): título, tags, notas, vencimento e prioridade
+    /// numa transação só — a UI abre um formulário e salva tudo de uma vez.
+    ///
+    /// Lança `emptyTaskTitle` (título em branco) ou `duplicateEntry` (outra tarefa ATIVA com o
+    /// mesmo título — a própria tarefa é excluída da comparação, senão salvar sem mexer no título
+    /// acusaria duplicata). Tarefa inexistente é no-op (devolve `nil`).
+    ///
+    /// Notas em branco viram `nil` (não guarda string vazia). `dueDate == nil` limpa o vencimento.
+    /// **Não** espelha nada de volta no Lembretes: o write-back é só de conclusão — editar aqui
+    /// mantém a tarefa local divergente do lembrete de origem de propósito.
+    @discardableResult
+    public func editTask(
+        id: UUID,
+        title: String,
+        tags: [String],
+        notes: String?,
+        dueDate: Date?,
+        priority: TaskPriority
+    ) throws -> FocusTask? {
+        let trimmedTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedTitle.isEmpty else { throw DomainError.emptyTaskTitle }
+
+        let all = try tasks.loadTasks()
+        guard all.contains(where: { $0.id == id }) else { return nil }
+        let duplicated = all.contains {
+            $0.id != id && !$0.isCompleted
+                && $0.title.compare(trimmedTitle, options: [.caseInsensitive]) == .orderedSame
+        }
+        guard !duplicated else { throw DomainError.duplicateEntry(trimmedTitle) }
+
+        let normalizedTags = FocusTask.normalizeTags(tags)
+        let trimmedNotes = notes?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let edited = try update(id: id) {
+            $0.title = trimmedTitle
+            $0.tags = normalizedTags
+            $0.notes = (trimmedNotes?.isEmpty ?? true) ? nil : trimmedNotes
+            $0.dueDate = dueDate
+            $0.priority = priority.rawPriority
+        }
+        registerInCatalog(normalizedTags)
+        return edited
     }
 
-    /// Todas as tags em uso, ordenadas — alimenta sugestões/filtros na UI.
+    /// Substitui as tags de uma tarefa (normalizadas). Tarefa inexistente é no-op.
+    /// As tags também entram no catálogo, para reaparecerem no autocomplete mesmo depois de
+    /// a tarefa ser apagada.
+    public func setTags(id: UUID, tags: [String]) throws {
+        let normalized = FocusTask.normalizeTags(tags)
+        try update(id: id) { $0.tags = normalized }
+        registerInCatalog(normalized)
+    }
+
+    /// Define a prioridade de uma tarefa (`TaskPriority`). Tarefa inexistente é no-op.
+    public func setPriority(id: UUID, priority: TaskPriority) throws {
+        try update(id: id) { $0.priority = priority.rawPriority }
+    }
+
+    /// Todas as tags conhecidas (em uso pelas tarefas + catálogo de cadastro), ordenadas —
+    /// alimenta sugestões/filtros e a tela de gestão de tags (RF-09.5).
     public func allTags() throws -> [String] {
-        let all = try tasks.loadTasks().flatMap(\.tags)
-        return FocusTask.normalizeTags(all).sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
+        let used = try tasks.loadTasks().flatMap(\.tags)
+        return FocusTask.normalizeTags(used + tagCatalog.loadTags())
+            .sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
+    }
+
+    /// Cadastra uma tag "solta" (tela de gestão), mesmo sem tarefa vinculada. No-op se já existe
+    /// (comparação por caixa). Lança `emptyTaskTitle` reaproveitado para nome vazio? Não —
+    /// nome em branco é simplesmente ignorado.
+    public func createTag(_ name: String) throws {
+        registerInCatalog([name])
+    }
+
+    /// Renomeia uma tag em TODAS as tarefas e no catálogo (RF-09.5). Comparação por caixa.
+    /// Renomear para um nome já existente funde as duas (a normalização deduplica).
+    public func renameTag(from oldName: String, to newName: String) throws {
+        let from = oldName.trimmingCharacters(in: .whitespacesAndNewlines)
+        let to = newName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !from.isEmpty, !to.isEmpty else { return }
+        var all = try tasks.loadTasks()
+        for idx in all.indices {
+            if all[idx].tags.contains(where: { $0.caseInsensitiveCompare(from) == .orderedSame }) {
+                let swapped = all[idx].tags.map { $0.caseInsensitiveCompare(from) == .orderedSame ? to : $0 }
+                all[idx].tags = FocusTask.normalizeTags(swapped)
+            }
+        }
+        try tasks.saveTasks(all)
+        let catalog = tagCatalog.loadTags().map { $0.caseInsensitiveCompare(from) == .orderedSame ? to : $0 }
+        tagCatalog.saveTags(FocusTask.normalizeTags(catalog))
+    }
+
+    /// Remove uma tag de TODAS as tarefas e do catálogo (RF-09.5). Comparação por caixa.
+    public func deleteTag(_ name: String) throws {
+        let target = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !target.isEmpty else { return }
+        var all = try tasks.loadTasks()
+        for idx in all.indices {
+            all[idx].tags.removeAll { $0.caseInsensitiveCompare(target) == .orderedSame }
+        }
+        try tasks.saveTasks(all)
+        tagCatalog.saveTags(tagCatalog.loadTags().filter { $0.caseInsensitiveCompare(target) != .orderedSame })
+    }
+
+    /// Une `newTags` ao catálogo, normalizado e deduplicado por caixa.
+    private func registerInCatalog(_ newTags: [String]) {
+        let merged = FocusTask.normalizeTags(tagCatalog.loadTags() + newTags)
+        tagCatalog.saveTags(merged)
     }
 
     /// Conclui a tarefa e, se a tarefa veio do Lembretes e o toggle está ligado, espelha
     /// a conclusão de volta lá (best-effort — falha de escrita não desfaz a conclusão local).
-    public func completeTask(id: UUID) async throws {
+    /// O resultado é devolvido para a UI poder avisar que o espelhamento não foi (silêncio aqui
+    /// virava "concluí no Tomafoco e no Lembretes não mudou nada, sem explicação").
+    @discardableResult
+    public func completeTask(id: UUID) async throws -> ReminderSyncOutcome {
         let task = try update(id: id) { $0.completedAt = self.now() }
-        await syncReminderCompletion(task, completed: true)
+        return await syncReminderCompletion(task, completed: true)
     }
 
-    public func reopenTask(id: UUID) async throws {
+    @discardableResult
+    public func reopenTask(id: UUID) async throws -> ReminderSyncOutcome {
         let task = try update(id: id) { $0.completedAt = nil }
-        await syncReminderCompletion(task, completed: false)
+        return await syncReminderCompletion(task, completed: false)
     }
 
-    private func syncReminderCompletion(_ task: FocusTask?, completed: Bool) async {
+    private func syncReminderCompletion(_ task: FocusTask?, completed: Bool) async -> ReminderSyncOutcome {
         guard shouldSyncReminderCompletion(),
               let task, task.source == .reminders,
-              let reminderID = task.reminderID else { return }
-        _ = await importer.setReminderCompleted(reminderID: reminderID, completed: completed)
+              let reminderID = task.reminderID else { return .notApplicable }
+        return await importer.setReminderCompleted(reminderID: reminderID, completed: completed)
+            ? .synced : .failed
     }
 
     public func deleteTask(id: UUID) throws {
@@ -136,14 +250,18 @@ public final class ManageTasksUseCase {
         }
     }
 
-    /// Importa UM lembrete escolhido no picker (RF-09.3). Dedup por `reminderID` contra TODAS
-    /// as tarefas (não ressuscita concluída); título vazio → ignorado. Não lança.
+    /// Importa UM lembrete escolhido no picker (RF-09.3). Título vazio → ignorado. Não lança.
+    ///
+    /// Dedup por `reminderID` só contra as tarefas **ativas**: com a cópia local já concluída,
+    /// o mesmo lembrete pode voltar como nova tarefa. É o caso do lembrete **recorrente** —
+    /// concluir a ocorrência de hoje não pode impedir de puxar a de amanhã. Cada importação vira
+    /// uma tarefa nova (`id` próprio), então o histórico da ocorrência anterior fica preservado.
     public func importReminder(_ reminder: ImportedReminder) async -> ImportTasksResult {
         let title = reminder.title.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !title.isEmpty else { return ImportTasksResult() }
         do {
             var all = try tasks.loadTasks()
-            guard !all.contains(where: { $0.reminderID == reminder.reminderID }) else {
+            guard !all.contains(where: { $0.reminderID == reminder.reminderID && !$0.isCompleted }) else {
                 return ImportTasksResult(skippedCount: 1)
             }
             all.append(makeFocusTask(from: reminder, title: title))
@@ -168,7 +286,10 @@ public final class ManageTasksUseCase {
     }
 
     /// Importa lembretes não concluídos — de todas as listas (`nil`) ou só das indicadas.
-    /// Dedup por `reminderID`: reimportar nunca duplica.
+    /// Dedup por `reminderID` contra TODAS as tarefas, inclusive concluídas: reimportar nunca
+    /// duplica. Diferente do `importReminder` de propósito — aqui o usuário não escolhe item a
+    /// item, então recorrência precisa ser pedida no picker; senão um lote traria de volta tudo
+    /// que já foi concluído por aqui.
     /// Não lança — falha vira `ImportTasksResult.failure` para a UI narrar sem try/catch.
     public func importFromReminders(fromLists lists: Set<String>? = nil) async -> ImportTasksResult {
         guard await importer.requestAccess() else {

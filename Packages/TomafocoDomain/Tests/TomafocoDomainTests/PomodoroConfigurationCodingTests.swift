@@ -44,4 +44,41 @@ final class PomodoroConfigurationCodingTests: XCTestCase {
             PomodoroConfiguration.self, from: JSONEncoder().encode(config))
         XCTAssertEqual(decoded.blockedRedirectURL, "https://example.com")
     }
+
+    func test_configAntigaSemMultiTarefa_decodificaDesligado() throws {
+        // Sem a chave `allowMultipleTasksInFocus` (config anterior ao campo) → padrão false,
+        // sem colapsar o resto da config para o padrão.
+        let json = """
+        {"focusDuration":1500,"shortBreakDuration":300,"longBreakDuration":900,
+         "cyclesBeforeLongBreak":4,"autoStartNextFocus":true,"forceTerminateApps":false,
+         "hardcore":{"isEnabled":false,"minimumMinutesBeforeCancel":5,"requireReason":true}}
+        """
+        let config = try JSONDecoder().decode(PomodoroConfiguration.self, from: Data(json.utf8))
+        XCTAssertFalse(config.allowMultipleTasksInFocus)
+        XCTAssertTrue(config.autoAdvancePhases)  // demais preferências intactas
+    }
+
+    func test_roundtripComMultiTarefaLigado_preserva() throws {
+        var config = PomodoroConfiguration()
+        config.allowMultipleTasksInFocus = true
+        let decoded = try JSONDecoder().decode(
+            PomodoroConfiguration.self, from: JSONEncoder().encode(config))
+        XCTAssertTrue(decoded.allowMultipleTasksInFocus)
+    }
+
+    /// O modo hardcore foi removido, mas a chave continua gravada na configuração de quem já
+    /// usava o app. Chave desconhecida tem que ser ignorada em silêncio: se a decodificação
+    /// lançasse, o store cairia no padrão e o usuário perderia durações e ajustes sem aviso.
+    func test_configComChaveHardcoreObsoleta_ignoraSemPerderOResto() throws {
+        let json = """
+        {"focusDuration":3000,"shortBreakDuration":300,"longBreakDuration":900,
+         "cyclesBeforeLongBreak":3,"autoStartNextFocus":true,"forceTerminateApps":true,
+         "hardcore":{"isEnabled":true,"minimumMinutesBeforeCancel":5,"requireReason":true}}
+        """
+        let config = try JSONDecoder().decode(PomodoroConfiguration.self, from: Data(json.utf8))
+        XCTAssertEqual(config.focusDuration, 3000)
+        XCTAssertEqual(config.cyclesBeforeLongBreak, 3)
+        XCTAssertTrue(config.autoAdvancePhases)
+        XCTAssertTrue(config.forceTerminateApps)
+    }
 }

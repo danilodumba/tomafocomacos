@@ -20,14 +20,15 @@ final class SessionStateMachineTests: XCTestCase {
 
     private func focusSession(cycle: Int, startedAt: Date, duration: TimeInterval = 1500, phase: SessionPhase = .focus, taskID: UUID? = nil) -> PomodoroSession {
         PomodoroSession(id: id, phase: phase, startedAt: startedAt,
-                        endsAt: startedAt.addingTimeInterval(duration), reason: nil, cycleNumber: cycle, taskID: taskID)
+                        endsAt: startedAt.addingTimeInterval(duration), cycleNumber: cycle,
+                        taskIDs: taskID.map { [$0] } ?? [])
     }
 
     // MARK: idle
 
     func test_idle_startFocus_iniciaRunningComBloqueioEPersistencia() {
         let (state, effects) = SessionStateMachine.reduce(
-            state: .idle, event: .startFocus(reason: "código", taskID: nil),
+            state: .idle, event: .startFocus(taskIDs: []),
             config: config(), now: now, newID: id
         )
         guard case .running(let s) = state else { return XCTFail("esperava running") }
@@ -64,7 +65,7 @@ final class SessionStateMachineTests: XCTestCase {
         let (state, effects) = SessionStateMachine.reduce(
             state: .running(s), event: .tick, config: config(autoAdvance: false), now: end, newID: id)
 
-        XCTAssertEqual(state, .awaitingNext(phase: .shortBreak, cycle: 1, taskID: nil))
+        XCTAssertEqual(state, .awaitingNext(phase: .shortBreak, cycle: 1, taskIDs: []))
         XCTAssertTrue(effects.contains(.deactivateBlocking))
         XCTAssertTrue(effects.contains(.clearActive))
         XCTAssertTrue(effects.contains(.notify(.focusEnded)))
@@ -109,7 +110,7 @@ final class SessionStateMachineTests: XCTestCase {
     /// A etapa em espera guarda QUAL fase vem — confirmar um intervalo não pode ligar bloqueio.
     func test_awaiting_beginNextPhase_deIntervalo_naoAtivaBloqueio() {
         let (state, effects) = SessionStateMachine.reduce(
-            state: .awaitingNext(phase: .shortBreak, cycle: 2, taskID: nil), event: .beginNextPhase,
+            state: .awaitingNext(phase: .shortBreak, cycle: 2, taskIDs: []), event: .beginNextPhase,
             config: config(), now: now, newID: id)
 
         guard case .running(let br) = state else { return XCTFail("esperava running") }
@@ -125,7 +126,7 @@ final class SessionStateMachineTests: XCTestCase {
         let end = now.addingTimeInterval(300)
         let (state, effects) = SessionStateMachine.reduce(
             state: .running(br), event: .tick, config: config(autoAdvance: false), now: end, newID: id)
-        XCTAssertEqual(state, .awaitingNext(phase: .focus, cycle: 2, taskID: nil))
+        XCTAssertEqual(state, .awaitingNext(phase: .focus, cycle: 2, taskIDs: []))
         XCTAssertTrue(effects.contains(.notify(.shortBreakEnded)))
         XCTAssertFalse(effects.contains(.activateBlocking))
     }
@@ -187,7 +188,7 @@ final class SessionStateMachineTests: XCTestCase {
 
     func test_awaiting_beginNextPhase_iniciaFocoComBloqueio() {
         let (state, effects) = SessionStateMachine.reduce(
-            state: .awaitingNext(phase: .focus, cycle: 3, taskID: nil), event: .beginNextPhase,
+            state: .awaitingNext(phase: .focus, cycle: 3, taskIDs: []), event: .beginNextPhase,
             config: config(), now: now, newID: id)
         guard case .running(let focus) = state else { return XCTFail() }
         XCTAssertEqual(focus.cycleNumber, 3)
@@ -249,7 +250,7 @@ final class SessionStateMachineTests: XCTestCase {
             state: .running(br), event: .skipPhase, config: config(autoAdvance: false),
             now: now.addingTimeInterval(60), newID: id)
 
-        XCTAssertEqual(state, .awaitingNext(phase: .focus, cycle: 3, taskID: nil))
+        XCTAssertEqual(state, .awaitingNext(phase: .focus, cycle: 3, taskIDs: []))
         XCTAssertTrue(effects.contains(.notify(.shortBreakEnded)))
         XCTAssertFalse(effects.contains(.activateBlocking))
     }
@@ -316,7 +317,7 @@ final class SessionStateMachineTests: XCTestCase {
             state: .paused(session: br, remaining: 120), event: .skipPhase,
             config: config(autoAdvance: false), now: now.addingTimeInterval(180), newID: id)
 
-        XCTAssertEqual(state, .awaitingNext(phase: .focus, cycle: 2, taskID: nil))
+        XCTAssertEqual(state, .awaitingNext(phase: .focus, cycle: 2, taskIDs: []))
     }
 
     func test_skipPhase_focoPausado_tambemPulaParaIntervalo() {
@@ -337,9 +338,9 @@ final class SessionStateMachineTests: XCTestCase {
         XCTAssertTrue(idleEffects.isEmpty)
 
         let (awaitingState, awaitingEffects) = SessionStateMachine.reduce(
-            state: .awaitingNext(phase: .focus, cycle: 2, taskID: nil), event: .skipPhase,
+            state: .awaitingNext(phase: .focus, cycle: 2, taskIDs: []), event: .skipPhase,
             config: config(), now: now, newID: id)
-        XCTAssertEqual(awaitingState, .awaitingNext(phase: .focus, cycle: 2, taskID: nil))
+        XCTAssertEqual(awaitingState, .awaitingNext(phase: .focus, cycle: 2, taskIDs: []))
         XCTAssertTrue(awaitingEffects.isEmpty)
     }
 
@@ -349,10 +350,10 @@ final class SessionStateMachineTests: XCTestCase {
 
     func test_startFocus_comTarefa_gravaTaskIDNaSessao() {
         let (state, _) = SessionStateMachine.reduce(
-            state: .idle, event: .startFocus(reason: nil, taskID: task),
+            state: .idle, event: .startFocus(taskIDs: [task]),
             config: config(), now: now, newID: id)
         guard case .running(let s) = state else { return XCTFail("esperava running") }
-        XCTAssertEqual(s.taskID, task)
+        XCTAssertEqual(s.taskIDs, [task])
     }
 
     func test_focoExpira_registroEIntervaloHerdamTaskID() {
@@ -362,8 +363,8 @@ final class SessionStateMachineTests: XCTestCase {
             now: now.addingTimeInterval(1500), newID: id)
 
         guard case .running(let br) = state else { return XCTFail("esperava running") }
-        XCTAssertEqual(br.taskID, task)
-        XCTAssertTrue(effects.contains { if case .recordHistory(let r) = $0 { return r.taskID == task }; return false })
+        XCTAssertEqual(br.taskIDs, [task])
+        XCTAssertTrue(effects.contains { if case .recordHistory(let r) = $0 { return r.taskIDs == [task] }; return false })
     }
 
     func test_focoExpira_semAutoAvanco_awaitingCarregaTaskIDAteOProximoFoco() {
@@ -371,23 +372,23 @@ final class SessionStateMachineTests: XCTestCase {
         let (awaiting, _) = SessionStateMachine.reduce(
             state: .running(s), event: .tick, config: config(autoAdvance: false),
             now: now.addingTimeInterval(1500), newID: id)
-        XCTAssertEqual(awaiting, .awaitingNext(phase: .shortBreak, cycle: 1, taskID: task))
+        XCTAssertEqual(awaiting, .awaitingNext(phase: .shortBreak, cycle: 1, taskIDs: [task]))
 
         // Confirma o intervalo, deixa expirar e confirma o próximo foco: a tarefa segue viva.
         let (breakRunning, _) = SessionStateMachine.reduce(
             state: awaiting, event: .beginNextPhase, config: config(), now: now, newID: id)
         guard case .running(let br) = breakRunning else { return XCTFail("esperava running") }
-        XCTAssertEqual(br.taskID, task)
+        XCTAssertEqual(br.taskIDs, [task])
 
         let (awaitingFocus, _) = SessionStateMachine.reduce(
             state: breakRunning, event: .tick, config: config(),
             now: br.endsAt, newID: id)
-        XCTAssertEqual(awaitingFocus, .awaitingNext(phase: .focus, cycle: 2, taskID: task))
+        XCTAssertEqual(awaitingFocus, .awaitingNext(phase: .focus, cycle: 2, taskIDs: [task]))
 
         let (nextFocus, _) = SessionStateMachine.reduce(
             state: awaitingFocus, event: .beginNextPhase, config: config(), now: now, newID: id)
         guard case .running(let focus) = nextFocus else { return XCTFail("esperava running") }
-        XCTAssertEqual(focus.taskID, task)
+        XCTAssertEqual(focus.taskIDs, [task])
     }
 
     func test_cancel_registroCarregaTaskID() {
@@ -395,7 +396,7 @@ final class SessionStateMachineTests: XCTestCase {
         let (_, effects) = SessionStateMachine.reduce(
             state: .running(s), event: .cancel, config: config(),
             now: now.addingTimeInterval(100), newID: id)
-        XCTAssertTrue(effects.contains { if case .recordHistory(let r) = $0 { return r.taskID == task }; return false })
+        XCTAssertTrue(effects.contains { if case .recordHistory(let r) = $0 { return r.taskIDs == [task] }; return false })
     }
 
     func test_resume_preservaTaskID() {
@@ -404,6 +405,51 @@ final class SessionStateMachineTests: XCTestCase {
             state: .paused(session: s, remaining: 600), event: .resume,
             config: config(), now: now.addingTimeInterval(900), newID: id)
         guard case .running(let r) = state else { return XCTFail("esperava running") }
-        XCTAssertEqual(r.taskID, task)
+        XCTAssertEqual(r.taskIDs, [task])
+    }
+
+    // MARK: trocar tarefa no meio do foco (RF-09.1)
+
+    func test_pausado_changeTask_trocaTarefaPreservaTempoEPersiste() {
+        let s = focusSession(cycle: 2, startedAt: now, taskID: task)
+        let novaTarefa = UUID(uuidString: "00000000-0000-0000-0000-0000000000CC")!
+        let (state, effects) = SessionStateMachine.reduce(
+            state: .paused(session: s, remaining: 600), event: .changeTask(taskIDs: [novaTarefa]),
+            config: config(), now: now.addingTimeInterval(900), newID: id)
+        guard case .paused(let p, let remaining) = state else { return XCTFail("esperava paused") }
+        XCTAssertEqual(p.taskIDs, [novaTarefa])
+        XCTAssertEqual(p.id, s.id)              // mesma sessão
+        XCTAssertEqual(p.endsAt, s.endsAt)      // tempo intocado
+        XCTAssertEqual(remaining, 600)          // restante preservado
+        XCTAssertTrue(effects.contains(.persistActive(p)))  // failsafe reflete a nova tarefa
+    }
+
+    func test_pausado_changeTask_paraNil_focoSemTarefa() {
+        let s = focusSession(cycle: 1, startedAt: now, taskID: task)
+        let (state, _) = SessionStateMachine.reduce(
+            state: .paused(session: s, remaining: 600), event: .changeTask(taskIDs: []),
+            config: config(), now: now.addingTimeInterval(900), newID: id)
+        guard case .paused(let p, _) = state else { return XCTFail("esperava paused") }
+        XCTAssertTrue(p.taskIDs.isEmpty)
+    }
+
+    func test_pausado_changeTask_intervalo_naoPersiste() {
+        let br = focusSession(cycle: 1, startedAt: now, duration: 300, phase: .shortBreak, taskID: task)
+        let (state, effects) = SessionStateMachine.reduce(
+            state: .paused(session: br, remaining: 120), event: .changeTask(taskIDs: []),
+            config: config(), now: now.addingTimeInterval(180), newID: id)
+        guard case .paused(let p, _) = state else { return XCTFail("esperava paused") }
+        XCTAssertTrue(p.taskIDs.isEmpty)
+        XCTAssertTrue(effects.isEmpty)  // intervalo não bloqueia → sem persistência
+    }
+
+    func test_running_changeTask_ehNoOp() {
+        let s = focusSession(cycle: 1, startedAt: now, taskID: task)
+        let novaTarefa = UUID(uuidString: "00000000-0000-0000-0000-0000000000CC")!
+        let (state, effects) = SessionStateMachine.reduce(
+            state: .running(s), event: .changeTask(taskIDs: [novaTarefa]),
+            config: config(), now: now.addingTimeInterval(100), newID: id)
+        XCTAssertEqual(state, .running(s))  // trocar só vale pausado
+        XCTAssertTrue(effects.isEmpty)
     }
 }

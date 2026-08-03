@@ -49,6 +49,112 @@ final class ManageTasksUseCaseTests: XCTestCase {
         XCTAssertEqual(try sut.allTags(), ["alpha", "beta", "Zebra"])
     }
 
+    // MARK: prioridade (RF-09 / item 4)
+
+    func test_setPriority_gravaValorCanonico() throws {
+        let task = try sut.addTask(title: "Boleto")
+        try sut.setPriority(id: task.id, priority: .high)
+        XCTAssertEqual(try repo.loadTasks().first?.priority, 1)
+        try sut.setPriority(id: task.id, priority: .none)
+        XCTAssertNil(try repo.loadTasks().first?.priority)
+    }
+
+    // MARK: edição completa (RF-09.6)
+
+    func test_editTask_gravaTodosOsCampos() throws {
+        let task = try sut.addTask(title: "Rascunho", tags: ["antiga"])
+        let due = Date(timeIntervalSince1970: 2_000_000)
+        let edited = try sut.editTask(
+            id: task.id, title: "  Relatório final ", tags: ["Trabalho", "trabalho", " "],
+            notes: "  falar com o time  ", dueDate: due, priority: .medium
+        )
+        XCTAssertEqual(edited?.title, "Relatório final")
+        let stored = try XCTUnwrap(try repo.loadTasks().first)
+        XCTAssertEqual(stored.title, "Relatório final")
+        XCTAssertEqual(stored.tags, ["Trabalho"])
+        XCTAssertEqual(stored.notes, "falar com o time")
+        XCTAssertEqual(stored.dueDate, due)
+        XCTAssertEqual(stored.priority, 5)
+    }
+
+    func test_editTask_notasEmBrancoViramNil_eDataPodeSerLimpa() throws {
+        let task = try sut.addTask(title: "Boleto")
+        try sut.editTask(id: task.id, title: "Boleto", tags: [], notes: "pagar",
+                         dueDate: Date(timeIntervalSince1970: 3_000), priority: .high)
+        try sut.editTask(id: task.id, title: "Boleto", tags: [], notes: "   ",
+                         dueDate: nil, priority: .none)
+        let stored = try XCTUnwrap(try repo.loadTasks().first)
+        XCTAssertNil(stored.notes)
+        XCTAssertNil(stored.dueDate)
+        XCTAssertNil(stored.priority)
+    }
+
+    func test_editTask_tituloVazio_lanca() throws {
+        let task = try sut.addTask(title: "Algo")
+        XCTAssertThrowsError(
+            try sut.editTask(id: task.id, title: "   ", tags: [], notes: nil,
+                             dueDate: nil, priority: .none)
+        ) { XCTAssertEqual($0 as? DomainError, .emptyTaskTitle) }
+    }
+
+    func test_editTask_tituloDeOutraAtiva_lancaDuplicata() throws {
+        try sut.addTask(title: "Existente")
+        let task = try sut.addTask(title: "Outra")
+        XCTAssertThrowsError(
+            try sut.editTask(id: task.id, title: "existente", tags: [], notes: nil,
+                             dueDate: nil, priority: .none)
+        ) { XCTAssertEqual($0 as? DomainError, .duplicateEntry("existente")) }
+    }
+
+    // Salvar sem mexer no título não pode acusar duplicata contra a própria tarefa.
+    func test_editTask_mesmoTitulo_naoAcusaDuplicata() throws {
+        let task = try sut.addTask(title: "Manter")
+        XCTAssertNoThrow(
+            try sut.editTask(id: task.id, title: "Manter", tags: ["x"], notes: nil,
+                             dueDate: nil, priority: .low)
+        )
+    }
+
+    func test_editTask_idInexistente_devolveNilSemGravar() throws {
+        try sut.addTask(title: "Intacta")
+        let result = try sut.editTask(id: UUID(), title: "Nova", tags: [], notes: nil,
+                                      dueDate: nil, priority: .none)
+        XCTAssertNil(result)
+        XCTAssertEqual(try repo.loadTasks().first?.title, "Intacta")
+    }
+
+    func test_editTask_tagsEntramNoCatalogo() throws {
+        let task = try sut.addTask(title: "A")
+        try sut.editTask(id: task.id, title: "A", tags: ["Faturamento"], notes: nil,
+                         dueDate: nil, priority: .none)
+        try sut.deleteTask(id: task.id)
+        XCTAssertEqual(try sut.allTags(), ["Faturamento"])
+    }
+
+    // MARK: cadastro de tags (RF-09.5 / item 1)
+
+    func test_createTag_apareceEmAllTags_mesmoSemTarefa() throws {
+        try sut.createTag("Faturamento")
+        XCTAssertEqual(try sut.allTags(), ["Faturamento"])
+    }
+
+    func test_renameTag_trocaEmTodasAsTarefasENoCatalogo() throws {
+        try sut.addTask(title: "A", tags: ["work"])
+        try sut.addTask(title: "B", tags: ["work", "home"])
+        try sut.renameTag(from: "work", to: "trabalho")
+        let tags = try repo.loadTasks().flatMap(\.tags)
+        XCTAssertFalse(tags.contains { $0.caseInsensitiveCompare("work") == .orderedSame })
+        XCTAssertTrue(tags.contains("trabalho"))
+        XCTAssertTrue(try sut.allTags().contains("trabalho"))
+    }
+
+    func test_deleteTag_removeDeTodasAsTarefas() throws {
+        try sut.addTask(title: "A", tags: ["temp", "keep"])
+        try sut.deleteTag("temp")
+        XCTAssertEqual(try repo.loadTasks().first?.tags, ["keep"])
+        XCTAssertFalse(try sut.allTags().contains("temp"))
+    }
+
     func test_addTask_tituloVazio_lanca() {
         XCTAssertThrowsError(try sut.addTask(title: "   ")) { error in
             XCTAssertEqual(error as? DomainError, .emptyTaskTitle)
@@ -324,21 +430,66 @@ final class ManageTasksUseCaseTests: XCTestCase {
         importer.setCompletedResult = false  // lembrete apagado no app Lembretes
         let reminder = ImportedReminder(reminderID: "r1", title: "Boleto", listName: "Casa", isCompleted: false)
         _ = await sut.importReminder(reminder)
-        try await sut.completeTask(id: repo.tasks[0].id)
+        let outcome = try await sut.completeTask(id: repo.tasks[0].id)
 
         XCTAssertTrue(repo.tasks[0].isCompleted)  // conclusão local persiste mesmo assim
         XCTAssertEqual(importer.completionWriteBacks.count, 1)
+        XCTAssertEqual(outcome, .failed, "a UI precisa poder avisar que o Lembretes não mudou")
     }
 
-    /// Concluída aqui e reimportada pelo picker: não pode ressuscitar nem duplicar.
-    func test_importReminder_concluidaNaoRessuscita() async throws {
+    func test_completeTask_devolveOutcomeDoEspelhamento() async throws {
+        sut = makeSyncingSUT()
+        let reminder = ImportedReminder(reminderID: "r1", title: "Boleto", listName: "Casa", isCompleted: false)
+        _ = await sut.importReminder(reminder)
+
+        let synced = try await sut.completeTask(id: repo.tasks[0].id)
+        XCTAssertEqual(synced, .synced)
+
+        let manual = try sut.addTask(title: "Manual")
+        let notApplicable = try await sut.completeTask(id: manual.id)
+        XCTAssertEqual(notApplicable, .notApplicable, "tarefa manual não tem o que espelhar")
+    }
+
+    /// Lembrete recorrente: concluída a ocorrência local, o picker pode trazer a próxima.
+    /// A tarefa concluída fica onde está (histórico), a nova entra com `id` próprio.
+    func test_importReminder_concluidaPodeSerReimportada() async throws {
+        let reminder = ImportedReminder(reminderID: "r1", title: "Boleto", listName: "Casa", isCompleted: false)
+        _ = await sut.importReminder(reminder)
+        let first = repo.tasks[0]
+        try await sut.completeTask(id: first.id)
+
+        let result = await sut.importReminder(reminder)
+
+        XCTAssertEqual(result.importedTitles, ["Boleto"])
+        XCTAssertEqual(repo.tasks.count, 2)
+        XCTAssertEqual(repo.tasks.filter { !$0.isCompleted }.count, 1)
+        XCTAssertNotEqual(repo.tasks[1].id, first.id, "reimportação é tarefa nova, não ressurreição")
+        XCTAssertEqual(repo.tasks[1].reminderID, "r1")
+    }
+
+    /// Com a tarefa ATIVA na lista, o mesmo lembrete continua barrado — senão um clique a mais
+    /// no picker duplicaria a tarefa em aberto.
+    func test_importReminder_comTarefaAtiva_naoDuplica() async {
+        let reminder = ImportedReminder(reminderID: "r1", title: "Boleto", listName: "Casa", isCompleted: false)
+        _ = await sut.importReminder(reminder)
+
+        let result = await sut.importReminder(reminder)
+
+        XCTAssertEqual(result.skippedCount, 1)
+        XCTAssertEqual(repo.tasks.count, 1)
+    }
+
+    /// O lote não segue a regra do picker: sem escolha item a item, reimportar tudo traria de
+    /// volta cada tarefa já concluída por aqui.
+    func test_importFromReminders_emLote_naoRessuscitaConcluida() async throws {
         let reminder = ImportedReminder(reminderID: "r1", title: "Boleto", listName: "Casa", isCompleted: false)
         _ = await sut.importReminder(reminder)
         try await sut.completeTask(id: repo.tasks[0].id)
+        importer.reminders = [reminder]
 
-        let result = await sut.importReminder(reminder)
+        let result = await sut.importFromReminders()
+
         XCTAssertEqual(result.skippedCount, 1)
         XCTAssertEqual(repo.tasks.count, 1)
-        XCTAssertTrue(repo.tasks[0].isCompleted)
     }
 }

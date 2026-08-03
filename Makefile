@@ -1,5 +1,5 @@
 # Atalhos de desenvolvimento do Tomafoco.
-.PHONY: test test-domain test-application test-infra project lint open help release release-dry
+.PHONY: test test-domain test-application test-infra project lint open help release release-dry sparkle-keys
 
 help:
 	@echo "Alvos:"
@@ -10,6 +10,7 @@ help:
 	@echo "  make open           - gera o projeto e abre no Xcode"
 	@echo "  make release        - assina, notariza e gera o DMG (ver docs/release.md)"
 	@echo "  make release-dry    - empacota sem notarizar (teste local)"
+	@echo "  make sparkle-keys   - gera/mostra a chave EdDSA das atualizações (1x só)"
 
 test: test-domain test-application test-infra
 
@@ -36,3 +37,6 @@ release:
 
 release-dry:
 	SKIP_NOTARIZE=1 ./scripts/release.sh
+
+sparkle-keys:
+	./scripts/sparkle-generate-keys.sh

@@ -299,6 +299,16 @@ final class BrowserScriptTests: XCTestCase {
         XCTAssertTrue(script.contains("URL of tab t of window w"))
     }
 
+    /// Sem `with timeout` o padrão do Apple Event é 2 minutos: navegador travado congelaria
+    /// a main thread esse tempo todo.
+    func test_scripts_limitamOTempoDeEsperaDoAppleEvent() {
+        let expected = "with timeout of \(BrowserScript.timeoutSeconds) seconds"
+        let tab = BrowserTab(windowIndex: 1, tabIndex: 1, url: "https://globo.com")
+
+        XCTAssertTrue(BrowserScript.listTabs(in: .safari).contains(expected))
+        XCTAssertTrue(BrowserScript.redirect(tab: tab, in: .safari, to: "about:blank").contains(expected))
+    }
+
     func test_redirect_apontaAAbaCertaEEscapaAspas() {
         let tab = BrowserTab(windowIndex: 2, tabIndex: 5, url: "https://globo.com")
         let script = BrowserScript.redirect(tab: tab, in: .safari, to: "file:///a\"b.html")

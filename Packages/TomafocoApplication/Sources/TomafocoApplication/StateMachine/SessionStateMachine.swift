@@ -24,8 +24,8 @@ public enum SessionStateMachine {
         case .paused(let session, let remaining):
             return reducePaused(session: session, remaining: remaining, event: event,
                                 config: config, now: now, newID: newID)
-        case .awaitingNext(let phase, let cycle, let taskID):
-            return reduceAwaiting(phase: phase, cycle: cycle, taskID: taskID, event: event,
+        case .awaitingNext(let phase, let cycle, let taskIDs):
+            return reduceAwaiting(phase: phase, cycle: cycle, taskIDs: taskIDs, event: event,
                                   config: config, now: now, newID: newID)
         }
     }
@@ -36,9 +36,9 @@ public enum SessionStateMachine {
         event: SessionEvent, config: PomodoroConfiguration, now: Date, newID: UUID
     ) -> (SessionMachineState, [SessionEffect]) {
         switch event {
-        case .startFocus(let reason, let taskID):
+        case .startFocus(let taskIDs):
             let session = makeFocus(
-                cycle: 1, reason: reason, taskID: taskID, config: config, now: now, id: newID)
+                cycle: 1, taskIDs: taskIDs, config: config, now: now, id: newID)
             return (.running(session), [.activateBlocking, .persistActive(session)])
 
         case .adoptRecovered(let session):
@@ -74,7 +74,7 @@ public enum SessionStateMachine {
         case .skipPhase:
             return endPhase(session, outcome: .skipped, config: config, now: now, newID: newID)
 
-        case .startFocus, .resume, .beginNextPhase, .adoptRecovered:
+        case .startFocus, .resume, .beginNextPhase, .adoptRecovered, .changeTask:
             return (.running(session), [])
         }
     }
@@ -99,7 +99,7 @@ public enum SessionStateMachine {
             startedAt: session.startedAt,
             endedAt: outcome == .completed ? session.endsAt : now,
             outcome: outcome, cycleNumber: session.cycleNumber,
-            taskID: session.taskID
+            taskIDs: session.taskIDs
         )
 
         switch session.phase {
@@ -116,11 +116,11 @@ public enum SessionStateMachine {
             ]
             guard config.autoAdvancePhases else {
                 return (.awaitingNext(phase: breakPhase, cycle: session.cycleNumber,
-                                      taskID: session.taskID), common)
+                                      taskIDs: session.taskIDs), common)
             }
             let breakSession = makeSession(
-                phase: breakPhase, cycle: session.cycleNumber, reason: nil,
-                taskID: session.taskID, config: config, now: now, id: newID
+                phase: breakPhase, cycle: session.cycleNumber,
+                taskIDs: session.taskIDs, config: config, now: now, id: newID
             )
             return (.running(breakSession), common)
 
@@ -129,10 +129,10 @@ public enum SessionStateMachine {
             let event: NotificationEvent = session.phase == .longBreak ? .longBreakEnded : .shortBreakEnded
             let nextCycle = session.cycleNumber + 1
             guard config.autoAdvancePhases else {
-                return (.awaitingNext(phase: .focus, cycle: nextCycle, taskID: session.taskID),
+                return (.awaitingNext(phase: .focus, cycle: nextCycle, taskIDs: session.taskIDs),
                         [.recordHistory(record), .notify(event)])
             }
-            let focus = makeFocus(cycle: nextCycle, reason: nil, taskID: session.taskID,
+            let focus = makeFocus(cycle: nextCycle, taskIDs: session.taskIDs,
                                   config: config, now: now, id: newID)
             return (.running(focus), [
                 .recordHistory(record), .notify(event),
@@ -154,8 +154,8 @@ public enum SessionStateMachine {
         case .resume:
             let resumed = PomodoroSession(
                 id: session.id, phase: session.phase, startedAt: session.startedAt,
-                endsAt: now.addingTimeInterval(remaining), reason: session.reason,
-                cycleNumber: session.cycleNumber, taskID: session.taskID
+                endsAt: now.addingTimeInterval(remaining),
+                cycleNumber: session.cycleNumber, taskIDs: session.taskIDs
             )
             let effects: [SessionEffect] = session.phase.appliesBlocking ? [.persistActive(resumed)] : []
             return (.running(resumed), effects)
@@ -163,6 +163,12 @@ public enum SessionStateMachine {
             return (.idle, cancelEffects(for: session, now: now))
         case .skipPhase:
             return endPhase(session, outcome: .skipped, config: config, now: now, newID: newID)
+        case .changeTask(let taskIDs):
+            // Troca as tarefas sem mexer no tempo restante. Re-persiste o failsafe quando a fase
+            // bloqueia, para o snapshot pós-crash refletir as novas tarefas.
+            let updated = session.with(taskIDs: taskIDs)
+            let effects: [SessionEffect] = updated.phase.appliesBlocking ? [.persistActive(updated)] : []
+            return (.paused(session: updated, remaining: remaining), effects)
         case .tick, .pause, .startFocus, .beginNextPhase, .adoptRecovered:
             return (.paused(session: session, remaining: remaining), [])
         }
@@ -171,13 +177,13 @@ public enum SessionStateMachine {
     // MARK: - awaitingNext
 
     private static func reduceAwaiting(
-        phase: SessionPhase, cycle: Int, taskID: UUID?, event: SessionEvent,
+        phase: SessionPhase, cycle: Int, taskIDs: [UUID], event: SessionEvent,
         config: PomodoroConfiguration, now: Date, newID: UUID
     ) -> (SessionMachineState, [SessionEffect]) {
         switch event {
         case .beginNextPhase, .startFocus:
             let next = makeSession(
-                phase: phase, cycle: cycle, reason: nil, taskID: taskID,
+                phase: phase, cycle: cycle, taskIDs: taskIDs,
                 config: config, now: now, id: newID)
             // Só o foco bloqueia: confirmar um intervalo não pode ligar bloqueio nenhum.
             let effects: [SessionEffect] = phase.appliesBlocking
@@ -186,8 +192,8 @@ public enum SessionStateMachine {
             return (.running(next), effects)
         case .cancel:
             return (.idle, [])
-        case .tick, .pause, .resume, .skipPhase, .adoptRecovered:
-            return (.awaitingNext(phase: phase, cycle: cycle, taskID: taskID), [])
+        case .tick, .pause, .resume, .skipPhase, .adoptRecovered, .changeTask:
+            return (.awaitingNext(phase: phase, cycle: cycle, taskIDs: taskIDs), [])
         }
     }
 
@@ -200,7 +206,7 @@ public enum SessionStateMachine {
             sessionID: session.id, phase: session.phase,
             startedAt: session.startedAt, endedAt: now,
             outcome: .cancelled, cycleNumber: session.cycleNumber,
-            taskID: session.taskID
+            taskIDs: session.taskIDs
         )
         var effects: [SessionEffect] = []
         if session.phase.appliesBlocking { effects.append(.deactivateBlocking) }
@@ -210,21 +216,21 @@ public enum SessionStateMachine {
     }
 
     private static func makeFocus(
-        cycle: Int, reason: String?, taskID: UUID?,
+        cycle: Int, taskIDs: [UUID],
         config: PomodoroConfiguration, now: Date, id: UUID
     ) -> PomodoroSession {
-        makeSession(phase: .focus, cycle: cycle, reason: reason, taskID: taskID,
+        makeSession(phase: .focus, cycle: cycle, taskIDs: taskIDs,
                     config: config, now: now, id: id)
     }
 
     private static func makeSession(
-        phase: SessionPhase, cycle: Int, reason: String?, taskID: UUID?,
+        phase: SessionPhase, cycle: Int, taskIDs: [UUID],
         config: PomodoroConfiguration, now: Date, id: UUID
     ) -> PomodoroSession {
         PomodoroSession(
             id: id, phase: phase, startedAt: now,
             endsAt: now.addingTimeInterval(config.duration(for: phase)),
-            reason: reason, cycleNumber: cycle, taskID: taskID
+            cycleNumber: cycle, taskIDs: taskIDs
         )
     }
 }

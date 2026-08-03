@@ -294,7 +294,11 @@ Não é necessário Accessibility nem Full Disk Access para o escopo descrito.
 
 ---
 
-## 5. Modo "hardcore" (opcional, mas recomendado)
+## 5. Modo "hardcore" (proposto aqui — NÃO ADOTADO)
+
+> **Status (2026-08-03):** chegou a ser implementado e foi **removido** do produto. O Tomafoco é
+> de autodisciplina, não de coerção: a trava atrapalhava interrupções legítimas e era contornável
+> de qualquer forma. Seção mantida como registro do estudo original.
 
 Ferramentas como Cold Turkey/Freedom têm sucesso porque dificultam desistir no meio da sessão. Sugestões incrementais:
 
@@ -343,7 +347,7 @@ FocusPomodoro/
 **Fase 2 — Robustez**
 7. Privileged helper via `SMAppService` para eliminar prompts repetidos de senha.
 8. Histórico de sessões (estatísticas de foco por dia/semana).
-9. Modo "hardcore" com confirmações.
+9. ~~Modo "hardcore" com confirmações.~~ (implementado e removido em 2026-08-03 — ver §5)
 10. Sincronização de config via iCloud (se quiser usar em mais de um Mac).
 
 **Fase 3 — Bloqueio avançado (opcional)**

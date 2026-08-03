@@ -72,7 +72,6 @@ struct PomodoroSession: Equatable, Codable {
     let phase: SessionPhase
     let startedAt: Date
     let endsAt: Date          // horário absoluto — sobrevive a crash (RF-01.5)
-    let reason: String?       // modo hardcore (RF-06.2)
     let cycleNumber: Int
 
     var remaining: (now: Date) -> TimeInterval { { max(0, endsAt.timeIntervalSince($0)) } }
@@ -112,13 +111,6 @@ struct PomodoroConfiguration: Equatable, Codable {
     var longBreakDuration: TimeInterval = 15 * 60
     var cyclesBeforeLongBreak: Int = 4
     var autoStartNextFocus: Bool = false
-    var hardcore: HardcoreOptions = .init()
-}
-
-struct HardcoreOptions: Equatable, Codable {
-    var isEnabled: Bool = false
-    var minimumMinutesBeforeCancel: Int = 5
-    var requireReason: Bool = true
 }
 ```
 
@@ -223,7 +215,7 @@ Demais casos de uso, todos no mesmo formato (dependências por protocolo, um `ex
 |---|---|---|
 | `StartFocusSessionUseCase` | UC-01 | Criar sessão, ativar bloqueios, persistir failsafe |
 | `CompleteSessionUseCase` | UC-02 | Desativar bloqueios, gravar histórico, decidir próximo phase |
-| `CancelSessionUseCase` | UC-03 | Validar regras hardcore, desativar bloqueios, gravar cancelamento |
+| `CancelSessionUseCase` | UC-03 | Desativar bloqueios, gravar cancelamento |
 | `RecoverFromCrashUseCase` | UC-04 | Ler sessão ativa persistida e decidir: restaurar hosts ou oferecer retomada |
 | `ManageBlockListUseCase` | UC-05 | Validar/normalizar domínio, CRUD das listas |
 | `AdvancePhaseUseCase` | RF-01.3/4 | Transições foco→break→foco e contagem de ciclos |
@@ -315,7 +307,7 @@ enum AppContainer {
 | **I — Interface Segregation** | Ports pequenos e específicos (`AppBlocking` ≠ `WebsiteBlocking` ≠ `PrivilegeEscalating`); nenhum consumidor depende de método que não usa. |
 | **D — Dependency Inversion** | Application depende de abstrações do Domain; Infrastructure implementa essas abstrações; injeção 100% no Composition Root — nenhum `singleton` global, nenhum `.shared` fora dos adapters. |
 
-**Clean Code (convenções do projeto):** funções curtas com um nível de abstração; nomes revelam intenção (`isExpired(now:)`, não `check()`); sem números mágicos (durações vêm de `PomodoroConfiguration`); erros são tipos (`DomainError`) e nunca `fatalError` em fluxo de produção; comentários apenas para "porquês" (ex.: por que a escrita do hosts é idempotente); testes nomeados como comportamento (`test_cancel_dentroDaCarenciaHardcore_deveSerRejeitado`).
+**Clean Code (convenções do projeto):** funções curtas com um nível de abstração; nomes revelam intenção (`isExpired(now:)`, não `check()`); sem números mágicos (durações vêm de `PomodoroConfiguration`); erros são tipos (`DomainError`) e nunca `fatalError` em fluxo de produção; comentários apenas para "porquês" (ex.: por que a escrita do hosts é idempotente); testes nomeados como comportamento (`test_cancel_desativaBloqueioEVoltaParaIdle`).
 
 ---
 
@@ -371,3 +363,24 @@ Tomafoco/
 | ADR-4 | `osascript` admin no MVP | Privileged helper (SMAppService) | Helper pede setup de assinatura complexo; o port `PrivilegeEscalating` garante a troca limpa na v2 |
 | ADR-5 | Pacotes SPM por camada | Grupos de pastas num único target | Fronteiras verificadas pelo compilador, não por disciplina |
 | ADR-6 | Estado com horário absoluto (`endsAt`) | Contador decremental em memória | Sobrevive a crash/sleep/reboot (RF-01.5, RNF-02) |
+| ADR-9 | Atualização automática com Sparkle 2 | Update caseiro (checar JSON + baixar DMG), pedir download manual no site | Fora da App Store não há atualização do sistema (ADR-2). Sparkle é o padrão de fato do macOS: já resolve assinatura EdDSA do feed, verificação do Developer ID do pacote baixado, instalação com reinício e retomada de download. Um updater caseiro teria que reimplementar isso — e um erro na verificação vira execução de código arbitrário na máquina do usuário |
+
+### ADR-9 — detalhes
+
+- **Feed:** `https://tomafoco.dds.tec.br/downloads/appcast.xml` (`SUFeedURL` no `project.yml`).
+- **Confiança:** o appcast é assinado com chave **EdDSA**; a pública vai no `SUPublicEDKey`, a
+  privada fica no **chaveiro** do mantenedor. Servidor comprometido, DNS envenenado ou proxy
+  hostil não bastam para entregar um update forjado. Além disso o Sparkle confere que o app
+  baixado tem o mesmo Developer ID do app instalado.
+- **Sem instalação silenciosa:** `SUAutomaticallyUpdate: false`. Checa 1×/dia em segundo plano e
+  pergunta. Num app de foco, trocar a versão sozinho pode derrubar uma sessão em andamento.
+- **Onde mora no código:** `App/UI/Updates/UpdaterController.swift` — fachada `@MainActor` sobre
+  o `SPUStandardUpdaterController`. Fica no `App/`, não na Infrastructure, porque o Sparkle traz
+  a própria UI; não há port no Domain porque não há regra de domínio envolvida.
+- **Fonte da verdade do "checar automaticamente" é o Sparkle** (`UserDefaults` /
+  `SUEnableAutomaticChecks`), não `PomodoroConfiguration`: quem faz a pergunta de primeira
+  execução é o próprio Sparkle, então uma cópia nossa divergiria da resposta do usuário.
+- **Assinatura de código:** com o Sparkle embutido, o app passa a ter bundles executáveis
+  aninhados (`Sparkle.framework`, `Updater.app`, `Autoupdate`, XPC services). Cada um precisa
+  de assinatura própria, **de dentro para fora** — `scripts/release.sh` faz isso com
+  `find -depth` antes de assinar o `.app`. Sem isso a notarização rejeita.

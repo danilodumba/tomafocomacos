@@ -7,12 +7,19 @@ DerivedData/
 *.xcodeproj/
 .swiftpm/
 Packages/*/.build/
+# Pacotes SPM clonados fora de build/ para sobreviverem ao `rm -rf build` do release.sh.
+.spm-cache/
 App/Resources/Info.generated.plist
 
 # Assinatura / notarização
 *.p12
 *.provisionprofile
 notarization.log
+
+# Chave privada do Sparkle: vive no chaveiro; um export solto no repo permitiria a
+# qualquer um publicar uma "atualização" que os apps instalados aceitariam.
+*sparkle-key*
+*.p8
 
 # Sistema
 *.dmg

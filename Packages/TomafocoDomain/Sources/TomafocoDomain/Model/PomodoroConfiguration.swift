@@ -10,12 +10,14 @@ public struct PomodoroConfiguration: Equatable, Codable, Sendable {
     /// Desligado, cada etapa termina avisando e espera confirmação do usuário.
     public var autoAdvancePhases: Bool
     public var forceTerminateApps: Bool
-    public var hardcore: HardcoreOptions
     /// Site para onde a aba bloqueada é redirecionada. `nil`/vazio → página de bloqueio padrão
     /// (`blocked.html`). A normalização (adicionar esquema) fica na Infra, onde é aplicada.
     public var blockedRedirectURL: String?
     /// Espelha a conclusão/reabertura de tarefas importadas de volta no app Lembretes (RF-09.3).
     public var syncReminderCompletion: Bool
+    /// Permite selecionar mais de uma tarefa para uma mesma sessão de foco (RF-09.4).
+    /// Desligado, o seletor volta a ser de tarefa única (comportamento padrão).
+    public var allowMultipleTasksInFocus: Bool
 
     /// A chave persistida continua sendo `autoStartNextFocus`: renomear quebraria a
     /// decodificação das configurações já salvas, e o store cai silenciosamente no padrão
@@ -23,7 +25,8 @@ public struct PomodoroConfiguration: Equatable, Codable, Sendable {
     private enum CodingKeys: String, CodingKey {
         case focusDuration, shortBreakDuration, longBreakDuration, cyclesBeforeLongBreak
         case autoAdvancePhases = "autoStartNextFocus"
-        case forceTerminateApps, hardcore, blockedRedirectURL, syncReminderCompletion
+        case forceTerminateApps, blockedRedirectURL, syncReminderCompletion
+        case allowMultipleTasksInFocus
     }
 
     public init(
@@ -33,9 +36,9 @@ public struct PomodoroConfiguration: Equatable, Codable, Sendable {
         cyclesBeforeLongBreak: Int = 4,
         autoAdvancePhases: Bool = false,
         forceTerminateApps: Bool = false,
-        hardcore: HardcoreOptions = .init(),
         blockedRedirectURL: String? = nil,
-        syncReminderCompletion: Bool = true
+        syncReminderCompletion: Bool = true,
+        allowMultipleTasksInFocus: Bool = false
     ) {
         self.focusDuration = focusDuration
         self.shortBreakDuration = shortBreakDuration
@@ -43,9 +46,9 @@ public struct PomodoroConfiguration: Equatable, Codable, Sendable {
         self.cyclesBeforeLongBreak = cyclesBeforeLongBreak
         self.autoAdvancePhases = autoAdvancePhases
         self.forceTerminateApps = forceTerminateApps
-        self.hardcore = hardcore
         self.blockedRedirectURL = blockedRedirectURL
         self.syncReminderCompletion = syncReminderCompletion
+        self.allowMultipleTasksInFocus = allowMultipleTasksInFocus
     }
 
     // Decode tolerante a chaves ausentes: `syncReminderCompletion` (e qualquer campo futuro)
@@ -60,9 +63,9 @@ public struct PomodoroConfiguration: Equatable, Codable, Sendable {
         cyclesBeforeLongBreak = try c.decodeIfPresent(Int.self, forKey: .cyclesBeforeLongBreak) ?? d.cyclesBeforeLongBreak
         autoAdvancePhases = try c.decodeIfPresent(Bool.self, forKey: .autoAdvancePhases) ?? d.autoAdvancePhases
         forceTerminateApps = try c.decodeIfPresent(Bool.self, forKey: .forceTerminateApps) ?? d.forceTerminateApps
-        hardcore = try c.decodeIfPresent(HardcoreOptions.self, forKey: .hardcore) ?? d.hardcore
         blockedRedirectURL = try c.decodeIfPresent(String.self, forKey: .blockedRedirectURL)
         syncReminderCompletion = try c.decodeIfPresent(Bool.self, forKey: .syncReminderCompletion) ?? d.syncReminderCompletion
+        allowMultipleTasksInFocus = try c.decodeIfPresent(Bool.self, forKey: .allowMultipleTasksInFocus) ?? d.allowMultipleTasksInFocus
     }
 
     /// Duração de uma dada fase segundo esta configuração.
@@ -73,18 +76,5 @@ public struct PomodoroConfiguration: Equatable, Codable, Sendable {
         case .shortBreak: return shortBreakDuration
         case .longBreak: return longBreakDuration
         }
-    }
-}
-
-/// Opções do modo hardcore (RF-06).
-public struct HardcoreOptions: Equatable, Codable, Sendable {
-    public var isEnabled: Bool
-    public var minimumMinutesBeforeCancel: Int
-    public var requireReason: Bool
-
-    public init(isEnabled: Bool = false, minimumMinutesBeforeCancel: Int = 5, requireReason: Bool = true) {
-        self.isEnabled = isEnabled
-        self.minimumMinutesBeforeCancel = minimumMinutesBeforeCancel
-        self.requireReason = requireReason
     }
 }

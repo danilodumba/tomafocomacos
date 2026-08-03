@@ -19,13 +19,13 @@ final class ReportBuilderTests: XCTestCase {
     private func record(
         day: Int, hour: Int = 9, minutes: Double,
         phase: SessionPhase = .focus, outcome: SessionRecord.Outcome = .completed,
-        taskID: UUID? = nil
+        taskID: UUID? = nil, taskIDs: [UUID]? = nil
     ) -> SessionRecord {
         let start = day0.addingTimeInterval(Double(day) * 86_400 + Double(hour) * 3_600)
         return SessionRecord(
             sessionID: UUID(), phase: phase, startedAt: start,
             endedAt: start.addingTimeInterval(minutes * 60),
-            outcome: outcome, cycleNumber: 1, taskID: taskID
+            outcome: outcome, cycleNumber: 1, taskIDs: taskIDs ?? (taskID.map { [$0] } ?? [])
         )
     }
 
@@ -66,6 +66,20 @@ final class ReportBuilderTests: XCTestCase {
     func test_taskTotals_tarefaApagada_naoSomeDoRelatorio() {
         let report = build([record(day: 0, minutes: 25, taskID: taskA)], tasks: [])
         XCTAssertEqual(report.taskTotals[0].title, "Tarefa removida")
+    }
+
+    /// Foco multi-tarefa (RF-09.4): uma sessão com N tarefas dá o tempo CHEIO a cada uma.
+    func test_taskTotals_multitarefa_tempoCheioParaCadaTarefa() {
+        let report = build([
+            record(day: 0, minutes: 25, taskIDs: [taskA, taskB])
+        ], tasks: [task(taskA, "Estudo"), task(taskB, "Trabalho")])
+
+        XCTAssertEqual(report.taskTotals.count, 2)
+        XCTAssertEqual(report.taskTotals[0].focusTime, 25 * 60)
+        XCTAssertEqual(report.taskTotals[1].focusTime, 25 * 60)
+        XCTAssertEqual(report.taskTotals.map(\.sessionCount), [1, 1])
+        // O total geral não infla: continua contando por sessão.
+        XCTAssertEqual(report.summary.focusTotal, 25 * 60)
     }
 
     func test_taskTotals_intervalosNaoContam() {

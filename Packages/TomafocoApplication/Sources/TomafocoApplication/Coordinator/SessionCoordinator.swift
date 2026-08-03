@@ -7,7 +7,7 @@ import TomafocoDomain
 /// Fonte única de verdade do estado: mantém o `SessionMachineState`, alimenta a máquina pura
 /// com eventos (injetando `now` e novos `UUID`s) e INTERPRETA os `SessionEffect`s chamando os
 /// ports. Concentra aqui os "casos de uso" de start/pause/resume/cancel/next (SRP por método),
-/// deixando a decisão de transição na máquina pura e a validação hardcore na `HardcoreCancelPolicy`.
+/// deixando a decisão de transição na máquina pura.
 ///
 /// `@MainActor`: todo o ciclo de vida roda na main; o clock de Infrastructure entrega ticks na main.
 @MainActor
@@ -58,14 +58,8 @@ public final class SessionCoordinator {
     // MARK: - Casos de uso expostos
 
     /// UC-01 — inicia uma sessão de foco, opcionalmente vinculada a uma tarefa (RF-09).
-    /// Valida a exigência de motivo do modo hardcore (RF-06.2).
-    public func startFocus(reason: String?, taskID: UUID? = nil) async throws {
-        let config = settings.loadConfiguration()
-        if config.hardcore.isEnabled, config.hardcore.requireReason {
-            let trimmed = reason?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            guard !trimmed.isEmpty else { throw DomainError.reasonRequired }
-        }
-        await dispatch(.startFocus(reason: reason, taskID: taskID))
+    public func startFocus(taskIDs: [UUID] = []) async {
+        await dispatch(.startFocus(taskIDs: taskIDs))
         ensureTicking()
     }
 
@@ -78,27 +72,19 @@ public final class SessionCoordinator {
         ensureTicking()
     }
 
-    /// UC-03 — cancela a sessão, aplicando a política hardcore quando houver foco ativo.
-    public func cancel() async throws {
-        if let session = state.currentSession {
-            let config = settings.loadConfiguration()
-            if case .failure(let error) = HardcoreCancelPolicy.validate(session: session, config: config, now: clock.now) {
-                throw error
-            }
-        }
+    /// RF-09.1 — troca as tarefas vinculadas à sessão pausada (finalizar/mudar de tarefa no meio do foco).
+    /// Só a máquina decide se aplica: fora do foco pausado é no-op.
+    public func changeTask(_ taskIDs: [UUID]) async {
+        await dispatch(.changeTask(taskIDs: taskIDs))
+    }
+
+    /// UC-03 — cancela a sessão corrente e libera os bloqueios.
+    public func cancel() async {
         await dispatch(.cancel)
     }
 
     /// RF-04.2 — pula a fase corrente: foco vai direto para o intervalo, intervalo para o próximo foco.
-    /// Pular o foco encerra o bloqueio antes da hora, então passa pela mesma política do
-    /// cancelamento (RF-06.1) — do contrário o modo hardcore seria contornável pelo botão SKIP.
-    public func skipPhase() async throws {
-        if let session = state.currentSession {
-            let config = settings.loadConfiguration()
-            if case .failure(let error) = HardcoreCancelPolicy.validate(session: session, config: config, now: clock.now) {
-                throw error
-            }
-        }
+    public func skipPhase() async {
         await dispatch(.skipPhase)
         ensureTicking()
     }

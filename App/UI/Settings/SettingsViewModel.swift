@@ -13,13 +13,12 @@ final class SettingsViewModel: ObservableObject {
     @Published var cyclesBeforeLongBreak: Int { didSet { save() } }
     @Published var autoAdvancePhases: Bool { didSet { save() } }
     @Published var forceTerminateApps: Bool { didSet { save() } }
-    @Published var hardcoreEnabled: Bool { didSet { save() } }
-    @Published var hardcoreGraceMinutes: Int { didSet { save() } }
-    @Published var hardcoreRequireReason: Bool { didSet { save() } }
     /// Site para onde a aba bloqueada é redirecionada. Vazio → página de bloqueio padrão.
     @Published var blockedRedirectURL: String { didSet { save() } }
     /// Espelha conclusão/reabertura de tarefas importadas de volta no app Lembretes.
     @Published var syncReminderCompletion: Bool { didSet { save() } }
+    /// Permite selecionar mais de uma tarefa por sessão de foco (RF-09.4).
+    @Published var allowMultipleTasksInFocus: Bool { didSet { save() } }
 
     /// Iniciar junto com o macOS (item de login). NÃO vive na `PomodoroConfiguration`:
     /// a fonte da verdade é o sistema (`SMAppService`), que o usuário pode mudar por fora.
@@ -43,11 +42,9 @@ final class SettingsViewModel: ObservableObject {
         cyclesBeforeLongBreak = config.cyclesBeforeLongBreak
         autoAdvancePhases = config.autoAdvancePhases
         forceTerminateApps = config.forceTerminateApps
-        hardcoreEnabled = config.hardcore.isEnabled
-        hardcoreGraceMinutes = config.hardcore.minimumMinutesBeforeCancel
-        hardcoreRequireReason = config.hardcore.requireReason
         blockedRedirectURL = config.blockedRedirectURL ?? ""
         syncReminderCompletion = config.syncReminderCompletion
+        allowMultipleTasksInFocus = config.allowMultipleTasksInFocus
         launchAtLogin = loginItem.isEnabled
     }
 
@@ -81,15 +78,11 @@ final class SettingsViewModel: ObservableObject {
             cyclesBeforeLongBreak: cyclesBeforeLongBreak,
             autoAdvancePhases: autoAdvancePhases,
             forceTerminateApps: forceTerminateApps,
-            hardcore: HardcoreOptions(
-                isEnabled: hardcoreEnabled,
-                minimumMinutesBeforeCancel: hardcoreGraceMinutes,
-                requireReason: hardcoreRequireReason
-            ),
             // Vazio vira nil: o blocker interpreta nil como "página padrão".
             blockedRedirectURL: blockedRedirectURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                 ? nil : blockedRedirectURL.trimmingCharacters(in: .whitespacesAndNewlines),
-            syncReminderCompletion: syncReminderCompletion
+            syncReminderCompletion: syncReminderCompletion,
+            allowMultipleTasksInFocus: allowMultipleTasksInFocus
         )
         settings.save(config)
     }

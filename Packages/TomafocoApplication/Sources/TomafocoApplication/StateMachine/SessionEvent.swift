@@ -3,7 +3,7 @@ import TomafocoDomain
 
 /// Eventos que dirigem a máquina de estados do Pomodoro.
 public enum SessionEvent: Equatable {
-    case startFocus(reason: String?, taskID: UUID?)
+    case startFocus(taskIDs: [UUID])
     case tick
     case pause
     case resume
@@ -14,6 +14,8 @@ public enum SessionEvent: Equatable {
     /// com o mesmo `endsAt` absoluto — por isso o tempo perdido no crash não é devolvido.
     case adoptRecovered(PomodoroSession)
     /// Usuário pula a fase corrente (RF-04.2): foco → intervalo, intervalo → próximo foco.
-    /// Pular um foco passa pela mesma trava de hardcore do cancelamento (validada no coordinator).
     case skipPhase
+    /// Troca as tarefas vinculadas à sessão corrente (RF-09.1). Só vale com o foco pausado:
+    /// o usuário finalizou/mudou de tarefa no meio do foco. `[]` = passar a focar sem tarefa.
+    case changeTask(taskIDs: [UUID])
 }

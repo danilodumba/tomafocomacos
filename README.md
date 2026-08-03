@@ -11,7 +11,6 @@ App de Pomodoro para macOS que bloqueia sites e apps distrativos durante o foco.
   - Site de redirecionamento configurável nas Configurações › Sites (vazio = página padrão).
 - **Bloqueio de apps** — `NSWorkspace` encerra e observa relançamentos; aviso na tela ao tentar reabrir.
 - **Tela cheia de intervalo** — cobre todos os monitores; Esc dispensa.
-- **Modo hardcore** — restringe cancelar/pular o foco durante a carência.
 - **Tarefas** — CRUD manual, tags livres, importação do app Lembretes (EventKit), vínculo tarefa↔sessão.
 - **Relatórios** — horas por tarefa/dia, intervalos, streak (Swift Charts).
 - **Sobrevive a crash/sleep/reboot** — estado com término absoluto (`endsAt`) + fluxo de recuperação.
@@ -83,6 +82,8 @@ Se um site não bloquear, o problema é permissão de Automação, navegador nã
 ## Distribuição
 
 Fora da Mac App Store, assinado com Developer ID e notarizado (Gatekeeper). `make release` gera o `.dmg` assinado, notarizado e grampeado. Detalhes em `docs/tarefas.md` (T-25).
+
+O app **se atualiza sozinho** via Sparkle (ADR-9): checa `https://tomafoco.dds.tec.br/downloads/appcast.xml` uma vez por dia e pergunta antes de instalar. O `make release` também gera o `appcast.xml` assinado com a chave EdDSA — passo a passo em `docs/release.md`.
 
 ## Emergência (legado)
 

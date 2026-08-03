@@ -6,10 +6,6 @@ public enum DomainError: Error, Equatable {
     case invalidDomain(String)
     /// Tentativa de adicionar um item já existente na lista de bloqueio.
     case duplicateEntry(String)
-    /// Cancelamento rejeitado por estar dentro da carência do modo hardcore.
-    case cancellationBlockedByHardcore(remainingSeconds: Int)
-    /// Motivo obrigatório (modo hardcore) não informado ao iniciar a sessão.
-    case reasonRequired
     /// Título de tarefa vazio após normalização (RF-09).
     case emptyTaskTitle
 }

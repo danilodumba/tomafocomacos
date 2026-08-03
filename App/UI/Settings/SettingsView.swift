@@ -2,10 +2,11 @@ import SwiftUI
 import TomafocoDomain
 import TomafocoInfrastructure
 
-/// Janela de preferências com abas: durações/hardcore e listas de bloqueio (RF-05).
+/// Janela de preferências com abas: durações/comportamento e listas de bloqueio (RF-05).
 struct SettingsView: View {
     @ObservedObject var settingsViewModel: SettingsViewModel
     @ObservedObject var blockListViewModel: BlockListViewModel
+    @ObservedObject var updater: UpdaterController
 
     /// Largura da coluna de rótulos — evita que "Ciclos até o intervalo longo" seja truncado.
     private let labelWidth: CGFloat = 210
@@ -47,6 +48,9 @@ struct SettingsView: View {
                 toggleRow("Sincronizar conclusão com o Lembretes",
                           help: "Concluir ou reabrir uma tarefa importada espelha o mesmo estado no app Lembretes.",
                           isOn: $settingsViewModel.syncReminderCompletion)
+                toggleRow("Selecionar várias tarefas no foco",
+                          help: "Permite vincular mais de uma tarefa a uma mesma sessão de foco. Cada tarefa recebe o tempo cheio da sessão nos relatórios.",
+                          isOn: $settingsViewModel.allowMultipleTasksInFocus)
                 if let error = settingsViewModel.launchAtLoginError {
                     Text(error)
                         .font(.system(size: 11))
@@ -55,16 +59,14 @@ struct SettingsView: View {
                 }
             }
 
-            Section("Modo hardcore") {
-                toggleRow("Ativar modo hardcore",
-                          help: "Restringe o cancelamento e o pulo do foco durante a carência.",
-                          isOn: $settingsViewModel.hardcoreEnabled)
-                toggleRow("Exigir motivo ao iniciar", isOn: $settingsViewModel.hardcoreRequireReason)
-                    .disabled(!settingsViewModel.hardcoreEnabled)
-                row("Carência para cancelar") {
-                    stepper(value: $settingsViewModel.hardcoreGraceMinutes, range: 0...30, suffix: " min")
+            Section("Atualizações") {
+                toggleRow("Buscar atualizações automaticamente",
+                          help: "Checa em segundo plano uma vez por dia. Nada é instalado sem você confirmar.",
+                          isOn: $updater.automaticallyChecks)
+                row("Checar agora", help: lastCheckText) {
+                    Button("Buscar atualizações…") { updater.checkForUpdates() }
+                        .disabled(!updater.canCheckForUpdates)
                 }
-                .disabled(!settingsViewModel.hardcoreEnabled)
             }
 
             Section {
@@ -79,7 +81,20 @@ struct SettingsView: View {
         }
         .formStyle(.grouped)
         .scrollContentBackground(.hidden)
-        .onAppear { settingsViewModel.refreshLaunchAtLogin() }
+        .onAppear {
+            settingsViewModel.refreshLaunchAtLogin()
+            // O Sparkle mexe em `automaticallyChecksForUpdates` por fora (diálogo de primeira
+            // execução, fluxo de instalação) — sem reler, o toggle mostraria valor velho.
+            updater.refresh()
+        }
+    }
+
+    /// "Última verificação: 30/07/2026 14:12" — ou o texto de nunca-checou.
+    private var lastCheckText: String {
+        guard let date = updater.lastCheckDate else {
+            return "Ainda não houve nenhuma verificação."
+        }
+        return "Última verificação: " + date.formatted(date: .numeric, time: .shortened)
     }
 
     // MARK: Linhas do formulário

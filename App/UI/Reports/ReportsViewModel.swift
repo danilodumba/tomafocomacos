@@ -19,6 +19,13 @@ final class ReportsViewModel: ObservableObject {
         didSet { reload() }
     }
     @Published private(set) var report: FocusReport?
+    /// Todas as tarefas concluídas (fonte para a lista e o CSV), antes de busca/tag.
+    @Published private(set) var completedAll: [FocusTask] = []
+    /// Todas as tags conhecidas — alimenta o filtro por tag.
+    @Published private(set) var knownTags: [String] = []
+    /// Busca por título e filtro por tag da lista de concluídas (item 3).
+    @Published var searchText = ""
+    @Published var tagFilter: String?
 
     private let sessions: SessionRepository
     private let tasks: TaskRepository
@@ -35,6 +42,41 @@ final class ReportsViewModel: ObservableObject {
         report = ReportBuilder.build(
             records: records, tasks: allTasks,
             interval: interval(for: period), now: Date(), calendar: calendar)
+        completedAll = allTasks.filter(\.isCompleted)
+            .sorted { ($0.completedAt ?? .distantPast) > ($1.completedAt ?? .distantPast) }
+        knownTags = allTasks.flatMap(\.tags).reduce(into: [String]()) { acc, tag in
+            if !acc.contains(where: { $0.caseInsensitiveCompare(tag) == .orderedSame }) { acc.append(tag) }
+        }.sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
+    }
+
+    /// Concluídas após busca por título e filtro por tag.
+    var completedTasks: [FocusTask] {
+        var list = completedAll
+        let query = searchText.trimmingCharacters(in: .whitespaces)
+        if !query.isEmpty {
+            list = list.filter { $0.title.localizedCaseInsensitiveContains(query) }
+        }
+        if let tag = tagFilter {
+            list = list.filter { $0.tags.contains { $0.caseInsensitiveCompare(tag) == .orderedSame } }
+        }
+        return list
+    }
+
+    /// CSV das tarefas concluídas filtradas (item 3). Datas formatadas em pt-BR.
+    func csv() -> String {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "pt_BR")
+        formatter.dateFormat = "yyyy-MM-dd HH:mm"
+        return ReportCSVExporter.completedTasksCSV(
+            tasks: completedTasks,
+            report: report ?? FocusReport(taskTotals: [], dailyTotals: [], summary: emptySummary()),
+            dateString: { formatter.string(from: $0) })
+    }
+
+    private func emptySummary() -> FocusReport.Summary {
+        FocusReport.Summary(focusTotal: 0, breakTotal: 0, completedFocusCount: 0,
+                            cancelledFocusCount: 0, skippedFocusCount: 0,
+                            streakDays: 0, dailyFocusAverage: 0)
     }
 
     private func interval(for period: Period) -> DateInterval? {

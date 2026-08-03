@@ -7,14 +7,52 @@ import TomafocoApplication
 @MainActor
 final class TasksViewModel: ObservableObject {
 
+    /// Critério de ordenação da lista de ativas (item 5).
+    enum SortOrder: String, CaseIterable, Identifiable {
+        case createdAt, dueDate, dueTime, priority
+        var id: String { rawValue }
+        var label: String {
+            switch self {
+            case .createdAt: return "Criação"
+            case .dueDate: return "Data"
+            case .dueTime: return "Hora"
+            case .priority: return "Prioridade"
+            }
+        }
+    }
+
     @Published private(set) var activeTasks: [FocusTask] = []
     @Published private(set) var completedTasks: [FocusTask] = []
+    /// Todas as tags conhecidas (uso + catálogo) — alimenta autocomplete, filtro e o gestor.
+    @Published private(set) var knownTags: [String] = []
     @Published var newTitle = ""
     /// Tags da nova tarefa, digitadas separadas por vírgula.
     @Published var newTags = ""
-    /// Tarefa em edição de tags (popover) + texto do campo.
-    @Published var editingTagsTask: FocusTask?
-    @Published var editingTagsText = ""
+    /// Tarefa aberta no formulário de edição (RF-09.6) + rascunho dos campos. Enquanto o sheet
+    /// está aberto nada é gravado: só `saveEdit()` toca o repositório.
+    @Published var editingTask: FocusTask?
+    @Published var editTitle = ""
+    /// Tags do rascunho, separadas por vírgula (mesmo formato do campo de criação).
+    @Published var editTags = ""
+    @Published var editNotes = ""
+    /// Vencimento é opcional: o toggle liga/desliga o `DatePicker` e desligado grava `nil`.
+    @Published var editHasDueDate = false
+    @Published var editDueDate = Date()
+    @Published var editPriority: TaskPriority = .none
+    /// Erro do formulário — separado de `feedback` porque o sheet cobre a lista.
+    @Published var editFeedback: String?
+
+    // Ordenação + filtros da lista de ativas (itens 5 e 7).
+    /// Persistida: a última ordenação escolhida volta na próxima abertura da janela/app.
+    /// Filtros e busca NÃO são persistidos de propósito — recorte é da sessão, ordenação é preferência.
+    @Published var sortOrder: SortOrder = .createdAt {
+        didSet { defaults.set(sortOrder.rawValue, forKey: Self.sortOrderKey) }
+    }
+    @Published var searchText = ""
+    @Published var tagFilter: String?
+    @Published var priorityFilter: TaskPriority?
+    /// Abre a tela de gestão de tags (item 1).
+    @Published var showsTagManager = false
     /// Mensagem de resultado/erro exibida sob a toolbar (some na próxima ação).
     @Published var feedback: String?
     /// Acesso ao Lembretes negado — a UI mostra o atalho para os Ajustes de Privacidade.
@@ -27,8 +65,12 @@ final class TasksViewModel: ObservableObject {
     @Published private(set) var availableReminders: [ImportedReminder] = []
     /// Texto de busca por título dentro do sheet.
     @Published var reminderSearch = ""
-    /// `reminderID`s já presentes na lista de tarefas — linhas ficam marcadas/desabilitadas.
+    /// `reminderID`s com tarefa **ativa** — só essas linhas ficam marcadas/desabilitadas.
     @Published private(set) var importedReminderIDs: Set<String> = []
+    /// `reminderID`s cuja tarefa já foi concluída aqui. Continuam importáveis (lembrete
+    /// recorrente: concluir a ocorrência de hoje não pode barrar a de amanhã) — a linha só
+    /// avisa que é uma reimportação.
+    @Published private(set) var reimportableReminderIDs: Set<String> = []
 
     /// Lembretes filtrados pela busca por título (case-insensitive).
     var filteredReminders: [ImportedReminder] {
@@ -38,6 +80,8 @@ final class TasksViewModel: ObservableObject {
     }
 
     private let defaults: UserDefaults
+    /// Chave da ordenação salva. Valor inválido/ausente cai em `.createdAt`.
+    private static let sortOrderKey = "tasksSortOrder"
 
     private let useCase: ManageTasksUseCase
     /// Avisa o timer que a lista mudou (o seletor de tarefa precisa recarregar).
@@ -48,15 +92,84 @@ final class TasksViewModel: ObservableObject {
         self.useCase = useCase
         self.defaults = defaults
         self.onTasksChanged = onTasksChanged
+        sortOrder = Self.storedSortOrder(in: defaults)
         reload()
     }
 
     func reload() {
         let all = (try? useCase.allTasks()) ?? []
-        activeTasks = all.filter { !$0.isCompleted }.sorted { $0.createdAt > $1.createdAt }
+        activeTasks = all.filter { !$0.isCompleted }
         completedTasks = all.filter(\.isCompleted).sorted { ($0.completedAt ?? .distantPast) > ($1.completedAt ?? .distantPast) }
-        importedReminderIDs = Set(all.compactMap(\.reminderID))
+        importedReminderIDs = Set(activeTasks.compactMap(\.reminderID))
+        reimportableReminderIDs = Set(completedTasks.compactMap(\.reminderID))
+            .subtracting(importedReminderIDs)
+        knownTags = (try? useCase.allTags()) ?? []
         onTasksChanged()
+    }
+
+    /// Lista de ativas já buscada, filtrada e ordenada para exibição (itens 5 e 7).
+    var displayedTasks: [FocusTask] {
+        var tasks = activeTasks
+
+        let query = searchText.trimmingCharacters(in: .whitespaces)
+        if !query.isEmpty {
+            tasks = tasks.filter { $0.title.localizedCaseInsensitiveContains(query) }
+        }
+        if let tag = tagFilter {
+            tasks = tasks.filter { $0.tags.contains { $0.caseInsensitiveCompare(tag) == .orderedSame } }
+        }
+        if let priority = priorityFilter {
+            tasks = tasks.filter { TaskPriority(rawPriority: $0.priority) == priority }
+        }
+        return tasks.sorted(by: sortComparator)
+    }
+
+    /// Ordenação salva; `rawValue` desconhecido (versão antiga/futura) volta ao padrão.
+    private static func storedSortOrder(in defaults: UserDefaults) -> SortOrder {
+        guard let raw = defaults.string(forKey: sortOrderKey) else { return .createdAt }
+        return SortOrder(rawValue: raw) ?? .createdAt
+    }
+
+    /// Comparador conforme `sortOrder`. Empates caem para o mais recente primeiro.
+    private func sortComparator(_ a: FocusTask, _ b: FocusTask) -> Bool {
+        switch sortOrder {
+        case .createdAt:
+            return a.createdAt > b.createdAt
+        case .dueDate:
+            return byOptionalDate(a.dueDate, b.dueDate, a, b)
+        case .dueTime:
+            return byOptionalDate(timeOfDay(a.dueDate), timeOfDay(b.dueDate), a, b)
+        case .priority:
+            // Prioridade menor = mais urgente; sem prioridade vai para o fim.
+            let pa = a.priority ?? Int.max
+            let pb = b.priority ?? Int.max
+            if pa != pb { return pa < pb }
+            return a.createdAt > b.createdAt
+        }
+    }
+
+    /// Ordena por data opcional (nil por último); empate → mais recente primeiro.
+    private func byOptionalDate(_ da: Date?, _ db: Date?, _ a: FocusTask, _ b: FocusTask) -> Bool {
+        switch (da, db) {
+        case let (x?, y?): return x != y ? x < y : a.createdAt > b.createdAt
+        case (nil, _?): return false
+        case (_?, nil): return true
+        case (nil, nil): return a.createdAt > b.createdAt
+        }
+    }
+
+    /// Segundos desde a meia-noite de uma data — base para ordenar por "hora" do vencimento.
+    private func timeOfDay(_ date: Date?) -> Date? {
+        guard let date else { return nil }
+        let c = Calendar.current.dateComponents([.hour, .minute, .second], from: date)
+        let seconds = (c.hour ?? 0) * 3600 + (c.minute ?? 0) * 60 + (c.second ?? 0)
+        return Date(timeIntervalSinceReferenceDate: TimeInterval(seconds))
+    }
+
+    /// Tarefa vencida: tem data de vencimento no passado e não está concluída (item 6).
+    func isOverdue(_ task: FocusTask) -> Bool {
+        guard !task.isCompleted, let due = task.dueDate else { return false }
+        return due < Date()
     }
 
     func addTask() {
@@ -79,36 +192,129 @@ final class TasksViewModel: ObservableObject {
         feedback = nil
         Task {
             do {
-                if completed { try await useCase.completeTask(id: task.id) }
-                else { try await useCase.reopenTask(id: task.id) }
+                let outcome = completed
+                    ? try await useCase.completeTask(id: task.id)
+                    : try await useCase.reopenTask(id: task.id)
                 reload()
+                // Falha de espelhamento não desfaz a mudança local, mas precisa aparecer:
+                // sem aviso, o usuário só descobre abrindo o Lembretes.
+                if outcome == .failed {
+                    feedback = "Tarefa atualizada aqui, mas não foi possível refletir no Lembretes"
+                        + " (lembrete apagado ou acesso negado em Ajustes › Privacidade › Lembretes)."
+                }
             } catch {
                 feedback = "Não foi possível atualizar: \(error.localizedDescription)"
             }
         }
     }
 
-    /// Abre o popover de edição de tags com as tags atuais pré-preenchidas.
-    func beginEditingTags(_ task: FocusTask) {
+    // MARK: - Edição completa (RF-09.6)
+
+    /// Abre o formulário com os valores atuais da tarefa.
+    func beginEditing(_ task: FocusTask) {
         feedback = nil
-        editingTagsText = task.tags.joined(separator: ", ")
-        editingTagsTask = task
+        editFeedback = nil
+        editTitle = task.title
+        editTags = task.tags.joined(separator: ", ")
+        editNotes = task.notes ?? ""
+        editHasDueDate = task.dueDate != nil
+        editDueDate = task.dueDate ?? Self.defaultDueDate()
+        editPriority = TaskPriority(rawPriority: task.priority)
+        editingTask = task
     }
 
-    func saveEditingTags() {
-        guard let task = editingTagsTask else { return }
-        editingTagsTask = nil
+    func cancelEditing() {
+        editingTask = nil
+        editFeedback = nil
+    }
+
+    /// Grava o rascunho. Erro de validação mantém o sheet aberto com a mensagem.
+    func saveEdit() {
+        guard let task = editingTask else { return }
+        editFeedback = nil
         do {
-            try useCase.setTags(id: task.id, tags: Self.parseTags(editingTagsText))
+            try useCase.editTask(
+                id: task.id,
+                title: editTitle,
+                tags: Self.parseTags(editTags),
+                notes: editNotes,
+                dueDate: editHasDueDate ? editDueDate : nil,
+                priority: editPriority
+            )
+            editingTask = nil
             reload()
+        } catch DomainError.emptyTaskTitle {
+            editFeedback = "Informe um título para a tarefa."
+        } catch DomainError.duplicateEntry(let title) {
+            editFeedback = "Já existe uma tarefa ativa chamada \"\(title)\"."
         } catch {
-            feedback = "Não foi possível salvar as tags: \(error.localizedDescription)"
+            editFeedback = "Não foi possível salvar: \(error.localizedDescription)"
         }
+    }
+
+    /// Sugestão ao ligar o vencimento numa tarefa que não tinha: hoje na próxima hora cheia
+    /// (data crua com segundos do "agora" viraria um horário estranho no picker).
+    private static func defaultDueDate() -> Date {
+        let calendar = Calendar.current
+        let next = calendar.date(byAdding: .hour, value: 1, to: Date()) ?? Date()
+        var parts = calendar.dateComponents([.year, .month, .day, .hour], from: next)
+        parts.minute = 0
+        parts.second = 0
+        return calendar.date(from: parts) ?? next
     }
 
     /// Divide o texto do campo em tags cruas (por vírgula) — a normalização final é do Domain.
     static func parseTags(_ text: String) -> [String] {
         text.split(separator: ",").map(String.init)
+    }
+
+    // MARK: - Prioridade (item 4)
+
+    func setPriority(_ task: FocusTask, _ priority: TaskPriority) {
+        feedback = nil
+        do {
+            try useCase.setPriority(id: task.id, priority: priority)
+            reload()
+        } catch {
+            feedback = "Não foi possível definir a prioridade: \(error.localizedDescription)"
+        }
+    }
+
+    // MARK: - Cadastro de tags (item 1)
+
+    /// Quantas tarefas usam cada tag — mostrado no gestor de tags.
+    func taskCount(forTag tag: String) -> Int {
+        (activeTasks + completedTasks).filter {
+            $0.tags.contains { $0.caseInsensitiveCompare(tag) == .orderedSame }
+        }.count
+    }
+
+    func createTag(_ name: String) {
+        feedback = nil
+        do { try useCase.createTag(name); reload() }
+        catch { feedback = "Não foi possível criar a tag: \(error.localizedDescription)" }
+    }
+
+    func renameTag(from oldName: String, to newName: String) {
+        feedback = nil
+        do {
+            try useCase.renameTag(from: oldName, to: newName)
+            if tagFilter?.caseInsensitiveCompare(oldName) == .orderedSame { tagFilter = newName }
+            reload()
+        } catch {
+            feedback = "Não foi possível renomear a tag: \(error.localizedDescription)"
+        }
+    }
+
+    func deleteTag(_ name: String) {
+        feedback = nil
+        do {
+            try useCase.deleteTag(name)
+            if tagFilter?.caseInsensitiveCompare(name) == .orderedSame { tagFilter = nil }
+            reload()
+        } catch {
+            feedback = "Não foi possível apagar a tag: \(error.localizedDescription)"
+        }
     }
 
     func delete(_ task: FocusTask) {

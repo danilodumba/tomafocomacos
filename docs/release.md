@@ -88,13 +88,74 @@ Se persistir, use a Opção A: ela não passa por nenhum desses caminhos.
 | Passo | Por quê |
 |---|---|
 | `xcodebuild -configuration Release` | build sem assinatura (`CODE_SIGNING_ALLOWED=NO`) |
+| `codesign` nos bundles aninhados | o Sparkle embute `Sparkle.framework`, `Updater.app`, `Autoupdate` e XPC services; cada um precisa de selo próprio, **de dentro para fora**, ou a notarização rejeita |
 | `codesign --options runtime --timestamp` | Hardened Runtime + carimbo de tempo — a notarização **rejeita** sem os dois |
 | `--entitlements Tomafoco.entitlements` | preserva o `apple-events`, sem o qual o bloqueio de sites para de funcionar |
+| `codesign --verify --deep` | pega bundle aninhado sem assinatura **antes** de gastar minutos na notarização |
 | `hdiutil create` | DMG com o app + atalho para `/Applications` |
 | `codesign` no DMG | Gatekeeper também avalia o container |
 | `notarytool submit --wait` | envia e aguarda o veredito da Apple (minutos) |
 | `stapler staple` | grava o ticket no DMG: passa a abrir **offline** |
+| `generate_appcast` | assina o DMG com a chave EdDSA e monta o `appcast.xml` (feed do Sparkle) |
 | `spctl --assess` | simula localmente o que o Gatekeeper fará na máquina do usuário |
+
+---
+
+## Atualização automática (Sparkle — ADR-9)
+
+O app checa `https://tomafoco.dds.tec.br/downloads/appcast.xml` uma vez por dia e **pergunta**
+antes de instalar. Nada de silencioso: `SUAutomaticallyUpdate: false`.
+
+### Pré-requisito (feito UMA vez): chave EdDSA
+
+```bash
+make sparkle-keys      # gera o par; a privada vai para o chaveiro
+```
+
+Cole a chave pública impressa em `SUPublicEDKey`, no `project.yml`. Ela vai embutida no app e é
+o que faz o Sparkle recusar um appcast que não tenha sido assinado por você.
+
+> ⚠️ **Guarde um backup offline da chave privada.** Perdê-la é irreversível: todo mundo que já
+> instalou o Tomafoco passa a ignorar qualquer atualização, e a única saída vira pedir
+> reinstalação manual. Exporte com
+> `.spm-cache/artifacts/sparkle/Sparkle/bin/generate_keys -x arquivo.txt`, mova para um cofre e
+> apague o arquivo. Nunca versione.
+
+### A cada release
+
+1. Suba `MARKETING_VERSION` (e `CURRENT_PROJECT_VERSION`) no `project.yml`.
+   O Sparkle compara `CFBundleVersion` — **release com build igual não é oferecida**.
+2. (Opcional) escreva as notas em `docs/release-notes/<versão>.html`; viram a descrição do
+   diálogo de atualização. Sem o arquivo, o item sai sem descrição.
+3. `make release`.
+4. Publique em `https://tomafoco.dds.tec.br/downloads/`, **o DMG antes do `appcast.xml`** — o
+   feed novo apontando para um arquivo que ainda não subiu faz o download falhar em quem checar
+   nesse intervalo. Para o script subir sozinho:
+
+   ```bash
+   UPDATE_UPLOAD_DEST="usuario@host:/var/www/tomafoco/downloads/" make release
+   ```
+
+O servidor precisa entregar o `appcast.xml` por **HTTPS** — o Sparkle recusa feed em HTTP.
+
+> ⚠️ **O build sai arm64-only.** Não há `ARCHS` definido, então o `xcodebuild` compila só para a
+> arquitetura da máquina, e o `generate_appcast` reflete isso no feed
+> (`<sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>`) — Macs Intel não
+> recebem a atualização. Para gerar binário universal, acrescente ao `xcodebuild` do
+> `release.sh`: `ARCHS="arm64 x86_64" ONLY_ACTIVE_ARCH=NO`.
+
+### Testar sem publicar para todo mundo
+
+Gere um release com versão maior, hospede o par DMG + appcast num diretório de teste e rode o
+app apontando para lá:
+
+```bash
+defaults write com.dsdumba.tomafoco SUFeedURL "https://…/teste/appcast.xml"
+defaults delete com.dsdumba.tomafoco SUFeedURL   # volta ao feed do Info.plist
+```
+
+Instale uma cópia com versão **menor** (ex.: 1.4) e mande "Buscar atualizações…". Testar com a
+mesma versão só produz "você já está atualizado" e não exercita nada.
 
 ---
 
@@ -120,5 +181,7 @@ que o construiu não prova nada — ali o app já é confiável por ter sido com
   xcrun notarytool log <submission-id> --keychain-profile tomafoco
   ```
 - A versão do DMG sai de `MARKETING_VERSION` no `project.yml` — subir versão é editar lá.
-- O app **não** embarca mais nenhum daemon privilegiado (ADR-8), o que simplifica a notarização:
-  não há binário aninhado para assinar separadamente.
+- O app **não** embarca nenhum daemon privilegiado (ADR-8). O único conteúdo aninhado é o
+  Sparkle — assinado em laço pelo `release.sh`, sem passo manual.
+- Os pacotes SPM são clonados em `.spm-cache/` (fora de `build/`, que o script apaga a cada
+  release) porque o XCFramework do Sparkle tem dezenas de MB e seria rebaixado toda vez.

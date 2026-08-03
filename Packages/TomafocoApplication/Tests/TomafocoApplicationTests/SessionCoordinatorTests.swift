@@ -31,7 +31,7 @@ final class SessionCoordinatorTests: XCTestCase {
         let (sut, _, appBlocker, webBlocker, sessions, _) = makeSUT(
             blockList: BlockList(domains: [try BlockedDomain(raw: "twitter.com")], apps: apps))
 
-        try await sut.startFocus(reason: nil)
+        await sut.startFocus()
 
         XCTAssertEqual(appBlocker.activateCallCount, 1)
         XCTAssertEqual(appBlocker.lastBundleIDs, ["com.tinyspeck.slackmacgap"])
@@ -43,43 +43,15 @@ final class SessionCoordinatorTests: XCTestCase {
     func test_startFocus_falhaNoBloqueioDeSites_marcaIndisponivel() async throws {
         struct Boom: Error {}
         let (sut, _, _, _, _, notifier) = makeSUT(websiteError: Boom())
-        try await sut.startFocus(reason: nil)
+        await sut.startFocus()
         XCTAssertTrue(sut.websiteBlockingUnavailable)
         XCTAssertTrue(notifier.events.contains(.websiteBlockingUnavailable))
     }
 
-    func test_startFocus_hardcoreExigeMotivo_semMotivo_lanca() async {
-        let config = PomodoroConfiguration(hardcore: .init(isEnabled: true, requireReason: true))
-        let (sut, _, _, _, _, _) = makeSUT(config: config)
-        do {
-            try await sut.startFocus(reason: "   ")
-            XCTFail("esperava DomainError.reasonRequired")
-        } catch {
-            XCTAssertEqual(error as? DomainError, .reasonRequired)
-        }
-    }
-
-    func test_cancel_dentroDaCarenciaHardcore_lancaENaoDesativa() async throws {
-        let config = PomodoroConfiguration(
-            hardcore: .init(isEnabled: true, minimumMinutesBeforeCancel: 5, requireReason: false))
-        let (sut, _, appBlocker, _, _, _) = makeSUT(config: config)
-        try await sut.startFocus(reason: "foco")
-
-        do {
-            try await sut.cancel()
-            XCTFail("esperava bloqueio de cancelamento")
-        } catch {
-            guard case DomainError.cancellationBlockedByHardcore = error else {
-                return XCTFail("erro inesperado: \(error)")
-            }
-        }
-        XCTAssertEqual(appBlocker.deactivateCallCount, 0)     // bloqueio permaneceu
-    }
-
-    func test_cancel_semHardcore_desativaBloqueioEVoltaParaIdle() async throws {
+    func test_cancel_desativaBloqueioEVoltaParaIdle() async throws {
         let (sut, _, appBlocker, webBlocker, sessions, _) = makeSUT()
-        try await sut.startFocus(reason: nil)
-        try await sut.cancel()
+        await sut.startFocus()
+        await sut.cancel()
 
         XCTAssertEqual(appBlocker.deactivateCallCount, 1)
         XCTAssertEqual(webBlocker.deactivateCallCount, 1)
@@ -95,7 +67,7 @@ final class SessionCoordinatorTests: XCTestCase {
             blockList: BlockList(domains: [try BlockedDomain(raw: "globo.com")], apps: apps))
         let pendente = PomodoroSession(
             id: UUID(), phase: .focus, startedAt: clock.now.addingTimeInterval(-600),
-            endsAt: clock.now.addingTimeInterval(900), reason: "código", cycleNumber: 2, taskID: nil)
+            endsAt: clock.now.addingTimeInterval(900), cycleNumber: 2, taskIDs: [])
 
         await sut.adoptRecoveredSession(pendente)
 
@@ -113,7 +85,7 @@ final class SessionCoordinatorTests: XCTestCase {
             config: PomodoroConfiguration(autoAdvancePhases: true))
         let quaseNoFim = PomodoroSession(
             id: UUID(), phase: .focus, startedAt: clock.now.addingTimeInterval(-1500),
-            endsAt: clock.now.addingTimeInterval(1), reason: nil, cycleNumber: 1, taskID: nil)
+            endsAt: clock.now.addingTimeInterval(1), cycleNumber: 1, taskIDs: [])
 
         await sut.adoptRecoveredSession(quaseNoFim)
         clock.advance(by: 2)
@@ -127,12 +99,12 @@ final class SessionCoordinatorTests: XCTestCase {
 
     // MARK: - skipPhase (RF-04.2)
 
-    func test_skipPhase_noFoco_semHardcore_liberaBloqueioEVaiParaIntervalo() async throws {
+    func test_skipPhase_noFoco_liberaBloqueioEVaiParaIntervalo() async throws {
         let (sut, _, appBlocker, webBlocker, sessions, _) = makeSUT(
             config: PomodoroConfiguration(autoAdvancePhases: true))
-        try await sut.startFocus(reason: nil)
+        await sut.startFocus()
 
-        try await sut.skipPhase()
+        await sut.skipPhase()
 
         guard case .running(let session) = sut.state else { return XCTFail("esperava running") }
         XCTAssertEqual(session.phase, .shortBreak)
@@ -141,42 +113,17 @@ final class SessionCoordinatorTests: XCTestCase {
         XCTAssertNil(sessions.active)                          // failsafe limpo
     }
 
-    /// SKIP encerra o foco antes da hora, então precisa respeitar a carência do hardcore —
-    /// sem isso o botão seria um atalho para burlar o RF-06.1.
-    func test_skipPhase_noFoco_dentroDaCarenciaHardcore_eRejeitado() async throws {
-        let config = PomodoroConfiguration(
-            hardcore: HardcoreOptions(isEnabled: true, minimumMinutesBeforeCancel: 5))
-        let (sut, _, appBlocker, _, _, _) = makeSUT(config: config)
-        try await sut.startFocus(reason: "foco")
-
-        do {
-            try await sut.skipPhase()
-            XCTFail("esperava bloqueio do pulo")
-        } catch {
-            guard case DomainError.cancellationBlockedByHardcore = error else {
-                return XCTFail("erro inesperado: \(error)")
-            }
-        }
-        XCTAssertEqual(appBlocker.deactivateCallCount, 0)      // bloqueio permaneceu
-        guard case .running(let session) = sut.state else { return XCTFail("esperava running") }
-        XCTAssertEqual(session.phase, .focus)                  // continua no foco
-    }
-
-    /// A trava é do foco; um intervalo pode ser pulado mesmo com hardcore ligado.
-    func test_skipPhase_noIntervalo_comHardcore_ePermitido() async throws {
-        let config = PomodoroConfiguration(
-            autoAdvancePhases: true,
-            hardcore: HardcoreOptions(isEnabled: true, minimumMinutesBeforeCancel: 5))
-        let (sut, clock, _, _, _, _) = makeSUT(config: config)
-        try await sut.startFocus(reason: "foco")
-        // Passa da carência e pula o foco para chegar ao intervalo sem depender do tick assíncrono.
-        clock.advance(by: 6 * 60)
-        try await sut.skipPhase()
+    func test_skipPhase_noIntervalo_emendaProximoFoco() async throws {
+        let config = PomodoroConfiguration(autoAdvancePhases: true)
+        let (sut, _, _, _, _, _) = makeSUT(config: config)
+        await sut.startFocus()
+        // Pula o foco para chegar ao intervalo sem depender do tick assíncrono.
+        await sut.skipPhase()
         guard case .running(let br) = sut.state, br.phase == .shortBreak else {
             return XCTFail("esperava intervalo em andamento")
         }
 
-        try await sut.skipPhase()
+        await sut.skipPhase()
 
         // Com avanço automático ligado, pular o intervalo emenda direto no próximo foco.
         guard case .running(let proximo) = sut.state else { return XCTFail("esperava running") }
@@ -189,12 +136,12 @@ final class SessionCoordinatorTests: XCTestCase {
     func test_fimDoFoco_semAutoAvanco_naoEmendaIntervaloSozinho() async throws {
         let (sut, clock, appBlocker, _, sessions, notifier) = makeSUT(
             config: PomodoroConfiguration(focusDuration: 60, autoAdvancePhases: false))
-        try await sut.startFocus(reason: nil)
+        await sut.startFocus()
 
         clock.advance(by: 61)
         try await Task.sleep(nanoseconds: 100_000_000)   // o tick despacha numa Task
 
-        XCTAssertEqual(sut.state, .awaitingNext(phase: .shortBreak, cycle: 1, taskID: nil))
+        XCTAssertEqual(sut.state, .awaitingNext(phase: .shortBreak, cycle: 1, taskIDs: []))
         XCTAssertTrue(notifier.events.contains(.focusEnded))
         XCTAssertEqual(appBlocker.deactivateCallCount, 1)  // bloqueio cai mesmo aguardando
         XCTAssertNil(sessions.active)

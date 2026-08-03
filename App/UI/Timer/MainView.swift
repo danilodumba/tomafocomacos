@@ -5,7 +5,7 @@ import TomafocoDomain
 /// Layout em três faixas: cabeçalho, anel de progresso e controles — identidade DDS.TEC.
 struct MainView: View {
     @ObservedObject var viewModel: TimerViewModel
-    @Environment(\.openWindow) private var openWindow
+    @ObservedObject var updater: UpdaterController
 
     var body: some View {
         ZStack {
@@ -37,40 +37,10 @@ struct MainView: View {
 
             HStack {
                 Spacer()
-                overflowMenu
+                OverflowMenu(updater: updater)
             }
         }
         .frame(height: 24)
-    }
-
-    private var overflowMenu: some View {
-        Menu {
-            Button("Tarefas & Relatórios…") { openWindow(id: "tasks") }
-            settingsButton
-            Divider()
-            Button("Sair do Tomafoco") { NSApplication.shared.terminate(nil) }
-        } label: {
-            Image(systemName: "gearshape")
-                .font(.system(size: 15, weight: .semibold))
-                .foregroundStyle(Brand.textSecondary)
-                .frame(width: 28, height: 24)
-                .contentShape(Rectangle())
-        }
-        .menuStyle(.borderlessButton)
-        .menuIndicator(.hidden)
-        .fixedSize()
-        .accessibilityLabel("Mais opções")
-    }
-
-    /// `SettingsLink` só existe no macOS 14+; no 13 usamos o seletor padrão.
-    @ViewBuilder private var settingsButton: some View {
-        if #available(macOS 14, *) {
-            SettingsLink { Text("Configurações…") }
-        } else {
-            Button("Configurações…") {
-                NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
-            }
-        }
     }
 
     // MARK: - Anel + tempo
@@ -115,25 +85,21 @@ struct MainView: View {
     private var footer: some View {
         VStack(spacing: 18) {
             if viewModel.isIdle && !viewModel.availableTasks.isEmpty {
-                taskPicker
+                taskSelector(
+                    selected: viewModel.selectedTaskIDs,
+                    accessibility: viewModel.allowsMultipleTasks
+                        ? "Tarefas do próximo foco" : "Tarefa do próximo foco",
+                    toggle: { viewModel.toggleSelectedTask($0) },
+                    clear: { viewModel.selectedTaskIDs = [] })
             }
 
-            if viewModel.isIdle && viewModel.requiresReason {
-                TextField("Motivo do foco", text: $viewModel.reason)
-                    .textFieldStyle(.plain)
-                    .font(.system(size: 13))
-                    .foregroundStyle(Brand.textPrimary)
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 10)
-                    .background(
-                        RoundedRectangle(cornerRadius: 10, style: .continuous)
-                            .fill(Brand.surface)
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                                    .strokeBorder(Brand.surfaceStroke, lineWidth: 1)
-                            )
-                    )
-                    .onSubmit { Task { await viewModel.startFocus() } }
+            // Pausado: permite trocar a(s) tarefa(s) (usuário finalizou/mudou de tarefa no meio do foco).
+            if viewModel.isPaused && !viewModel.availableTasks.isEmpty {
+                taskSelector(
+                    selected: viewModel.currentSessionTaskIDs,
+                    accessibility: "Trocar a tarefa do foco",
+                    toggle: { id in Task { await viewModel.toggleCurrentTask(id) } },
+                    clear: { Task { await viewModel.changeCurrentTasks([]) } })
             }
 
             if let error = viewModel.errorMessage {
@@ -148,34 +114,62 @@ struct MainView: View {
         }
     }
 
-    /// Seletor compacto da tarefa do próximo foco (RF-09). Só aparece ocioso e com tarefas.
-    private var taskPicker: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "checklist")
-                .font(.system(size: 12))
-                .foregroundStyle(Brand.textFaint)
-
-            Picker("Tarefa", selection: $viewModel.selectedTaskID) {
-                Text("Sem tarefa").tag(UUID?.none)
-                ForEach(viewModel.availableTasks) { task in
-                    Text(task.title).tag(Optional(task.id))
+    /// Seletor compacto de tarefa(s). Uma única com o multi-tarefa desligado; várias (checkmarks)
+    /// quando ligado (RF-09.4). Ocioso escolhe a(s) do próximo foco (RF-09); pausado troca a(s)
+    /// da sessão corrente (RF-09.1). `toggle` alterna uma tarefa; `clear` esvazia a seleção.
+    private func taskSelector(
+        selected: Set<UUID>, accessibility: String,
+        toggle: @escaping (UUID) -> Void, clear: @escaping () -> Void
+    ) -> some View {
+        Menu {
+            Button { clear() } label: {
+                Label("Sem tarefa", systemImage: selected.isEmpty ? "checkmark" : "")
+            }
+            Divider()
+            ForEach(viewModel.availableTasks) { task in
+                Button { toggle(task.id) } label: {
+                    Label(task.title, systemImage: selected.contains(task.id) ? "checkmark" : "")
                 }
             }
-            .labelsHidden()
-            .pickerStyle(.menu)
-            .tint(Brand.textPrimary)
+        } label: {
+            HStack(spacing: 8) {
+                Image(systemName: "checklist")
+                    .font(.system(size: 12))
+                    .foregroundStyle(Brand.textFaint)
+                Text(selectionSummary(selected))
+                    .font(.system(size: 13))
+                    .foregroundStyle(Brand.textPrimary)
+                    .lineLimit(1)
+                Spacer(minLength: 0)
+                Image(systemName: "chevron.up.chevron.down")
+                    .font(.system(size: 10))
+                    .foregroundStyle(Brand.textFaint)
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 8)
+            .background(
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .fill(Brand.surface)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 10, style: .continuous)
+                            .strokeBorder(Brand.surfaceStroke, lineWidth: 1)
+                    )
+            )
+            .contentShape(Rectangle())
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 6)
-        .background(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .fill(Brand.surface)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .strokeBorder(Brand.surfaceStroke, lineWidth: 1)
-                )
-        )
-        .accessibilityLabel("Tarefa do próximo foco")
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .accessibilityLabel(accessibility)
+    }
+
+    /// Rótulo do seletor: "Sem tarefa", o título quando é uma só, ou "N tarefas".
+    private func selectionSummary(_ selected: Set<UUID>) -> String {
+        guard !selected.isEmpty else { return "Sem tarefa" }
+        if selected.count == 1, let id = selected.first,
+           let title = viewModel.availableTasks.first(where: { $0.id == id })?.title {
+            return title
+        }
+        return "\(selected.count) tarefas"
     }
 
     private var controls: some View {

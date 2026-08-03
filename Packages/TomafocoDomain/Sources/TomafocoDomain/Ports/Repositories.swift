@@ -16,6 +16,14 @@ public protocol TaskRepository: AnyObject {
     func saveTasks(_ tasks: [FocusTask]) throws
 }
 
+/// Catálogo de tags "cadastradas" (RF-09.5) — inclusive tags criadas na tela de gestão que
+/// ainda não estão em nenhuma tarefa. Best-effort (UserDefaults): não lança. As tags em uso pelas
+/// tarefas continuam sendo a fonte primária; o catálogo só guarda as órfãs e as renomeações.
+public protocol TagCatalog: AnyObject {
+    func loadTags() -> [String]
+    func saveTags(_ tags: [String])
+}
+
 /// Persistência de configuração e listas de bloqueio (RF-05).
 public protocol SettingsRepository: AnyObject {
     func loadConfiguration() -> PomodoroConfiguration

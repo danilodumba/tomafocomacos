@@ -25,7 +25,7 @@ O **Tomafoco** é um aplicativo de Pomodoro para macOS que, durante as sessões 
 | Persona | Cenário |
 |---|---|
 | Desenvolvedor/profissional de tecnologia | Inicia um ciclo de foco de 25 min; Slack e Discord são fechados; twitter.com e youtube.com param de resolver; ao fim do ciclo tudo volta ao normal para o intervalo de 5 min. |
-| Estudante | Configura ciclos de 50/10 min e uma lista de bloqueio com redes sociais; usa o modo "hardcore" para não conseguir cancelar a sessão nos primeiros minutos. |
+| Estudante | Configura ciclos de 50/10 min e uma lista de bloqueio com redes sociais; a tela cheia de intervalo o tira da máquina entre os blocos de estudo. |
 
 ---
 
@@ -56,14 +56,15 @@ O **Tomafoco** é um aplicativo de Pomodoro para macOS que, durante as sessões 
 - **RF-04.2** — Pelo menu bar é possível: iniciar foco, pausar, cancelar, pular intervalo e abrir a janela principal/configurações.
 
 ### RF-05 — Configurações e listas
-- **RF-05.1** — Tela de configurações para durações, auto-início, comportamento de encerramento (terminate vs. force) e modo hardcore.
+- **RF-05.1** — Tela de configurações para durações, auto-início e comportamento de encerramento (terminate vs. force).
 - **RF-05.2** — Telas de gerenciamento das listas de sites e de apps bloqueados (adicionar, remover, ativar/desativar item individualmente).
 - **RF-05.3** — Suporte a múltiplos *perfis* de bloqueio (ex.: "Trabalho", "Estudo") — pós-MVP.
 
-### RF-06 — Modo hardcore (opcional, configurável)
-- **RF-06.1** — Cancelamento da sessão desabilitado nos primeiros N minutos (padrão 5).
-- **RF-06.2** — Ao tentar cancelar, o app exibe o "motivo da sessão" que o usuário digitou ao iniciar e exige confirmação dupla.
-- **RF-06.3** — Item "Quit" do app desabilitado durante o foco (limitação aceita: Force Quit via Activity Monitor não é bloqueável sem root).
+### RF-06 — ~~Modo hardcore~~ (removido em 2026-08-03)
+Restringia cancelar/pular o foco durante uma carência e exigia um "motivo da sessão" ao iniciar.
+Removido do produto: o app é de autodisciplina, não de coerção (ver §"o que o produto NÃO é") —
+a trava atrapalhava quem precisava legitimamente interromper o foco e era contornável de qualquer
+forma (Force Quit não é bloqueável sem root). A tela cheia de intervalo cobre a intenção original.
 
 ### RF-07 — Histórico e estatísticas (pós-MVP)
 - **RF-07.1** — Registro de sessões concluídas/canceladas com data, duração e perfil.
@@ -95,11 +96,10 @@ O **Tomafoco** é um aplicativo de Pomodoro para macOS que, durante as sessões 
 
 ### UC-01 — Iniciar sessão de foco
 1. Usuário aciona "Iniciar foco" (janela ou menu bar).
-2. (Modo hardcore) app solicita o motivo da sessão.
-3. Sistema ativa o bloqueio de apps: encerra os que estão rodando e ativa o observer.
-4. Sistema ativa o bloqueio de sites: solicita privilégio admin, insere bloco no hosts, faz flush de DNS, persiste flag de failsafe.
-5. Timer inicia; menu bar exibe contagem regressiva.
-- **Fluxo alternativo 4a:** usuário nega a senha de admin → app pergunta se deseja continuar com bloqueio apenas de apps ou cancelar a sessão.
+2. Sistema ativa o bloqueio de apps: encerra os que estão rodando e ativa o observer.
+3. Sistema ativa o bloqueio de sites: solicita privilégio admin, insere bloco no hosts, faz flush de DNS, persiste flag de failsafe.
+4. Timer inicia; menu bar exibe contagem regressiva.
+- **Fluxo alternativo 3a:** usuário nega a senha de admin → app pergunta se deseja continuar com bloqueio apenas de apps ou cancelar a sessão.
 - **Critério de aceite:** com sessão ativa, domínio bloqueado não resolve no navegador e app bloqueado fecha em < 2 s após tentativa de abertura.
 
 ### UC-02 — Concluir sessão de foco
@@ -111,8 +111,7 @@ O **Tomafoco** é um aplicativo de Pomodoro para macOS que, durante as sessões 
 
 ### UC-03 — Cancelar sessão de foco
 1. Usuário aciona "Cancelar".
-2. (Modo hardcore) sistema verifica carência de N minutos e exige confirmação dupla com exibição do motivo.
-3. Sistema desativa bloqueios e registra a sessão como cancelada.
+2. Sistema desativa bloqueios e registra a sessão como cancelada.
 
 ### UC-04 — Recuperação após crash/reinício
 1. App abre e detecta flag de failsafe ativa.

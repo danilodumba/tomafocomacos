@@ -1,8 +1,11 @@
 import SwiftUI
 import Charts
+import AppKit
+import TomafocoDomain
 import TomafocoApplication
 
-/// Aba Relatórios (RF-10): resumo, horas por dia, intervalos por dia e horas por tarefa.
+/// Janela Relatórios (RF-10): resumo, horas por dia, intervalos por dia, horas por tarefa e a
+/// lista de tarefas concluídas (item 3) com busca, filtro por tag e exportação CSV.
 /// Dois gráficos separados de propósito — nunca eixo Y duplo; cada medida tem seu gráfico.
 struct ReportsView: View {
     @ObservedObject var viewModel: ReportsViewModel
@@ -10,13 +13,7 @@ struct ReportsView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
-                Picker("Período", selection: $viewModel.period) {
-                    ForEach(ReportsViewModel.Period.allCases) { period in
-                        Text(period.rawValue).tag(period)
-                    }
-                }
-                .pickerStyle(.segmented)
-                .labelsHidden()
+                header
 
                 if let report = viewModel.report {
                     if report.dailyTotals.isEmpty {
@@ -28,10 +25,138 @@ struct ReportsView: View {
                         taskTable(report.taskTotals)
                     }
                 }
+
+                completedSection
             }
             .padding(16)
         }
         .onAppear { viewModel.reload() }
+    }
+
+    private var header: some View {
+        HStack(spacing: 12) {
+            Picker("Período", selection: $viewModel.period) {
+                ForEach(ReportsViewModel.Period.allCases) { period in
+                    Text(period.rawValue).tag(period)
+                }
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+
+            Button {
+                exportCSV()
+            } label: {
+                Label("Exportar CSV…", systemImage: "square.and.arrow.up")
+            }
+            .disabled(viewModel.completedTasks.isEmpty)
+        }
+    }
+
+    // MARK: - Tarefas concluídas (item 3)
+
+    private var completedSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Tarefas concluídas")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(Brand.textSecondary)
+
+            HStack(spacing: 10) {
+                HStack(spacing: 4) {
+                    Image(systemName: "magnifyingglass").font(.system(size: 11)).foregroundStyle(Brand.textFaint)
+                    TextField("Buscar", text: $viewModel.searchText)
+                        .textFieldStyle(.plain)
+                        .frame(width: 140)
+                }
+                .padding(.horizontal, 8).padding(.vertical, 5)
+                .background(RoundedRectangle(cornerRadius: 8).fill(Brand.surface))
+
+                Menu {
+                    Button("Todas") { viewModel.tagFilter = nil }
+                    Divider()
+                    ForEach(viewModel.knownTags, id: \.self) { tag in
+                        Button { viewModel.tagFilter = tag } label: {
+                            Label(tag, systemImage: viewModel.tagFilter == tag ? "checkmark" : "")
+                        }
+                    }
+                } label: {
+                    Label(viewModel.tagFilter ?? "Tag", systemImage: "tag")
+                }
+                .fixedSize()
+
+                Spacer()
+            }
+            .font(.system(size: 12))
+
+            if viewModel.completedTasks.isEmpty {
+                Text("Nenhuma tarefa concluída no filtro.")
+                    .font(.system(size: 12))
+                    .foregroundStyle(Brand.textFaint)
+                    .padding(.vertical, 8)
+            } else {
+                ForEach(viewModel.completedTasks) { task in
+                    completedRow(task)
+                }
+            }
+        }
+        .padding(12)
+        .background(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .strokeBorder(Brand.surfaceStroke, lineWidth: 1)
+        )
+    }
+
+    private func completedRow(_ task: FocusTask) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: "checkmark.circle.fill").foregroundStyle(Brand.cyan)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(task.title)
+                    .foregroundStyle(Brand.textPrimary)
+                    .lineLimit(1)
+                HStack(spacing: 6) {
+                    if let done = task.completedAt {
+                        Text(done.formatted(date: .abbreviated, time: .shortened))
+                            .foregroundStyle(Brand.textFaint)
+                    }
+                    ForEach(task.tags, id: \.self) { tag in
+                        Text(tag)
+                            .foregroundStyle(Brand.cyan)
+                            .padding(.horizontal, 6).padding(.vertical, 1)
+                            .background(Brand.cyan.opacity(0.14), in: Capsule())
+                    }
+                }
+                .font(.system(size: 10))
+            }
+            Spacer()
+            if let p = task.priority {
+                Text(priorityGlyph(TaskPriority(rawPriority: p)))
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundStyle(Brand.textSecondary)
+            }
+        }
+        .padding(.vertical, 5)
+        .padding(.horizontal, 10)
+        .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Brand.surface))
+    }
+
+    private func priorityGlyph(_ p: TaskPriority) -> String {
+        switch p {
+        case .none: return ""
+        case .low: return "!"
+        case .medium: return "!!"
+        case .high: return "!!!"
+        }
+    }
+
+    /// Grava o CSV das concluídas filtradas via `NSSavePanel` (item 3).
+    private func exportCSV() {
+        let panel = NSSavePanel()
+        panel.nameFieldStringValue = "tomafoco-tarefas.csv"
+        panel.allowedContentTypes = [.commaSeparatedText]
+        panel.canCreateDirectories = true
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        // BOM UTF-8 para o Excel abrir acentos corretamente.
+        let content = "\u{FEFF}" + viewModel.csv()
+        try? content.data(using: .utf8)?.write(to: url)
     }
 
     private var emptyState: some View {

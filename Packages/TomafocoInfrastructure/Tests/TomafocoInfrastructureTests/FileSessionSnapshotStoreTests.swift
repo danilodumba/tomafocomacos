@@ -24,7 +24,7 @@ final class FileSessionSnapshotStoreTests: XCTestCase {
             sessionID: UUID(), phase: .focus,
             startedAt: Date(timeIntervalSince1970: 1_000_000),
             endedAt: Date(timeIntervalSince1970: 1_001_500),
-            outcome: .completed, cycleNumber: cycle, taskID: nil
+            outcome: .completed, cycleNumber: cycle, taskIDs: []
         )
     }
 
@@ -34,8 +34,7 @@ final class FileSessionSnapshotStoreTests: XCTestCase {
         let session = PomodoroSession(
             id: UUID(), phase: .focus,
             startedAt: Date(timeIntervalSince1970: 1_000_000),
-            endsAt: Date(timeIntervalSince1970: 1_001_500),
-            reason: "código", cycleNumber: 2, taskID: nil
+            endsAt: Date(timeIntervalSince1970: 1_001_500), cycleNumber: 2, taskIDs: []
         )
 
         try store.saveActive(session)

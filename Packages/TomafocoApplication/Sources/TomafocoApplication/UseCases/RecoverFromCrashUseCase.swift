@@ -42,7 +42,7 @@ public final class RecoverFromCrashUseCase {
                 sessionID: session.id, phase: session.phase,
                 startedAt: session.startedAt, endedAt: session.endsAt,
                 outcome: .recovered, cycleNumber: session.cycleNumber,
-                taskID: session.taskID
+                taskIDs: session.taskIDs
             )
             try? sessions.appendToHistory(record)
             try? sessions.clearActive()
