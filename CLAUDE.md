@@ -214,6 +214,14 @@ Como ficou:
 - Site: `index.html` (featureList + card, que virou só "Tela cheia de intervalo") e a legenda do print de configurações em `assets/js/app.js`.
 - Docs: RF-06 e T-22 marcados como removidos (não apagados — o histórico da decisão importa); UC-01/UC-03 renumerados, e o "fluxo 4a" do UC-01 virou **"fluxo 3a"** em `especificacao.md` e `tarefas.md`.
 
+**🚀 Release 1.7 publicada (2026-08-03)** — `MARKETING_VERSION 1.7` / `CURRENT_PROJECT_VERSION 8`. Conteúdo: ícone tomate (app + barra de menus) e remoção do modo hardcore.
+- `make release` completo: notarização **Accepted** nas duas etapas (app e DMG), staple ok, `spctl --assess` → `source=Notarized Developer ID`. DMG 3,67 MB.
+- ✅ **O achado do build arm64-only já estava corrigido**: `release.sh` passa `ARCHS="arm64 x86_64" ONLY_ACTIVE_ARCH=NO`. Confirmado com `lipo -archs` → `x86_64 arm64`, e o appcast saiu **sem** `<sparkle:hardwareRequirements>` — Mac Intel recebe atualização.
+- **Publicação = commit + push no repo do site** (`danilodumba/tomafoco-site`, branch `main`) → GitHub Actions → Azure Static Web Apps. NÃO existe `UPDATE_UPLOAD_DEST`/rsync configurado; o `release.sh` só deixa os arquivos em `build/appcast/` e avisa. O passo manual é copiar DMG + `.html` + `appcast.xml` para `site/downloads/`.
+- ⚠️ **Bump de versão no site é em 5 arquivos, não 1.** Além do `index.html` (9 ocorrências: JSON-LD, hero, 2 links de download, tabela de fatos, rodapé, cache-buster do CSS e do JS), tem `assets/js/app.js` (`CONFIG.downloadHref` — o link que o modal de cadastro usa de verdade), `404.html` e `privacidade.html` (rodapé + cache-buster). Esquecer o `app.js` deixa o botão do modal baixando a versão anterior.
+- **Repo do app (`danilodumba/tomafocomacos`) tinha o remoto com um commit raiz INDEPENDENTE** contendo só o `LICENSE` (MIT) — sem ancestral comum com o histórico local, que nunca tinha sido enviado. Resolvido com `git merge origin/main --allow-unrelated-histories` (nada de force push). Tag `v1.7` publicada.
+- Verificado ao vivo: `/`, `/downloads/Tomafoco-1.7.dmg`, `appcast.xml` e as notas todos 200; o DMG servido tem o **mesmo SHA-256** do local.
+
 ## Como retomar
 
 ```bash
