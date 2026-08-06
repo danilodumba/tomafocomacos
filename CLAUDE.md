@@ -221,6 +221,11 @@ Como ficou:
 - **Publicação = commit + push no repo do site** (`danilodumba/tomafoco-site`, branch `main`) → GitHub Actions → Azure Static Web Apps. NÃO existe `UPDATE_UPLOAD_DEST`/rsync configurado; o `release.sh` só deixa os arquivos em `build/appcast/` e avisa. O passo manual é copiar DMG + `.html` + `appcast.xml` para `site/downloads/`.
 - ⚠️ **Bump de versão no site é em 5 arquivos, não 1.** Além do `index.html` (9 ocorrências: JSON-LD, hero, 2 links de download, tabela de fatos, rodapé, cache-buster do CSS e do JS), tem `assets/js/app.js` (`CONFIG.downloadHref` — o link que o modal de cadastro usa de verdade), `404.html` e `privacidade.html` (rodapé + cache-buster). Esquecer o `app.js` deixa o botão do modal baixando a versão anterior.
 - **Repo do app (`danilodumba/tomafocomacos`) tinha o remoto com um commit raiz INDEPENDENTE** contendo só o `LICENSE` (MIT) — sem ancestral comum com o histórico local, que nunca tinha sido enviado. Resolvido com `git merge origin/main --allow-unrelated-histories` (nada de force push). Tag `v1.7` publicada.
+
+**🚀 Release 1.8 publicada (2026-08-06)** — `MARKETING_VERSION 1.8` / `CURRENT_PROJECT_VERSION 9`. Conteúdo: app só barra de menus (popover = `MainView` inteira, `MenuBarView` apagada, `ActivationPolicyController`, `RecoveryAlert` via `NSAlert`).
+- `make release` completo: notarização **Accepted** nas duas etapas, staple ok, `spctl --assess` → `source=Notarized Developer ID`. DMG 3,62 MB.
+- Appcast gerado por `generate_appcast` só lista o item mais recente (não acumula histórico de versões) — publicado assim mesmo, é o comportamento padrão da ferramenta.
+- Bump nos 5 arquivos do site (ver nota da 1.7 acima) + copiar `Tomafoco-1.8.dmg`/`.html`/`appcast.xml` pra `site/downloads/` — DMG publicado antes do appcast. `git push` nos dois repos + tag `v1.8`.
 - Verificado ao vivo: `/`, `/downloads/Tomafoco-1.7.dmg`, `appcast.xml` e as notas todos 200; o DMG servido tem o **mesmo SHA-256** do local.
 
 **🪟 O popover da barra virou o form principal — app só barra de menus (2026-08-05).** Substitui a reversão de 2026-07-30: a `WindowGroup` foi removida e o `MenuBarExtra(.window)` passou a renderizar a **`MainView` inteira** (340×480, anel + seletor de tarefas). `MenuBarView.swift` (form compacto de 250pt) foi **apagada** — duplicava a mesma UI pela metade.
