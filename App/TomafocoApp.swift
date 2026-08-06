@@ -2,44 +2,35 @@ import SwiftUI
 
 /// Ponto de entrada do app. Monta o `AppContainer` (Composition Root) e as cenas SwiftUI.
 ///
-/// App normal, com ícone no Dock (`LSUIElement: false`). O `MenuBarExtra` é um atalho: abre o
-/// formulário compacto (`MenuBarView`, 250pt) sem precisar da janela principal.
+/// App **só barra de menus** (`LSUIElement: true`): não há janela principal — o popover do
+/// `MenuBarExtra` mostra a `MainView` inteira. O ícone do Dock e o menu superior aparecem só
+/// enquanto Tarefas/Relatórios/Configurações estão abertas (`ActivationPolicyController`).
 @main
 struct TomafocoApp: App {
     @StateObject private var container = AppContainer.live()
 
     var body: some Scene {
-        WindowGroup("Tomafoco") {
+        // PRIMEIRA cena de propósito: a cena inicial é a que o SwiftUI abre no lançamento.
+        // Com uma `Window` na frente, a janela de Tarefas subia sozinha ao abrir o app.
+        MenuBarExtra {
             MainView(viewModel: container.timerViewModel, updater: container.updater)
-                .frame(width: 340, height: 480)
-                .task { await container.recoverFromCrashIfNeeded() }
+        } label: {
+            MenuBarLabel(viewModel: container.timerViewModel)
         }
-        .windowResizability(.contentSize)
-        .windowStyle(.hiddenTitleBar)
+        .menuBarExtraStyle(.window)
+
+        tasksWindow
         // "Buscar atualizações…" logo abaixo de "Sobre o Tomafoco", onde o macOS ensinou o
-        // usuário a procurar. O mesmo item também vive no menu "•••" (janela e barra de menus).
+        // usuário a procurar. Fica nesta cena porque o menu do app só existe quando alguma
+        // janela está aberta (o app é `.accessory` no resto do tempo); o mesmo item também
+        // vive no menu de engrenagem do popover.
         .commands {
             CommandGroup(after: .appInfo) {
                 CheckForUpdatesMenuItem(updater: container.updater)
             }
         }
 
-        Window("Tarefas", id: "tasks") {
-            TasksView(viewModel: container.tasksViewModel)
-                .frame(minWidth: 520, minHeight: 540)
-        }
-
-        Window("Relatórios", id: "reports") {
-            ReportsView(viewModel: container.reportsViewModel)
-                .frame(minWidth: 560, minHeight: 560)
-        }
-
-        MenuBarExtra {
-            MenuBarView(viewModel: container.timerViewModel)
-        } label: {
-            MenuBarLabel(viewModel: container.timerViewModel)
-        }
-        .menuBarExtraStyle(.window)
+        reportsWindow
 
         Settings {
             SettingsView(
@@ -47,6 +38,23 @@ struct TomafocoApp: App {
                 blockListViewModel: container.blockListViewModel,
                 updater: container.updater
             )
+        }
+    }
+
+    // `SceneBuilder` não aceita `if #available` (não tem `buildEither`), então
+    // `defaultLaunchBehavior(.suppressed)` (macOS 15+) está fora de alcance com deployment
+    // target 13 — quem impede a abertura automática é a ordem das cenas acima.
+    private var tasksWindow: some Scene {
+        Window("Tarefas", id: "tasks") {
+            TasksView(viewModel: container.tasksViewModel)
+                .frame(minWidth: 520, minHeight: 540)
+        }
+    }
+
+    private var reportsWindow: some Scene {
+        Window("Relatórios", id: "reports") {
+            ReportsView(viewModel: container.reportsViewModel)
+                .frame(minWidth: 560, minHeight: 560)
         }
     }
 }

@@ -1,25 +1,15 @@
 import SwiftUI
 
-/// Menu de engrenagem compartilhado pela janela principal e pela barra de menus (item 2):
-/// os mesmos itens nos dois lugares. Na barra também oferece "Abrir janela principal" (item 10),
-/// já que o app não abre janela sozinho ao iniciar.
+/// Menu de engrenagem do cabeçalho da `MainView` (popover da barra de menus): tudo que não é
+/// o timer em si — tarefas, relatórios, configurações, atualização e sair.
 struct OverflowMenu: View {
     /// Observado DIRETAMENTE (não via `AppContainer`): sem isso o item de atualização não
     /// reagiria a `canCheckForUpdates` — mesma armadilha do rótulo do `MenuBarExtra`.
     @ObservedObject var updater: UpdaterController
-    /// Mostra o item "Abrir janela principal" (só faz sentido na barra de menus).
-    var showsOpenMainWindow: Bool = false
     @Environment(\.openWindow) private var openWindow
 
     var body: some View {
         Menu {
-            if showsOpenMainWindow {
-                Button("Abrir janela principal") {
-                    openWindow(id: "main")
-                    NSApp.activate(ignoringOtherApps: true)
-                }
-                Divider()
-            }
             Button("Tarefas…") { open("tasks") }
             Button("Relatórios…") { open("reports") }
             settingsButton

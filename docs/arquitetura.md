@@ -259,8 +259,9 @@ deactivate():
 ## 6. Presentation — SwiftUI
 
 - **ViewModels** (`@Observable`, macOS 14+ / `ObservableObject` no 13) recebem casos de uso por injeção; nunca tocam em ports de infraestrutura diretamente.
-- `TimerViewModel`, `SettingsViewModel`, `BlockListViewModel`, `MenuBarViewModel` — um por tela (SRP na UI).
-- `MenuBarExtra` (SwiftUI) para o item da barra de menus (RF-04); janela principal com `WindowGroup`.
+- `TimerViewModel`, `SettingsViewModel`, `BlockListViewModel`, `TasksViewModel`, `ReportsViewModel` — um por tela (SRP na UI).
+- `MenuBarExtra` (SwiftUI, estilo `.window`) é a **única** casa do timer: o popover mostra a `MainView` inteira (RF-04). Não há `WindowGroup` — só as janelas de Tarefas e Relatórios (`Window`) e `Settings`.
+- App `LSUIElement`: o `ActivationPolicyController` (App/) alterna `.accessory` ↔ `.regular` conforme haja janela aberta, para que essas janelas tenham menu superior (⌘C/⌘V/⌘W).
 - Formatação de tempo, strings localizáveis (pt-BR primeiro, RNF-08) e acessibilidade (RNF-09) resolvidas nesta camada — nunca no domínio.
 
 ---
@@ -275,8 +276,10 @@ struct TomafocoApp: App {
     @State private var container = AppContainer.live()
 
     var body: some Scene {
-        MenuBarExtra { MenuBarView(viewModel: container.menuBarViewModel) } label: { /* timer */ }
-        WindowGroup { MainView(viewModel: container.timerViewModel) }
+        MenuBarExtra { MainView(viewModel: container.timerViewModel, updater: container.updater) }
+            label: { /* tomate + tempo */ }
+        Window("Tarefas", id: "tasks") { TasksView(viewModel: container.tasksViewModel) }
+        Window("Relatórios", id: "reports") { ReportsView(viewModel: container.reportsViewModel) }
         Settings { SettingsView(viewModel: container.settingsViewModel) }
     }
 }
@@ -336,8 +339,8 @@ Tomafoco/
 │   ├── TomafocoApp.swift
 │   ├── AppContainer.swift
 │   └── UI/
-│       ├── Timer/    (MainView, TimerViewModel)
-│       ├── MenuBar/  (MenuBarView, MenuBarViewModel)
+│       ├── Timer/    (MainView — conteúdo do popover, TimerViewModel)
+│       ├── Recovery/ (RecoveryAlert — NSAlert pós-crash)
 │       ├── Settings/ (SettingsView, BlockListViews, ViewModels)
 │       └── DesignSystem/
 ├── Packages/

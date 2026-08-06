@@ -207,10 +207,6 @@ struct TasksView: View {
                     HStack(spacing: 8) {
                         Text(reminder.listName)
                             .foregroundStyle(Brand.textFaint)
-                        if isReimport {
-                            Text("já concluída aqui · importar de novo")
-                                .foregroundStyle(Brand.cyan)
-                        }
                         if let due = reminder.dueDate {
                             Label(due.formatted(date: .abbreviated, time: .omitted),
                                   systemImage: "calendar")

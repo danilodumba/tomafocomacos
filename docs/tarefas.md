@@ -123,7 +123,8 @@ Convenções: tarefas numeradas `T-XX`, agrupadas por épico. Cada tarefa lista 
 - `MenuBarExtra` com tempo restante no label; ações: iniciar, pausar, cancelar, pular intervalo, abrir janela/configurações.
 - **Dependências:** T-18
 - **CA:** todas as ações do RF-04.2 funcionam sem abrir a janela principal.
-- **Como ficou:** "pular intervalo" virou o evento `skipBreak` na máquina pura (grava `outcome: .skipped`); `MenuBarView` usa os mesmos componentes da janela (`ProgressRing` não, mas `PrimaryCircleButton`/`GhostControl` sim).
+- **Como ficou:** "pular intervalo" virou o evento `skipBreak` na máquina pura (grava `outcome: .skipped`); `MenuBarView` usava os mesmos componentes da janela (`PrimaryCircleButton`/`GhostControl`).
+- **Atualização (2026-08-05):** `MenuBarView` foi **apagada** — o popover passou a renderizar a própria `MainView` e a janela principal deixou de existir (app só barra de menus).
 
 ### T-20 — Configurações + listas de bloqueio `[G]` (RF-05, UC-05) ✅ FEITO (2026-07-22)
 - `SettingsView` (durações, auto-início, force-terminate) + `BlockListView` de sites (input com validação) e de apps (file picker em `/Applications` + drag-and-drop capturando bundle ID).

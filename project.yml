@@ -54,8 +54,11 @@ targets:
         CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
         LSApplicationCategoryType: public.app-category.productivity
         LSMinimumSystemVersion: "13.0"
-        # App normal: ícone no Dock. A barra de menus é só atalho (MenuBarExtra compacto).
-        LSUIElement: false
+        # App só barra de menus: não há janela principal — o popover do MenuBarExtra mostra a
+        # MainView inteira. O ícone do Dock e o menu superior entram sob demanda: o
+        # ActivationPolicyController troca para .regular enquanto houver janela (Tarefas,
+        # Relatórios, Configurações) e volta para .accessory quando a última fecha.
+        LSUIElement: true
         NSHumanReadableCopyright: "© 2026 DDS.TECH. Todos os direitos reservados."
         # Exigido pelo macOS ao pedir permissão de automação de cada navegador (ADR-8).
         NSAppleEventsUsageDescription: "O Tomafoco precisa controlar seu navegador para redirecionar os sites bloqueados durante as sessões de foco."

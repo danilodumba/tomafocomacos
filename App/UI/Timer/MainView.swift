@@ -1,11 +1,13 @@
 import SwiftUI
 import TomafocoDomain
 
-/// Janela principal do timer (RF-01, T-18).
+/// Tela única do timer (RF-01, T-18). Vive dentro do popover do `MenuBarExtra` — o app não tem
+/// mais janela principal, então esta View É o app.
 /// Layout em três faixas: cabeçalho, anel de progresso e controles — identidade DDS.TEC.
 struct MainView: View {
     @ObservedObject var viewModel: TimerViewModel
     @ObservedObject var updater: UpdaterController
+    @Environment(\.openWindow) private var openWindow
 
     var body: some View {
         ZStack {
@@ -20,10 +22,8 @@ struct MainView: View {
             }
             .padding(24)
         }
-        .frame(minWidth: 340, minHeight: 480)
-        .sheet(item: $viewModel.pendingRecovery) { session in
-            RecoverySheet(session: session, viewModel: viewModel)
-        }
+        // Popover não redimensiona: tamanho fixo em vez de mínimo.
+        .frame(width: 340, height: 480)
     }
 
     // MARK: - Cabeçalho
@@ -36,11 +36,29 @@ struct MainView: View {
                 .lineLimit(1)
 
             HStack {
+                tasksButton
                 Spacer()
                 OverflowMenu(updater: updater)
             }
         }
         .frame(height: 24)
+    }
+
+    /// Atalho para a janela de Tarefas — espelha a engrenagem do outro canto. O `activate` é
+    /// necessário porque o app é `.accessory`: sem ele a janela abriria atrás.
+    private var tasksButton: some View {
+        Button {
+            openWindow(id: "tasks")
+            NSApp.activate(ignoringOtherApps: true)
+        } label: {
+            Image(systemName: "checklist")
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(Brand.textSecondary)
+                .frame(width: 28, height: 24)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Tarefas")
     }
 
     // MARK: - Anel + tempo
@@ -209,54 +227,5 @@ struct MainView: View {
         if viewModel.isPaused { return await viewModel.resume() }
         if viewModel.isAwaitingNext { return await viewModel.beginNextPhase() }
         await viewModel.startFocus()
-    }
-}
-
-/// Diálogo de recuperação pós-crash (UC-04).
-private struct RecoverySheet: View {
-    let session: PomodoroSession
-    @ObservedObject var viewModel: TimerViewModel
-
-    var body: some View {
-        ZStack {
-            Brand.background.ignoresSafeArea()
-
-            VStack(spacing: 14) {
-                Image(systemName: "exclamationmark.triangle.fill")
-                    .font(.system(size: 26))
-                    .foregroundStyle(Brand.accent(for: .focus))
-
-                Text("Sessão recuperada")
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundStyle(Brand.textPrimary)
-
-                Text("Havia uma sessão em andamento quando o app foi encerrado.")
-                    .font(.system(size: 12))
-                    .foregroundStyle(Brand.textSecondary)
-                    .multilineTextAlignment(.center)
-
-                Text(viewModel.recoveryDescription(for: session).uppercased())
-                    .font(.system(size: 10, weight: .semibold))
-                    .tracking(1.2)
-                    .foregroundStyle(Brand.textFaint)
-
-                HStack(spacing: 10) {
-                    Button("Encerrar e liberar", role: .destructive) {
-                        Task { await viewModel.discardRecoveredSession() }
-                    }
-                    .buttonStyle(.bordered)
-
-                    Button("Retomar") {
-                        Task { await viewModel.resumeRecoveredSession() }
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .tint(Brand.accent(for: session.phase))
-                    .keyboardShortcut(.defaultAction)
-                }
-                .padding(.top, 4)
-            }
-            .padding(26)
-        }
-        .frame(width: 330)
     }
 }

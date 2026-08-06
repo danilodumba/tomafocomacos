@@ -30,6 +30,9 @@ final class AppContainer: ObservableObject {
     /// Retido pelo container: sem uma referência forte, a assinatura Combine morre e a tela
     /// cheia do intervalo nunca aparece.
     private let breakOverlay: BreakOverlayPresenter
+    /// Idem: é quem põe o app no Dock (com menu superior) enquanto há janela aberta e o tira
+    /// quando a última fecha. Sem referência forte os observers morrem.
+    private let activationPolicy = ActivationPolicyController()
 
     private let notificationAdapter: UNNotificationAdapter?
 
@@ -60,6 +63,7 @@ final class AppContainer: ObservableObject {
         }
         self.reportsViewModel = ReportsViewModel(sessions: sessions, tasks: tasks)
         self.breakOverlay = BreakOverlayPresenter(viewModel: self.timerViewModel)
+        self.activationPolicy.start()
     }
 
     /// Monta o grafo real de dependências do macOS.
@@ -112,16 +116,29 @@ final class AppContainer: ObservableObject {
 
         notificationAdapter.requestAuthorization()
 
-        return AppContainer(
+        let container = AppContainer(
             coordinator: coordinator, recover: recover, manageBlockList: manageBlockList,
             manageTasks: manageTasks, settings: settings, sessions: sessions, tasks: taskStore,
             appPicker: appPicker, notificationAdapter: notificationAdapter
         )
+        // Sem janela principal não há `.task` de View para disparar isso — o app é só barra
+        // de menus e o popover pode nunca ser aberto.
+        Task { await container.recoverFromCrashIfNeeded() }
+        return container
     }
 
-    /// Executado na abertura da janela: resolve sessões órfãs (UC-04).
+    /// Executado no lançamento: resolve sessões órfãs (UC-04) e pergunta ao usuário o que fazer
+    /// com uma sessão que sobreviveu ao encerramento.
     func recoverFromCrashIfNeeded() async {
         let result = await recover.execute()
         timerViewModel.handleRecovery(result, recover: recover)
+
+        guard let session = timerViewModel.pendingRecovery else { return }
+        // Deixa o lançamento terminar antes de subir um modal.
+        await Task.yield()
+        switch RecoveryAlert.present(description: timerViewModel.recoveryDescription(for: session)) {
+        case .resume: await timerViewModel.resumeRecoveredSession()
+        case .discard: await timerViewModel.discardRecoveredSession()
+        }
     }
 }

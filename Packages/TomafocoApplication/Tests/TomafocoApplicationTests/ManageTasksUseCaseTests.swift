@@ -467,6 +467,32 @@ final class ManageTasksUseCaseTests: XCTestCase {
         XCTAssertEqual(repo.tasks[1].reminderID, "r1")
     }
 
+    /// A reimportação leva os dados ATUAIS do lembrete — num recorrente a data sempre muda, e a
+    /// tarefa nova não pode nascer com o vencimento da ocorrência passada. A concluída não muda.
+    func test_importReminder_reimportacaoUsaOsDadosAtuaisDoLembrete() async throws {
+        let ontem = Date(timeIntervalSince1970: 1_000_000)
+        let amanha = Date(timeIntervalSince1970: 1_086_400)
+        let antiga = ImportedReminder(
+            reminderID: "r1", title: "Boleto", listName: "Casa", isCompleted: false,
+            notes: "parcela 1", dueDate: ontem, priority: 9, url: "https://banco.example/1")
+        _ = await sut.importReminder(antiga)
+        try await sut.completeTask(id: repo.tasks[0].id)
+
+        let atual = ImportedReminder(
+            reminderID: "r1", title: "Boleto", listName: "Casa", isCompleted: false,
+            notes: "parcela 2", dueDate: amanha, priority: 1, url: "https://banco.example/2")
+        _ = await sut.importReminder(atual)
+
+        let nova = try XCTUnwrap(repo.tasks.first { !$0.isCompleted })
+        XCTAssertEqual(nova.dueDate, amanha)
+        XCTAssertEqual(nova.notes, "parcela 2")
+        XCTAssertEqual(nova.priority, 1)
+        XCTAssertEqual(nova.sourceURL, "https://banco.example/2")
+
+        let concluida = try XCTUnwrap(repo.tasks.first(where: \.isCompleted))
+        XCTAssertEqual(concluida.dueDate, ontem, "histórico da ocorrência anterior fica intacto")
+    }
+
     /// Com a tarefa ATIVA na lista, o mesmo lembrete continua barrado — senão um clique a mais
     /// no picker duplicaria a tarefa em aberto.
     func test_importReminder_comTarefaAtiva_naoDuplica() async {
