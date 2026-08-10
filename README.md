@@ -51,7 +51,7 @@ O `.xcodeproj` NÃO é versionado — `project.yml` é a fonte da verdade (ADR-5
 
 ## Estado atual
 
-**Versão publicada: 1.8** (2026-08-06). Núcleo SOLID implementado e testado (228 testes verdes: Domain 50, Application 134, Infrastructure 44; app compila e roda):
+**Versão publicada: 1.9** (2026-08-10). Núcleo SOLID implementado e testado (228 testes verdes: Domain 50, Application 134, Infrastructure 44; app compila e roda):
 
 - ✅ Domain: modelo, ports e validações (com testes)
 - ✅ Application: `SessionStateMachine` pura, `SessionCoordinator`, casos de uso + `ReportBuilder`/`ManageTasksUseCase` (testes de tabela)

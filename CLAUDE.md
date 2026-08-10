@@ -5,14 +5,28 @@ Este arquivo registra o contexto e **onde o trabalho parou** para retomar em ses
 
 ## Contexto do projeto
 
-- **Local no disco:** `/Volumes/danilo_ssd/Projetos/ds.focus`
+- **Local no disco:** `/Volumes/danilo_ssd/Projetos/tomafoco/APP` (pasta renomeada de `ds.focus` para `APP` em 2026-08-06, alinhando com `DOCS - Tomafoco/APP/` e `../site/`)
+- **Documentação de produto/arquitetura:** controlada em `../DOCS - Tomafoco/APP/` (Obsidian vault), **não** mais em `docs/` deste repositório. Ver "Documentação" logo abaixo.
 - **Plataforma/stack:** macOS 13+, Swift 5.9 / SwiftUI, universal binary
 - **Distribuição:** FORA da Mac App Store (Developer ID, assinado + notarizado). Sandbox desligado.
-- **Decisões-chave (ADRs em `docs/arquitetura.md`):**
+- **Decisões-chave (ADRs em `../DOCS - Tomafoco/APP/arquitetura.md`):**
   - Bloqueio de sites: edição idempotente do `/etc/hosts` (MVP). NetworkExtension fica para v3.
   - Privilégio: `AppleScriptPrivilegeRunner` (prompt admin) no MVP; XPC helper (`SMAppService`) na v2 — trocável só no Composition Root.
   - Bloqueio de apps: `NSWorkspace` encerra + observa relançamentos.
   - Estado com término absoluto (`endsAt`) para sobreviver a crash/sleep/reboot.
+
+## Documentação
+
+Toda documentação de produto/arquitetura (especificação, arquitetura, backlog, release,
+briefing pro site) é controlada em **`../DOCS - Tomafoco/APP/`** (vault Obsidian), não neste
+repositório. O `docs/` local só guarda **assets operacionais** que o código/scripts consomem
+diretamente: `docs/screenshots/` (fonte pro site) e `docs/release-notes/*.html` (lido pelo
+`release.sh`/`generate_appcast`).
+
+- Para editar especificação, arquitetura ou backlog → editar em `../DOCS - Tomafoco/APP/`.
+- Este `CLAUDE.md` **fica no repositório** (é o log de sessão de trabalho, acoplado ao código) —
+  só ele e o `README.md` (visão geral rápida) permanecem aqui.
+- `../DOCS - Tomafoco/Índice.md` é o ponto de entrada do vault (link pra `APP/` e `Site/`).
 
 ## Arquitetura (Clean Architecture + SOLID, pacotes SPM por camada)
 
@@ -56,7 +70,7 @@ Já existe e está no disco:
 - ⚠️ Só falta validar à mão: abrir Preferências → aba Apps → "Adicionar…" e o arraste (o painel em si não é testável automatizado)
 
 **✅ Rebrand Tomafoco + novo layout (2026-07-22):**
-- Renomeação completa `DSFocus*`/`ds.focus` → `Tomafoco*`: módulos SPM, pastas, `TomafocoApp.swift`, entitlements, bundle ID `com.dsdumba.tomafoco`, marcador do `/etc/hosts` (`# Tomafoco-START/END`), pasta em Application Support, docs. **A pasta do projeto no disco continua `ds.focus`** (renomear é opcional: `mv ds.focus Tomafoco`).
+- Renomeação completa `DSFocus*`/`ds.focus` → `Tomafoco*`: módulos SPM, pastas, `TomafocoApp.swift`, entitlements, bundle ID `com.dsdumba.tomafoco`, marcador do `/etc/hosts` (`# Tomafoco-START/END`), pasta em Application Support, docs. ~~A pasta do projeto no disco continua `ds.focus`~~ — **renomeada pra `APP` em 2026-08-06** (ver "Contexto do projeto" no topo).
 - Design system em `App/UI/DesignSystem/`:
   - `Brand.swift` — paleta DDS.TEC extraída dos SVGs oficiais (cyan `#17B9EB`, navy `#08143E`, cyan claro `#94DCF2`, cyan escuro `#0D6985`) + tokens adaptativos claro/escuro via `NSColor` dinâmico (`Color.adaptive`), então nenhuma View lê `colorScheme`.
   - `Components.swift` — `ProgressRing`, `PrimaryCircleButton`, `GhostControl`, `BrandCard`.
@@ -237,17 +251,25 @@ Como ficou:
 - **Efeito colateral aceito:** `DockAttentionRequester` (Dock pulando no fim da etapa) é no-op enquanto o app está `.accessory`; som + notificação continuam.
 - `make test` 228 verdes, `xcodebuild` limpo. ⚠️ Validar à mão: popover com anel/seletor de tarefa (Menu dentro de `MenuBarExtra`), espaço aciona play/pause, ícone de tarefas abre a janela e traz Dock+menu, fechar as janelas tira o app do Dock, e o `NSAlert` de sessão recuperada após matar o app com foco ativo.
 
+**☑️ Checkbox "Mostrar concluídas" na lista de tarefas (2026-08-10):** só UI — `TasksViewModel` + `TasksView`; Domain/Application intocados (a edição RF-09.6 já funcionava para qualquer tarefa, faltava renderizar as concluídas).
+- `TasksViewModel.showsCompleted` persistida em `UserDefaults` chave `tasksShowsCompleted` (mesmo padrão do `sortOrder`; ausente → `false` = comportamento antigo). É preferência de exibição, não recorte de sessão — comentário das linhas 46–47 atualizado.
+- `displayedTasks`: ativas filtradas+ordenadas e, com o toggle, concluídas em bloco no FIM na ordem `completedAt` desc do `reload()` — não intercalar no `sortComparator` (vencimento/prioridade/atraso não dizem nada de tarefa finalizada; padrão do Apple Lembretes). Busca/tag/prioridade valem para os dois blocos (`applyFilters` extraído).
+- `TasksView`: `Toggle(.checkbox)` no `controlBar` antes do `Spacer`; título concluído riscado + `Brand.textFaint`; `emptyMessage` considera concluídas com o toggle ligado. Linha concluída reusa tudo: círculo reabre (`reopenTask` + write-back), lápis/duplo clique/menu editam, lixeira apaga.
+- **Edge case aceito:** `editTask` só checa duplicata entre ATIVAS — renomear concluída para título de ativa passa; simétrico ao `addTask` (unicidade é deliberadamente só entre ativas).
+- `make test` verde, build limpo. Ambiente: certificado *Apple Development* venceu em 2026-08-10 ("Mac Development" não encontrado) — **renovado no mesmo dia** pelo Xcode (Settings › Accounts › Manage Certificates), build assinado voltou a passar; assinatura nova pode re-pedir TCC (Automação/Lembretes) na primeira execução. Developer ID (release) intacto até 2027-02-01. E o `.spm-cache/workspace-state.json` ainda apontava `…/tomafoco/ds.focus` (pré-rename) — corrigido com sed para `…/APP`.
+- ⚠️ Validar à mão: ligar checkbox → concluídas riscadas no fim; busca as filtra; círculo reabre; lápis edita; estado sobrevive a reiniciar o app.
+
 ## Como retomar
 
 ```bash
-cd /Volumes/danilo_ssd/Projetos/ds.focus
+cd /Volumes/danilo_ssd/Projetos/tomafoco/APP
 make test     # roda testes dos pacotes SPM (Domain/Application/Infra)
 make open     # gera Tomafoco.xcodeproj via XcodeGen e abre no Xcode
 ```
 
 Pré-requisitos: `brew install xcodegen` (e opcional `brew install swiftlint`). O `.xcodeproj` não é versionado — `project.yml` é a fonte da verdade.
 
-## Próximas tarefas (backlog em docs/tarefas.md)
+## Próximas tarefas (backlog em `../DOCS - Tomafoco/APP/tarefas.md`)
 
 1. ~~Validar build/testes reais no Mac~~ ✅ feito em 2026-07-22.
 2. ~~T-20 — UI de adicionar apps via `NSOpenPanel`~~ ✅ feito em 2026-07-22 (falta smoke test manual).

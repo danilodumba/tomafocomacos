@@ -1,7 +1,8 @@
 import SwiftUI
 import TomafocoDomain
 
-/// Janela Tarefas (RF-09). Só tarefas ATIVAS — concluídas migram para os Relatórios (item 3).
+/// Janela Tarefas (RF-09). Ativas por padrão; concluídas aparecem opcionalmente no fim da
+/// lista (checkbox "Mostrar concluídas") e seguem nos Relatórios (item 3).
 /// Traz busca, ordenação, filtros, prioridade e destaque de atraso (itens 4–7).
 struct TasksView: View {
     @ObservedObject var viewModel: TasksViewModel
@@ -36,7 +37,10 @@ struct TasksView: View {
     }
 
     private var emptyMessage: String {
-        if !viewModel.activeTasks.isEmpty { return "Nenhuma tarefa corresponde aos filtros." }
+        if !viewModel.activeTasks.isEmpty
+            || (viewModel.showsCompleted && !viewModel.completedTasks.isEmpty) {
+            return "Nenhuma tarefa corresponde aos filtros."
+        }
         return "Nenhuma tarefa ativa. Crie acima ou importe do Lembretes."
     }
 
@@ -144,6 +148,9 @@ struct TasksView: View {
                 Label(viewModel.priorityFilter.map(priorityName) ?? "Prioridade", systemImage: "flag")
             }
             .fixedSize()
+
+            Toggle("Mostrar concluídas", isOn: $viewModel.showsCompleted)
+                .toggleStyle(.checkbox)
 
             Spacer()
 
@@ -393,7 +400,9 @@ struct TasksView: View {
                             .foregroundStyle(Brand.danger)
                     }
                     Text(task.title)
-                        .foregroundStyle(overdue ? Brand.danger : Brand.textPrimary)
+                        .strikethrough(task.isCompleted)
+                        .foregroundStyle(task.isCompleted ? Brand.textFaint
+                                         : (overdue ? Brand.danger : Brand.textPrimary))
                 }
                 HStack(spacing: 6) {
                     if task.source == .reminders {

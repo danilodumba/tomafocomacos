@@ -44,9 +44,15 @@ final class TasksViewModel: ObservableObject {
 
     // Ordenação + filtros da lista de ativas (itens 5 e 7).
     /// Persistida: a última ordenação escolhida volta na próxima abertura da janela/app.
-    /// Filtros e busca NÃO são persistidos de propósito — recorte é da sessão, ordenação é preferência.
+    /// Filtros e busca NÃO são persistidos de propósito — recorte é da sessão; ordenação e
+    /// exibição de concluídas são preferência.
     @Published var sortOrder: SortOrder = .createdAt {
         didSet { defaults.set(sortOrder.rawValue, forKey: Self.sortOrderKey) }
+    }
+    /// Persistida: mostrar/ocultar concluídas é preferência de exibição, como a ordenação.
+    /// Chave ausente → `false` (concluídas escondidas, comportamento antigo).
+    @Published var showsCompleted: Bool = false {
+        didSet { defaults.set(showsCompleted, forKey: Self.showsCompletedKey) }
     }
     @Published var searchText = ""
     @Published var tagFilter: String?
@@ -82,6 +88,7 @@ final class TasksViewModel: ObservableObject {
     private let defaults: UserDefaults
     /// Chave da ordenação salva. Valor inválido/ausente cai em `.createdAt`.
     private static let sortOrderKey = "tasksSortOrder"
+    private static let showsCompletedKey = "tasksShowsCompleted"
 
     private let useCase: ManageTasksUseCase
     /// Avisa o timer que a lista mudou (o seletor de tarefa precisa recarregar).
@@ -93,6 +100,7 @@ final class TasksViewModel: ObservableObject {
         self.defaults = defaults
         self.onTasksChanged = onTasksChanged
         sortOrder = Self.storedSortOrder(in: defaults)
+        showsCompleted = defaults.bool(forKey: Self.showsCompletedKey)
         reload()
     }
 
@@ -107,10 +115,20 @@ final class TasksViewModel: ObservableObject {
         onTasksChanged()
     }
 
-    /// Lista de ativas já buscada, filtrada e ordenada para exibição (itens 5 e 7).
+    /// Lista para exibição: ativas buscadas/filtradas/ordenadas (itens 5 e 7) e, com
+    /// `showsCompleted`, as concluídas em bloco no fim — na ordem de conclusão do `reload()`,
+    /// não no `sortComparator` (vencimento/prioridade/atraso não dizem nada de tarefa finalizada).
     var displayedTasks: [FocusTask] {
-        var tasks = activeTasks
+        var result = applyFilters(activeTasks).sorted(by: sortComparator)
+        if showsCompleted {
+            result += applyFilters(completedTasks) // já vêm por completedAt desc do reload()
+        }
+        return result
+    }
 
+    /// Busca por título + filtros de tag/prioridade — valem para ativas e concluídas.
+    private func applyFilters(_ tasks: [FocusTask]) -> [FocusTask] {
+        var tasks = tasks
         let query = searchText.trimmingCharacters(in: .whitespaces)
         if !query.isEmpty {
             tasks = tasks.filter { $0.title.localizedCaseInsensitiveContains(query) }
@@ -121,7 +139,7 @@ final class TasksViewModel: ObservableObject {
         if let priority = priorityFilter {
             tasks = tasks.filter { TaskPriority(rawPriority: $0.priority) == priority }
         }
-        return tasks.sorted(by: sortComparator)
+        return tasks
     }
 
     /// Ordenação salva; `rawValue` desconhecido (versão antiga/futura) volta ao padrão.
