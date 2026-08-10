@@ -2,7 +2,7 @@
 
 App de Pomodoro para macOS que bloqueia sites e apps distrativos durante o foco.
 
-> Documentação de produto/arquitetura em [`docs/`](docs/): `especificacao.md`, `arquitetura.md`, `tarefas.md`.
+> Documentação de produto/arquitetura controlada em [`../DOCS - Tomafoco/APP/`](../DOCS%20-%20Tomafoco/APP/) (vault Obsidian): `especificacao.md`, `arquitetura.md`, `tarefas.md`, `release.md`, `produto-para-site.md`. O `docs/` deste repo só guarda assets operacionais (`screenshots/`, `release-notes/`).
 
 ## Funcionalidades
 
@@ -15,6 +15,7 @@ App de Pomodoro para macOS que bloqueia sites e apps distrativos durante o foco.
 - **Relatórios** — horas por tarefa/dia, intervalos, streak (Swift Charts).
 - **Sobrevive a crash/sleep/reboot** — estado com término absoluto (`endsAt`) + fluxo de recuperação.
 - **Iniciar com o macOS** (item de login), alerta sonoro no fim de cada etapa.
+- **Atualização automática** via Sparkle — checa uma vez por dia e pergunta antes de instalar.
 
 ## Arquitetura
 
@@ -50,14 +51,14 @@ O `.xcodeproj` NÃO é versionado — `project.yml` é a fonte da verdade (ADR-5
 
 ## Estado atual
 
-Núcleo SOLID implementado e testado (~190 testes verdes: Domain 39, Application 108, Infrastructure 43; app compila e roda):
+**Versão publicada: 1.8** (2026-08-06). Núcleo SOLID implementado e testado (228 testes verdes: Domain 50, Application 134, Infrastructure 44; app compila e roda):
 
 - ✅ Domain: modelo, ports e validações (com testes)
 - ✅ Application: `SessionStateMachine` pura, `SessionCoordinator`, casos de uso + `ReportBuilder`/`ManageTasksUseCase` (testes de tabela)
 - ✅ Infrastructure: `AppleScriptBrowserBlocker` (ADR-8), `WorkspaceAppBlocker`, `NSOpenPanelApplicationPicker`, `EventKitReminderImporter`, clock, persistência (`FileSessionSnapshotStore`/`FileTaskStore`), notificações
 - ✅ App: Composition Root + UI (timer, menu bar, preferências, tarefas/relatórios) com a identidade DDS.TEC
 
-Próximas tarefas: ver `docs/tarefas.md`.
+Próximas tarefas: ver `../DOCS - Tomafoco/APP/tarefas.md`.
 
 ## Identidade visual
 
@@ -81,9 +82,9 @@ Se um site não bloquear, o problema é permissão de Automação, navegador nã
 
 ## Distribuição
 
-Fora da Mac App Store, assinado com Developer ID e notarizado (Gatekeeper). `make release` gera o `.dmg` assinado, notarizado e grampeado. Detalhes em `docs/tarefas.md` (T-25).
+Fora da Mac App Store, assinado com Developer ID e notarizado (Gatekeeper). `make release` gera o `.dmg` assinado, notarizado e grampeado. Detalhes em `../DOCS - Tomafoco/APP/tarefas.md` (T-25).
 
-O app **se atualiza sozinho** via Sparkle (ADR-9): checa `https://tomafoco.dds.tec.br/downloads/appcast.xml` uma vez por dia e pergunta antes de instalar. O `make release` também gera o `appcast.xml` assinado com a chave EdDSA — passo a passo em `docs/release.md`.
+O app **se atualiza sozinho** via Sparkle (ADR-9): checa `https://tomafoco.dds.tec.br/downloads/appcast.xml` uma vez por dia e pergunta antes de instalar. O `make release` também gera o `appcast.xml` assinado com a chave EdDSA — passo a passo em `../DOCS - Tomafoco/APP/release.md`.
 
 ## Emergência (legado)
 
