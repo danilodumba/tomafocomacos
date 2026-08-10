@@ -251,6 +251,11 @@ Como ficou:
 - **Efeito colateral aceito:** `DockAttentionRequester` (Dock pulando no fim da etapa) é no-op enquanto o app está `.accessory`; som + notificação continuam.
 - `make test` 228 verdes, `xcodebuild` limpo. ⚠️ Validar à mão: popover com anel/seletor de tarefa (Menu dentro de `MenuBarExtra`), espaço aciona play/pause, ícone de tarefas abre a janela e traz Dock+menu, fechar as janelas tira o app do Dock, e o `NSAlert` de sessão recuperada após matar o app com foco ativo.
 
+**🚀 Release 1.9 publicada (2026-08-10)** — `MARKETING_VERSION 1.9` / `CURRENT_PROJECT_VERSION 10`. Conteúdo: checkbox "Mostrar concluídas" (entrada abaixo).
+- `make release` completo: notarização **Accepted** nas duas etapas, staple ok, `spctl` → `source=Notarized Developer ID`. DMG 3,63 MB, universal (`lipo -archs` → `x86_64 arm64`).
+- Publicação: DMG + notas + `appcast.xml` copiados pra `site/downloads/`, bump nos 5 arquivos do site (ver nota da 1.7), commit + push nos 2 repos, tag `v1.9`. Verificado ao vivo: `/`, DMG e appcast **200**; DMG servido com o **mesmo SHA-256** do local. Notas `.html` respondem **301** → URL sem extensão → 200 (comportamento padrão do Azure SWA, igual na 1.8 — Sparkle segue redirect).
+- Commits de migração dos docs pro vault (pendências antigas no working tree dos 2 repos) entraram **separados** dos commits de release.
+
 **☑️ Checkbox "Mostrar concluídas" na lista de tarefas (2026-08-10):** só UI — `TasksViewModel` + `TasksView`; Domain/Application intocados (a edição RF-09.6 já funcionava para qualquer tarefa, faltava renderizar as concluídas).
 - `TasksViewModel.showsCompleted` persistida em `UserDefaults` chave `tasksShowsCompleted` (mesmo padrão do `sortOrder`; ausente → `false` = comportamento antigo). É preferência de exibição, não recorte de sessão — comentário das linhas 46–47 atualizado.
 - `displayedTasks`: ativas filtradas+ordenadas e, com o toggle, concluídas em bloco no FIM na ordem `completedAt` desc do `reload()` — não intercalar no `sortComparator` (vencimento/prioridade/atraso não dizem nada de tarefa finalizada; padrão do Apple Lembretes). Busca/tag/prioridade valem para os dois blocos (`applyFilters` extraído).
