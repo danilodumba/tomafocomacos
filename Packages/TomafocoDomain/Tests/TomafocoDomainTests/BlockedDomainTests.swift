@@ -3,9 +3,29 @@ import XCTest
 
 final class BlockedDomainTests: XCTestCase {
 
-    func test_normalize_removeEsquemaCaminhoEPortaMasPreservaWww() throws {
-        let d = try BlockedDomain(raw: "HTTPS://WWW.Twitter.com/feed?x=1")
-        XCTAssertEqual(d.value, "www.twitter.com")
+    func test_normalize_removeEsquemaQueryEPortaMasPreservaWwwECaminho() throws {
+        let d = try BlockedDomain(raw: "HTTPS://WWW.Twitter.com:443/Feed/?x=1#top")
+        XCTAssertEqual(d.value, "www.twitter.com/feed")
+        XCTAssertEqual(d.host, "www.twitter.com")
+        XCTAssertEqual(d.path, "/feed")
+    }
+
+    func test_caminho_barraFinalOuSoBarraViraHostInteiro() throws {
+        XCTAssertNil(try BlockedDomain(raw: "youtube.com/").path)
+        XCTAssertNil(try BlockedDomain(raw: "youtube.com?x=1").path)
+        XCTAssertEqual(try BlockedDomain(raw: "www.youtube.com/shorts/").value, "www.youtube.com/shorts")
+    }
+
+    func test_caminho_comCuringa() throws {
+        let d = try BlockedDomain(raw: "*.youtube.com/shorts")
+        XCTAssertTrue(d.includesSubdomains)
+        XCTAssertEqual(d.value, "*.youtube.com/shorts")
+    }
+
+    func test_caminho_malFormado_rejeitado() {
+        for raw in ["youtube.com//shorts", "youtube.com/sh orts"] {
+            XCTAssertThrowsError(try BlockedDomain(raw: raw), raw)
+        }
     }
 
     func test_normalize_aparaEspacosEAplicaLowercase() throws {
@@ -15,12 +35,12 @@ final class BlockedDomainTests: XCTestCase {
 
     func test_normalize_preservaHostCompleto() throws {
         XCTAssertEqual(try BlockedDomain(raw: "ge.globo.com").value, "ge.globo.com")
-        XCTAssertEqual(try BlockedDomain(raw: "https://www.ge.globo.com/futebol").value, "www.ge.globo.com")
+        XCTAssertEqual(try BlockedDomain(raw: "https://www.ge.globo.com/").value, "www.ge.globo.com")
         XCTAssertEqual(try BlockedDomain(raw: "globo.com.").value, "globo.com")
     }
 
     func test_curinga_aceitoENormalizado() throws {
-        let d = try BlockedDomain(raw: " HTTPS://*.Globo.com/x ")
+        let d = try BlockedDomain(raw: " HTTPS://*.Globo.com/ ")
         XCTAssertEqual(d.value, "*.globo.com")
         XCTAssertEqual(d.host, "globo.com")
         XCTAssertTrue(d.includesSubdomains)
@@ -41,7 +61,7 @@ final class BlockedDomainTests: XCTestCase {
     }
 
     func test_codable_formatoNovoPreservaExatoECuringa() throws {
-        let original = [try BlockedDomain(raw: "www.globo.com"), try BlockedDomain(raw: "*.globo.com")]
+        let original = try ["www.globo.com", "*.globo.com", "www.youtube.com/shorts"].map { try BlockedDomain(raw: $0) }
         let data = try JSONEncoder().encode(original)
         XCTAssertEqual(try JSONDecoder().decode([BlockedDomain].self, from: data), original)
     }
@@ -77,9 +97,14 @@ final class BlockedDomainTests: XCTestCase {
 
     func test_hashable_domíniosNormalizadosIguaisSaoIguais() throws {
         let a = try BlockedDomain(raw: "reddit.com")
-        let b = try BlockedDomain(raw: "https://Reddit.com/r/swift")
+        let b = try BlockedDomain(raw: "https://Reddit.com/")
         XCTAssertEqual(a, b)
         XCTAssertEqual(Set([a, b]).count, 1)
+    }
+
+    func test_hashable_caminhoDiferenteEEntradaDistinta() throws {
+        let entries = try ["reddit.com", "reddit.com/r/swift", "reddit.com/r"].map { try BlockedDomain(raw: $0) }
+        XCTAssertEqual(Set(entries).count, 3)
     }
 
     func test_hashable_wwwECuringaSaoEntradasDistintas() throws {

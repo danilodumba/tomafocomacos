@@ -175,7 +175,7 @@ struct SettingsView: View {
                     .tint(Brand.cyan)
             }
 
-            Text("Bloqueia o endereço exato: “www.globo.com” não bloqueia “ge.globo.com” nem “globo.com”. Use “*.globo.com” para bloquear o domínio e todos os subdomínios.")
+            Text("Bloqueia o endereço exato: “www.globo.com” não bloqueia “ge.globo.com” nem “globo.com”. Use “*.globo.com” para bloquear o domínio e todos os subdomínios. Inclua um caminho para bloquear só uma parte do site: “www.youtube.com/shorts” bloqueia os Shorts, mas não o resto do YouTube.")
                 .font(.system(size: 11))
                 .foregroundStyle(Brand.textFaint)
                 .fixedSize(horizontal: false, vertical: true)

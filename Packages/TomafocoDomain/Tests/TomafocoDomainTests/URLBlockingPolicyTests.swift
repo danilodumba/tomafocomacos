@@ -44,7 +44,32 @@ final class URLBlockingPolicyTests: XCTestCase {
         XCTAssertTrue(URLBlockingPolicy.isBlocked(urlString: "https://twitter.com/home", domains: ds))
     }
 
+    func test_caminho_bloqueiaOProprioCaminhoESubcaminhos() throws {
+        let ds = try domains("www.youtube.com/shorts")
+        for url in ["https://www.youtube.com/shorts", "https://www.youtube.com/shorts/",
+                    "https://www.youtube.com/shorts/abc123?feature=share",
+                    "https://WWW.YouTube.com/Shorts/abc"] {
+            XCTAssertTrue(URLBlockingPolicy.isBlocked(urlString: url, domains: ds), url)
+        }
+    }
+
+    func test_caminhoComCuringa_bloqueiaEmSubdominio() throws {
+        XCTAssertTrue(URLBlockingPolicy.isBlocked(
+            urlString: "https://m.youtube.com/shorts/x", domains: try domains("*.youtube.com/shorts")))
+    }
+
     // MARK: - NÃO bloqueia
+
+    /// O caso pedido: bloquear Shorts não pode derrubar o resto do YouTube.
+    func test_caminho_naoBloqueiaRestoDoHost() throws {
+        let ds = try domains("www.youtube.com/shorts")
+        for url in ["https://www.youtube.com", "https://www.youtube.com/",
+                    "https://www.youtube.com/watch?v=abc", "https://www.youtube.com/shortsxyz",
+                    "https://www.youtube.com/feed/shorts", "https://www.youtube.com/?q=/shorts",
+                    "https://m.youtube.com/shorts/abc"] {
+            XCTAssertFalse(URLBlockingPolicy.isBlocked(urlString: url, domains: ds), url)
+        }
+    }
 
     /// O caso perigoso: sufixo sem o ponto separador é outro site.
     func test_dominioComSufixoParecido_naoBloqueia() throws {
