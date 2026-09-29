@@ -356,3 +356,10 @@ Pré-requisitos: `brew install xcodegen` (e opcional `brew install swiftlint`). 
 - Emergência (bloqueio órfão no hosts, de antes do ADR-8): `sudo sed -i '' '/# Tomafoco-START/,/# Tomafoco-END/d' /etc/hosts`
 - Bloqueio de sites NÃO usa mais rede: se um site não bloquear, o problema é permissão de Automação do navegador (Ajustes do Sistema › Privacidade › Automação), navegador não suportado (Firefox) ou navegador fechado.
 - `xcodegen` instalado via Homebrew (2026-07-22). `swiftlint` ainda NÃO instalado — `make lint` falha.
+
+
+**🚀 Release 1.11 publicada (2026-09-29)** — `MARKETING_VERSION 1.11` / `CURRENT_PROJECT_VERSION 12`. Conteúdo: bloqueio de sites por caminho.
+- `BlockedDomain` ganhou `path: String?` (`www.youtube.com/shorts`); `URLBlockingPolicy` casa por **segmento inteiro** (`/shorts` pega `/shorts` e `/shorts/abc`, nunca `/shortsxyz`, `/feed/shorts` nem o resto do host). Caminho comparado sem distinção de maiúsculas; query/fragmento/porta/barra final descartados. Combina com curinga (`*.youtube.com/shorts`).
+- ⚠️ Mudança de comportamento: colar URL completa agora vira bloqueio de caminho (antes `https://reddit.com/r/swift` → `reddit.com`). Listas salvas não mudam. Downgrade: versão anterior lê só `value` (= host) → bloqueia o site inteiro como curinga.
+- `make release`: notarização **Accepted** nas duas etapas, `spctl` → `source=Notarized Developer ID`. DMG 3,9 MB.
+- Site: bump `1.10`→`1.11` em `index.html`, `404.html`, `privacidade.html`, `assets/js/app.js`; removido "Bloqueio por URL específica" da seção de limitações; card de sites cita `www.youtube.com/shorts`. GitHub deu **500 no push** dos dois repos — retry passou. Verificado ao vivo: `/`, DMG, appcast, `app.js` **200**; SHA-256 do DMG servido = local; notas `.html` **301** (normal).
