@@ -35,6 +35,21 @@ public enum ReportCSVExporter {
         return lines.joined(separator: "\r\n")
     }
 
+    /// Uma linha por entrada de histórico (FEAT-001), mais recente primeiro — a ordem chega
+    /// pronta do `ReportBuilder`. Colunas: Tarefa, Data, Descrição.
+    /// CSV separado do de tarefas concluídas de propósito: a granularidade é outra (uma tarefa
+    /// tem N entradas), e concatenar tudo numa célula estragaria a leitura em planilha.
+    public static func taskHistoryCSV(
+        entries: [FocusReport.HistoryItem],
+        dateString: (Date) -> String
+    ) -> String {
+        var lines = [row(["Tarefa", "Data", "Descrição"])]
+        for entry in entries {
+            lines.append(row([entry.taskTitle, dateString(entry.date), entry.text]))
+        }
+        return lines.joined(separator: "\r\n")
+    }
+
     /// Rótulo PT-BR da prioridade, no mesmo vocabulário do Lembretes.
     static func priorityLabel(_ raw: Int?) -> String {
         switch TaskPriority(rawPriority: raw) {

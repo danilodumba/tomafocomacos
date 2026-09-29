@@ -34,6 +34,34 @@ final class ReportCSVExporterTests: XCTestCase {
         XCTAssertTrue(csv.contains("\"Ler, revisar\",,Nenhuma,0,0,2026-07-20 09:00"))
     }
 
+    // MARK: histórico (FEAT-001)
+
+    func test_historicoCSV_cabecalhoEUmaLinhaPorEntrada() {
+        let entries = [
+            FocusReport.HistoryItem(id: UUID(), taskID: UUID(), taskTitle: "Cliente", date: day, text: "liguei"),
+            FocusReport.HistoryItem(id: UUID(), taskID: UUID(), taskTitle: "Boleto", date: day, text: "paguei")
+        ]
+        let csv = ReportCSVExporter.taskHistoryCSV(entries: entries, dateString: fixedDate)
+        let lines = csv.components(separatedBy: "\r\n")
+        XCTAssertEqual(lines.first, "Tarefa,Data,Descrição")
+        XCTAssertEqual(lines[1], "Cliente,2026-07-20 09:00,liguei")
+        XCTAssertEqual(lines[2], "Boleto,2026-07-20 09:00,paguei")
+    }
+
+    func test_historicoCSV_escapaVirgulaEQuebraDeLinha() {
+        let entries = [
+            FocusReport.HistoryItem(id: UUID(), taskID: UUID(), taskTitle: "A, B", date: day,
+                                    text: "linha 1\nlinha 2")
+        ]
+        let csv = ReportCSVExporter.taskHistoryCSV(entries: entries, dateString: fixedDate)
+        XCTAssertTrue(csv.contains("\"A, B\",2026-07-20 09:00,\"linha 1\nlinha 2\""))
+    }
+
+    func test_historicoCSV_semEntradas_soCabecalho() {
+        XCTAssertEqual(ReportCSVExporter.taskHistoryCSV(entries: [], dateString: fixedDate),
+                       "Tarefa,Data,Descrição")
+    }
+
     private func emptySummary() -> FocusReport.Summary {
         FocusReport.Summary(focusTotal: 0, breakTotal: 0, completedFocusCount: 0,
                             cancelledFocusCount: 0, skippedFocusCount: 0,

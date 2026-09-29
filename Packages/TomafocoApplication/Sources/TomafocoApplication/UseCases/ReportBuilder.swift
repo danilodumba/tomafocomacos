@@ -60,14 +60,41 @@ public struct FocusReport: Equatable {
         }
     }
 
+    /// Uma entrada de histórico de tarefa dentro do período (FEAT-001), já com o título
+    /// resolvido para exibição/exportação.
+    public struct HistoryItem: Equatable, Identifiable {
+        /// `id` da própria `TaskHistoryEntry` — identidade estável para `ForEach` na UI.
+        public let id: UUID
+        public let taskID: UUID
+        public let taskTitle: String
+        public let date: Date
+        public let text: String
+
+        public init(id: UUID, taskID: UUID, taskTitle: String, date: Date, text: String) {
+            self.id = id
+            self.taskID = taskID
+            self.taskTitle = taskTitle
+            self.date = date
+            self.text = text
+        }
+    }
+
     public let taskTotals: [TaskTotal]
     public let dailyTotals: [DailyTotal]
     public let summary: Summary
+    /// Histórico das tarefas no período, mais recente primeiro.
+    public let historyEntries: [HistoryItem]
 
-    public init(taskTotals: [TaskTotal], dailyTotals: [DailyTotal], summary: Summary) {
+    public init(
+        taskTotals: [TaskTotal],
+        dailyTotals: [DailyTotal],
+        summary: Summary,
+        historyEntries: [HistoryItem] = []
+    ) {
         self.taskTotals = taskTotals
         self.dailyTotals = dailyTotals
         self.summary = summary
+        self.historyEntries = historyEntries
     }
 }
 
@@ -93,7 +120,8 @@ public enum ReportBuilder {
             taskTotals: taskTotals(focus: focus, tasks: tasks),
             dailyTotals: dailyTotals(focus: focus, breaks: breaks, calendar: calendar),
             summary: summary(focus: focus, breaks: breaks, allFocus: records.filter { $0.phase == .focus },
-                             now: now, calendar: calendar)
+                             now: now, calendar: calendar),
+            historyEntries: historyEntries(tasks: tasks, interval: interval)
         )
     }
 
@@ -131,6 +159,25 @@ public enum ReportBuilder {
             .sorted { lhs, rhs in
                 if lhs.focusTime != rhs.focusTime { return lhs.focusTime > rhs.focusTime }
                 return lhs.title < rhs.title
+            }
+    }
+
+    /// Histórico (FEAT-001): vem das TAREFAS, não de `[SessionRecord]` — a entrada mora dentro da
+    /// `FocusTask`. Por isso não há fallback "Tarefa removida" como em `taskTotals`: apagar a
+    /// tarefa leva o histórico junto. Recorte pela data da inclusão, mesmo `interval` do resto.
+    private static func historyEntries(tasks: [FocusTask], interval: DateInterval?) -> [FocusReport.HistoryItem] {
+        tasks
+            .flatMap { task in
+                task.history.map {
+                    FocusReport.HistoryItem(
+                        id: $0.id, taskID: task.id, taskTitle: task.title,
+                        date: $0.createdAt, text: $0.text)
+                }
+            }
+            .filter { interval?.contains($0.date) ?? true }
+            .sorted { lhs, rhs in
+                if lhs.date != rhs.date { return lhs.date > rhs.date }
+                return lhs.taskTitle < rhs.taskTitle
             }
     }
 

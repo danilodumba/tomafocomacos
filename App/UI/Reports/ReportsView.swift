@@ -27,6 +27,7 @@ struct ReportsView: View {
                 }
 
                 completedSection
+                historySection
             }
             .padding(16)
         }
@@ -44,7 +45,7 @@ struct ReportsView: View {
             .labelsHidden()
 
             Button {
-                exportCSV()
+                save(csv: viewModel.csv(), defaultName: "tomafoco-tarefas.csv")
             } label: {
                 Label("Exportar CSV…", systemImage: "square.and.arrow.up")
             }
@@ -147,16 +148,82 @@ struct ReportsView: View {
         }
     }
 
-    /// Grava o CSV das concluídas filtradas via `NSSavePanel` (item 3).
-    private func exportCSV() {
+    /// Grava um CSV via `NSSavePanel` — serve tanto as concluídas (item 3) quanto o histórico
+    /// (FEAT-001).
+    private func save(csv: String, defaultName: String) {
         let panel = NSSavePanel()
-        panel.nameFieldStringValue = "tomafoco-tarefas.csv"
+        panel.nameFieldStringValue = defaultName
         panel.allowedContentTypes = [.commaSeparatedText]
         panel.canCreateDirectories = true
         guard panel.runModal() == .OK, let url = panel.url else { return }
         // BOM UTF-8 para o Excel abrir acentos corretamente.
-        let content = "\u{FEFF}" + viewModel.csv()
+        let content = "\u{FEFF}" + csv
         try? content.data(using: .utf8)?.write(to: url)
+    }
+
+    // MARK: - Histórico das tarefas (FEAT-001)
+
+    /// Entradas de histórico do período selecionado, mais recente primeiro. Recorte é só por
+    /// período: a busca e o filtro de tag acima valem para a lista de concluídas.
+    private var historySection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 10) {
+                Text("Histórico das tarefas")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(Brand.textSecondary)
+
+                Spacer()
+
+                Button {
+                    save(csv: viewModel.historyCSV(), defaultName: "tomafoco-historico.csv")
+                } label: {
+                    Label("Exportar histórico CSV…", systemImage: "square.and.arrow.up")
+                }
+                .font(.system(size: 12))
+                .disabled(viewModel.historyEntries.isEmpty)
+            }
+
+            if viewModel.historyEntries.isEmpty {
+                Text("Nenhuma entrada de histórico no período.")
+                    .font(.system(size: 12))
+                    .foregroundStyle(Brand.textFaint)
+                    .padding(.vertical, 8)
+            } else {
+                ForEach(viewModel.historyEntries) { entry in
+                    historyRow(entry)
+                }
+            }
+        }
+        .padding(12)
+        .background(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .strokeBorder(Brand.surfaceStroke, lineWidth: 1)
+        )
+    }
+
+    private func historyRow(_ entry: FocusReport.HistoryItem) -> some View {
+        HStack(alignment: .top, spacing: 8) {
+            Image(systemName: "clock.arrow.circlepath")
+                .font(.system(size: 11))
+                .foregroundStyle(Brand.cyan)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(entry.text)
+                    .foregroundStyle(Brand.textPrimary)
+                    .fixedSize(horizontal: false, vertical: true)
+                HStack(spacing: 6) {
+                    Text(entry.date.formatted(date: .abbreviated, time: .shortened))
+                    Text("·")
+                    Text(entry.taskTitle)
+                }
+                .font(.system(size: 10))
+                .foregroundStyle(Brand.textFaint)
+            }
+            Spacer()
+        }
+        .font(.system(size: 12))
+        .padding(.vertical, 5)
+        .padding(.horizontal, 10)
+        .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Brand.surface))
     }
 
     private var emptyState: some View {

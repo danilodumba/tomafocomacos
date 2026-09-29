@@ -28,6 +28,9 @@ public struct FocusTask: Equatable, Codable, Sendable, Identifiable {
     /// URL anexada ao lembrete pelo usuário (`EKReminder.url`). NÃO é deep-link para o app
     /// Lembretes (EventKit não expõe isso) — é o link que o próprio lembrete carrega.
     public var sourceURL: String?
+    /// Histórico da tarefa (FEAT-001): entradas com data de inclusão e descrição, na ordem em
+    /// que foram acrescentadas. É log — só acrescenta e apaga, nunca edita.
+    public var history: [TaskHistoryEntry]
 
     public var isCompleted: Bool { completedAt != nil }
 
@@ -42,7 +45,8 @@ public struct FocusTask: Equatable, Codable, Sendable, Identifiable {
         notes: String? = nil,
         dueDate: Date? = nil,
         priority: Int? = nil,
-        sourceURL: String? = nil
+        sourceURL: String? = nil,
+        history: [TaskHistoryEntry] = []
     ) {
         self.id = id
         self.title = title
@@ -55,6 +59,7 @@ public struct FocusTask: Equatable, Codable, Sendable, Identifiable {
         self.dueDate = dueDate
         self.priority = priority
         self.sourceURL = sourceURL
+        self.history = history
     }
 
     // Decode manual por causa de `tags` e dos campos ricos de importação: JSON gravado antes
@@ -62,7 +67,7 @@ public struct FocusTask: Equatable, Codable, Sendable, Identifiable {
     // mantém retrocompatibilidade sem migração. `encode(to:)` continua sintetizado.
     private enum CodingKeys: String, CodingKey {
         case id, title, source, reminderID, createdAt, completedAt, tags
-        case notes, dueDate, priority, sourceURL
+        case notes, dueDate, priority, sourceURL, history
     }
 
     public init(from decoder: Decoder) throws {
@@ -78,6 +83,7 @@ public struct FocusTask: Equatable, Codable, Sendable, Identifiable {
         self.dueDate = try c.decodeIfPresent(Date.self, forKey: .dueDate)
         self.priority = try c.decodeIfPresent(Int.self, forKey: .priority)
         self.sourceURL = try c.decodeIfPresent(String.self, forKey: .sourceURL)
+        self.history = try c.decodeIfPresent([TaskHistoryEntry].self, forKey: .history) ?? []
     }
 
     /// Limpa uma lista de tags crua: trim, descarta vazias, deduplica por caixa (mantém a

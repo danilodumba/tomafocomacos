@@ -33,7 +33,9 @@ struct TasksView: View {
         .sheet(isPresented: $viewModel.showsTagManager) {
             TagManagerView(viewModel: viewModel)
         }
-        .sheet(item: $viewModel.editingTask) { _ in editSheet }
+        .sheet(item: $viewModel.editingTask) { _ in
+            FocusHost { historyFocused in editSheet(historyFocused: historyFocused) }
+        }
     }
 
     private var emptyMessage: String {
@@ -299,9 +301,12 @@ struct TasksView: View {
 
     // MARK: - Formulário de edição (RF-09.6)
 
-    /// Edita título, prioridade, tags, observação e data/hora de vencimento de uma vez.
+    /// Edita título, prioridade, tags e data/hora de vencimento de uma vez (+ histórico, gravado na hora).
     /// Nada é gravado até "Salvar" — erro de validação mantém o sheet aberto.
-    private var editSheet: some View {
+    /// `historyFocused`: com o campo de histórico focado, "Salvar" perde o `.defaultAction` —
+    /// senão o Return vira key equivalent da janela (roda ANTES do `onSubmit` do campo), salva e
+    /// fecha o sheet sem acrescentar a entrada.
+    private func editSheet(historyFocused: FocusState<Bool>.Binding) -> some View {
         VStack(alignment: .leading, spacing: 14) {
             Text("Editar tarefa")
                 .font(.system(size: 14, weight: .semibold))
@@ -332,21 +337,13 @@ struct TasksView: View {
                     .disabled(!viewModel.editHasDueDate)
                     .opacity(viewModel.editHasDueDate ? 1 : 0.4)
                 }
-
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Observação")
-                        .font(.system(size: 11))
-                        .foregroundStyle(Brand.textSecondary)
-                    TextEditor(text: $viewModel.editNotes)
-                        .font(.system(size: 12))
-                        .frame(height: 80)
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 6)
-                                .stroke(Brand.textFaint.opacity(0.4), lineWidth: 1)
-                        )
-                }
             }
             .formStyle(.grouped)
+
+            // Fora do `Form` de propósito: em `.grouped`, linha com `Button` vira alvo de clique
+            // inteira — o clique no campo "Nova entrada" ia para o botão e o campo nunca focava.
+            historySection(focused: historyFocused)
+                .padding(.horizontal, 4)
 
             if let error = viewModel.editFeedback {
                 Text(error)
@@ -359,11 +356,82 @@ struct TasksView: View {
                 Button("Cancelar") { viewModel.cancelEditing() }
                     .keyboardShortcut(.cancelAction)
                 Button("Salvar") { viewModel.saveEdit() }
-                    .keyboardShortcut(.defaultAction)
+                    .keyboardShortcut(historyFocused.wrappedValue ? nil : .defaultAction)
             }
         }
         .padding(16)
         .frame(width: 420)
+    }
+
+    // MARK: - Histórico da tarefa (FEAT-001)
+
+    /// Entradas datadas da tarefa. Ao contrário do resto do formulário, adicionar/apagar aqui
+    /// **grava na hora** — histórico é log, não rascunho. A legenda avisa o usuário.
+    /// `ScrollView` + `VStack` em vez de `List` (altura previsível dentro do sheet).
+    private func historySection(focused: FocusState<Bool>.Binding) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 4) {
+                Text("Histórico")
+                    .font(.system(size: 11))
+                    .foregroundStyle(Brand.textSecondary)
+                Text("· gravado na hora")
+                    .font(.system(size: 10))
+                    .foregroundStyle(Brand.textFaint)
+            }
+
+            HStack(spacing: 6) {
+                TextField("Nova entrada", text: $viewModel.newHistoryText)
+                    .textFieldStyle(.roundedBorder)
+                    .focused(focused)
+                    .onSubmit { viewModel.addHistoryEntry() }
+                Button("Adicionar") { viewModel.addHistoryEntry() }
+                    .disabled(viewModel.newHistoryText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+
+            if viewModel.editingHistory.isEmpty {
+                Text("Sem entradas ainda.")
+                    .font(.system(size: 11))
+                    .foregroundStyle(Brand.textFaint)
+                    .padding(.vertical, 4)
+            } else {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 4) {
+                        ForEach(viewModel.editingHistory) { entry in
+                            historyRow(entry)
+                        }
+                    }
+                }
+                .frame(maxHeight: 140)
+            }
+        }
+    }
+
+    private func historyRow(_ entry: TaskHistoryEntry) -> some View {
+        HStack(alignment: .top, spacing: 8) {
+            Text(entry.createdAt.formatted(date: .abbreviated, time: .shortened))
+                .font(.system(size: 10))
+                .foregroundStyle(Brand.textFaint)
+                .frame(width: 110, alignment: .leading)
+
+            Text(entry.text)
+                .font(.system(size: 11))
+                .foregroundStyle(Brand.textPrimary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            Spacer()
+
+            Button(role: .destructive) {
+                viewModel.deleteHistoryEntry(entry)
+            } label: {
+                Image(systemName: "trash")
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(Brand.textFaint)
+            .accessibilityLabel("Apagar entrada do histórico")
+        }
+        .padding(.vertical, 3)
+        .padding(.horizontal, 8)
+        .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(Brand.surface))
     }
 
     private func feedbackRow(_ text: String) -> some View {
@@ -422,6 +490,12 @@ struct TasksView: View {
                         }
                         .foregroundStyle(Brand.cyan)
                     }
+                    if !task.history.isEmpty {
+                        Label("\(task.history.count)", systemImage: "clock.arrow.circlepath")
+                            .font(.system(size: 10))
+                            .foregroundStyle(Brand.textFaint)
+                            .help("\(task.history.count) entrada(s) no histórico")
+                    }
                     ForEach(task.tags, id: \.self) { tag in
                         tagChip(tag)
                     }
@@ -463,4 +537,13 @@ struct TasksView: View {
             Button("Apagar", role: .destructive) { viewModel.delete(task) }
         }
     }
+}
+
+/// Dono do `@FocusState` do formulário de edição. Precisa morar DENTRO do sheet: `@FocusState`
+/// declarado na view que apresenta não atravessa a fronteira do sheet de forma confiável.
+private struct FocusHost<Content: View>: View {
+    @FocusState private var focused: Bool
+    let content: (FocusState<Bool>.Binding) -> Content
+
+    var body: some View { content($focused) }
 }

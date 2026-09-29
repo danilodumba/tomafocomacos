@@ -110,6 +110,35 @@ final class TaskLinkCodingTests: XCTestCase {
         XCTAssertEqual(decoded.tags, ["x", "y"])
     }
 
+    // MARK: - Histórico (FEAT-001)
+
+    /// `tasks.json` gravado antes da FEAT-001 não tem a chave `history` — decodificar tem que
+    /// dar lista vazia, nunca lançar (decode que lança viraria `tasks.json.bak` e o usuário
+    /// abriria o app sem tarefa nenhuma).
+    func test_focusTaskAntigaSemHistorico_decodificaComListaVazia() throws {
+        let json = """
+        {"id":"00000000-0000-0000-0000-0000000000AA","title":"Deploy",
+         "source":"manual","createdAt":"2026-07-20T09:00:00Z","tags":["x"]}
+        """
+        let task = try decoder.decode(FocusTask.self, from: Data(json.utf8))
+        XCTAssertEqual(task.history, [])
+    }
+
+    func test_focusTaskRoundtripComHistorico_preserva() throws {
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        let entries = [
+            TaskHistoryEntry(id: UUID(), createdAt: Date(timeIntervalSince1970: 1_000), text: "liguei"),
+            TaskHistoryEntry(id: UUID(), createdAt: Date(timeIntervalSince1970: 2_000), text: "retorno")
+        ]
+        let task = FocusTask(
+            id: UUID(), title: "Cliente", source: .manual,
+            createdAt: Date(timeIntervalSince1970: 0), history: entries
+        )
+        let decoded = try decoder.decode(FocusTask.self, from: encoder.encode(task))
+        XCTAssertEqual(decoded.history, entries)
+    }
+
     func test_roundtripComTaskIDs_preserva() throws {
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601

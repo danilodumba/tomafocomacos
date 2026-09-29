@@ -62,16 +62,32 @@ final class ReportsViewModel: ObservableObject {
         return list
     }
 
+    /// Entradas de histórico do período (FEAT-001) — recorte só por período; busca e filtro de
+    /// tag valem para a lista de concluídas, não para o histórico.
+    var historyEntries: [FocusReport.HistoryItem] { report?.historyEntries ?? [] }
+
     /// CSV das tarefas concluídas filtradas (item 3). Datas formatadas em pt-BR.
     func csv() -> String {
+        ReportCSVExporter.completedTasksCSV(
+            tasks: completedTasks,
+            report: report ?? FocusReport(taskTotals: [], dailyTotals: [], summary: emptySummary()),
+            dateString: { Self.csvDateFormatter.string(from: $0) })
+    }
+
+    /// CSV do histórico das tarefas no período (FEAT-001).
+    func historyCSV() -> String {
+        ReportCSVExporter.taskHistoryCSV(
+            entries: historyEntries,
+            dateString: { Self.csvDateFormatter.string(from: $0) })
+    }
+
+    /// Formatador dos CSVs — um só para os dois exports.
+    private static let csvDateFormatter: DateFormatter = {
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "pt_BR")
         formatter.dateFormat = "yyyy-MM-dd HH:mm"
-        return ReportCSVExporter.completedTasksCSV(
-            tasks: completedTasks,
-            report: report ?? FocusReport(taskTotals: [], dailyTotals: [], summary: emptySummary()),
-            dateString: { formatter.string(from: $0) })
-    }
+        return formatter
+    }()
 
     private func emptySummary() -> FocusReport.Summary {
         FocusReport.Summary(focusTotal: 0, breakTotal: 0, completedFocusCount: 0,

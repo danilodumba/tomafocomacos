@@ -66,33 +66,42 @@ final class ManageTasksUseCaseTests: XCTestCase {
         let due = Date(timeIntervalSince1970: 2_000_000)
         let edited = try sut.editTask(
             id: task.id, title: "  Relatório final ", tags: ["Trabalho", "trabalho", " "],
-            notes: "  falar com o time  ", dueDate: due, priority: .medium
+            dueDate: due, priority: .medium
         )
         XCTAssertEqual(edited?.title, "Relatório final")
         let stored = try XCTUnwrap(try repo.loadTasks().first)
         XCTAssertEqual(stored.title, "Relatório final")
         XCTAssertEqual(stored.tags, ["Trabalho"])
-        XCTAssertEqual(stored.notes, "falar com o time")
         XCTAssertEqual(stored.dueDate, due)
         XCTAssertEqual(stored.priority, 5)
     }
 
-    func test_editTask_notasEmBrancoViramNil_eDataPodeSerLimpa() throws {
+    func test_editTask_dataEPrioridadePodemSerLimpas() throws {
         let task = try sut.addTask(title: "Boleto")
-        try sut.editTask(id: task.id, title: "Boleto", tags: [], notes: "pagar",
+        try sut.editTask(id: task.id, title: "Boleto", tags: [],
                          dueDate: Date(timeIntervalSince1970: 3_000), priority: .high)
-        try sut.editTask(id: task.id, title: "Boleto", tags: [], notes: "   ",
+        try sut.editTask(id: task.id, title: "Boleto", tags: [],
                          dueDate: nil, priority: .none)
         let stored = try XCTUnwrap(try repo.loadTasks().first)
-        XCTAssertNil(stored.notes)
         XCTAssertNil(stored.dueDate)
         XCTAssertNil(stored.priority)
+    }
+
+    /// "Observação" saiu do formulário: notas importadas do Lembretes sobrevivem a salvar.
+    func test_editTask_preservaNotasImportadas() throws {
+        var all = try repo.loadTasks()
+        let task = FocusTask(id: UUID(), title: "Conta", source: .manual,
+                             createdAt: Date(timeIntervalSince1970: 0), notes: "conta de luz")
+        all.append(task)
+        try repo.saveTasks(all)
+        try sut.editTask(id: task.id, title: "Conta paga", tags: [], dueDate: nil, priority: .none)
+        XCTAssertEqual(try repo.loadTasks().first?.notes, "conta de luz")
     }
 
     func test_editTask_tituloVazio_lanca() throws {
         let task = try sut.addTask(title: "Algo")
         XCTAssertThrowsError(
-            try sut.editTask(id: task.id, title: "   ", tags: [], notes: nil,
+            try sut.editTask(id: task.id, title: "   ", tags: [],
                              dueDate: nil, priority: .none)
         ) { XCTAssertEqual($0 as? DomainError, .emptyTaskTitle) }
     }
@@ -101,7 +110,7 @@ final class ManageTasksUseCaseTests: XCTestCase {
         try sut.addTask(title: "Existente")
         let task = try sut.addTask(title: "Outra")
         XCTAssertThrowsError(
-            try sut.editTask(id: task.id, title: "existente", tags: [], notes: nil,
+            try sut.editTask(id: task.id, title: "existente", tags: [],
                              dueDate: nil, priority: .none)
         ) { XCTAssertEqual($0 as? DomainError, .duplicateEntry("existente")) }
     }
@@ -110,14 +119,14 @@ final class ManageTasksUseCaseTests: XCTestCase {
     func test_editTask_mesmoTitulo_naoAcusaDuplicata() throws {
         let task = try sut.addTask(title: "Manter")
         XCTAssertNoThrow(
-            try sut.editTask(id: task.id, title: "Manter", tags: ["x"], notes: nil,
+            try sut.editTask(id: task.id, title: "Manter", tags: ["x"],
                              dueDate: nil, priority: .low)
         )
     }
 
     func test_editTask_idInexistente_devolveNilSemGravar() throws {
         try sut.addTask(title: "Intacta")
-        let result = try sut.editTask(id: UUID(), title: "Nova", tags: [], notes: nil,
+        let result = try sut.editTask(id: UUID(), title: "Nova", tags: [],
                                       dueDate: nil, priority: .none)
         XCTAssertNil(result)
         XCTAssertEqual(try repo.loadTasks().first?.title, "Intacta")
@@ -125,10 +134,82 @@ final class ManageTasksUseCaseTests: XCTestCase {
 
     func test_editTask_tagsEntramNoCatalogo() throws {
         let task = try sut.addTask(title: "A")
-        try sut.editTask(id: task.id, title: "A", tags: ["Faturamento"], notes: nil,
+        try sut.editTask(id: task.id, title: "A", tags: ["Faturamento"],
                          dueDate: nil, priority: .none)
         try sut.deleteTask(id: task.id)
         XCTAssertEqual(try sut.allTags(), ["Faturamento"])
+    }
+
+    // MARK: histórico (FEAT-001)
+
+    func test_addHistoryEntry_usaNowEMakeIDInjetados() throws {
+        let entryID = UUID(uuidString: "00000000-0000-0000-0000-0000000000EE")!
+        // `addTask` também puxa do `makeID` — o 1º da fila é a tarefa, o 2º é a entrada.
+        var ids = [UUID(uuidString: "00000000-0000-0000-0000-0000000000AA")!, entryID]
+        let sut = ManageTasksUseCase(
+            tasks: repo, importer: importer, now: { self.now },
+            makeID: { ids.isEmpty ? UUID() : ids.removeFirst() })
+        let task = try sut.addTask(title: "Cliente")
+
+        let updated = try sut.addHistoryEntry(taskID: task.id, text: "  liguei pro cliente  ")
+
+        XCTAssertEqual(updated?.history.count, 1)
+        XCTAssertEqual(updated?.history.first?.id, entryID)
+        XCTAssertEqual(updated?.history.first?.createdAt, now)
+        // Descrição é trimada no use case — a UI não precisa se preocupar.
+        XCTAssertEqual(updated?.history.first?.text, "liguei pro cliente")
+        XCTAssertEqual(try repo.loadTasks().first?.history.first?.text, "liguei pro cliente")
+    }
+
+    func test_addHistoryEntry_textoEmBranco_lanca() throws {
+        let task = try sut.addTask(title: "Cliente")
+        XCTAssertThrowsError(try sut.addHistoryEntry(taskID: task.id, text: "   \n ")) { error in
+            XCTAssertEqual(error as? DomainError, .emptyHistoryEntry)
+        }
+        XCTAssertEqual(try repo.loadTasks().first?.history, [])
+    }
+
+    func test_addHistoryEntry_acrescentaNoFimPreservandoAsAnteriores() throws {
+        let task = try sut.addTask(title: "Cliente")
+        try sut.addHistoryEntry(taskID: task.id, text: "primeira")
+        try sut.addHistoryEntry(taskID: task.id, text: "segunda")
+        XCTAssertEqual(try repo.loadTasks().first?.history.map(\.text), ["primeira", "segunda"])
+    }
+
+    func test_addHistoryEntry_tarefaInexistente_devolveNilSemGravar() throws {
+        try sut.addTask(title: "Intacta")
+        XCTAssertNil(try sut.addHistoryEntry(taskID: UUID(), text: "x"))
+        XCTAssertEqual(try repo.loadTasks().first?.history, [])
+    }
+
+    func test_deleteHistoryEntry_removeSoAEntradaAlvo() throws {
+        let task = try sut.addTask(title: "Cliente")
+        try sut.addHistoryEntry(taskID: task.id, text: "primeira")
+        let segunda = try sut.addHistoryEntry(taskID: task.id, text: "segunda")
+        let alvo = try XCTUnwrap(segunda?.history.last?.id)
+
+        let updated = try sut.deleteHistoryEntry(taskID: task.id, entryID: alvo)
+
+        XCTAssertEqual(updated?.history.map(\.text), ["primeira"])
+        XCTAssertEqual(try repo.loadTasks().first?.history.map(\.text), ["primeira"])
+    }
+
+    func test_deleteHistoryEntry_entradaOuTarefaInexistente_naoLanca() throws {
+        let task = try sut.addTask(title: "Cliente")
+        try sut.addHistoryEntry(taskID: task.id, text: "unica")
+        XCTAssertNoThrow(try sut.deleteHistoryEntry(taskID: task.id, entryID: UUID()))
+        XCTAssertNil(try sut.deleteHistoryEntry(taskID: UUID(), entryID: UUID()))
+        XCTAssertEqual(try repo.loadTasks().first?.history.count, 1)
+    }
+
+    /// `editTask` muta só os campos do formulário — histórico não pode ser zerado por salvar
+    /// a tarefa (o formulário não carrega o histórico no rascunho).
+    func test_editTask_preservaOHistorico() throws {
+        let task = try sut.addTask(title: "Cliente")
+        try sut.addHistoryEntry(taskID: task.id, text: "liguei")
+        try sut.editTask(id: task.id, title: "Cliente novo", tags: ["x"],
+                         dueDate: nil, priority: .high)
+        XCTAssertEqual(try repo.loadTasks().first?.history.map(\.text), ["liguei"])
     }
 
     // MARK: cadastro de tags (RF-09.5 / item 1)

@@ -34,13 +34,18 @@ final class TasksViewModel: ObservableObject {
     @Published var editTitle = ""
     /// Tags do rascunho, separadas por vírgula (mesmo formato do campo de criação).
     @Published var editTags = ""
-    @Published var editNotes = ""
     /// Vencimento é opcional: o toggle liga/desliga o `DatePicker` e desligado grava `nil`.
     @Published var editHasDueDate = false
     @Published var editDueDate = Date()
     @Published var editPriority: TaskPriority = .none
     /// Erro do formulário — separado de `feedback` porque o sheet cobre a lista.
     @Published var editFeedback: String?
+    /// Histórico da tarefa aberta no formulário (FEAT-001), mais recente primeiro.
+    /// Diferente dos outros campos do sheet, o histórico **não** é rascunho: acrescentar/apagar
+    /// grava na hora (é log). "Cancelar" não desfaz entrada já adicionada.
+    @Published private(set) var editingHistory: [TaskHistoryEntry] = []
+    /// Texto da entrada de histórico em digitação.
+    @Published var newHistoryText = ""
 
     // Ordenação + filtros da lista de ativas (itens 5 e 7).
     /// Persistida: a última ordenação escolhida volta na próxima abertura da janela/app.
@@ -234,16 +239,18 @@ final class TasksViewModel: ObservableObject {
         editFeedback = nil
         editTitle = task.title
         editTags = task.tags.joined(separator: ", ")
-        editNotes = task.notes ?? ""
         editHasDueDate = task.dueDate != nil
         editDueDate = task.dueDate ?? Self.defaultDueDate()
         editPriority = TaskPriority(rawPriority: task.priority)
+        editingHistory = Self.sortedHistory(task)
+        newHistoryText = ""
         editingTask = task
     }
 
     func cancelEditing() {
         editingTask = nil
         editFeedback = nil
+        newHistoryText = ""
     }
 
     /// Grava o rascunho. Erro de validação mantém o sheet aberto com a mensagem.
@@ -255,11 +262,16 @@ final class TasksViewModel: ObservableObject {
                 id: task.id,
                 title: editTitle,
                 tags: Self.parseTags(editTags),
-                notes: editNotes,
                 dueDate: editHasDueDate ? editDueDate : nil,
                 priority: editPriority
             )
+            // Texto digitado no histórico sem clicar "Adicionar" entra junto ao salvar — não
+            // descartar em silêncio o que o usuário escreveu.
+            if !newHistoryText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                try useCase.addHistoryEntry(taskID: task.id, text: newHistoryText)
+            }
             editingTask = nil
+            newHistoryText = ""
             reload()
         } catch DomainError.emptyTaskTitle {
             editFeedback = "Informe um título para a tarefa."
@@ -268,6 +280,43 @@ final class TasksViewModel: ObservableObject {
         } catch {
             editFeedback = "Não foi possível salvar: \(error.localizedDescription)"
         }
+    }
+
+    // MARK: - Histórico da tarefa (FEAT-001)
+
+    /// Acrescenta a entrada digitada. **Grava na hora**, fora do rascunho do formulário —
+    /// histórico é log, e o botão "Cancelar" não desfaz o que já foi registrado.
+    func addHistoryEntry() {
+        guard let task = editingTask else { return }
+        editFeedback = nil
+        do {
+            guard let updated = try useCase.addHistoryEntry(taskID: task.id, text: newHistoryText) else { return }
+            editingHistory = Self.sortedHistory(updated)
+            newHistoryText = ""
+            reload()
+        } catch DomainError.emptyHistoryEntry {
+            editFeedback = "Escreva algo antes de adicionar ao histórico."
+        } catch {
+            editFeedback = "Não foi possível salvar a entrada: \(error.localizedDescription)"
+        }
+    }
+
+    /// Apaga UMA entrada (não há edição — é log).
+    func deleteHistoryEntry(_ entry: TaskHistoryEntry) {
+        guard let task = editingTask else { return }
+        editFeedback = nil
+        do {
+            guard let updated = try useCase.deleteHistoryEntry(taskID: task.id, entryID: entry.id) else { return }
+            editingHistory = Self.sortedHistory(updated)
+            reload()
+        } catch {
+            editFeedback = "Não foi possível apagar a entrada: \(error.localizedDescription)"
+        }
+    }
+
+    /// Ordem de exibição: mais recente primeiro (o Domain guarda na ordem de inclusão).
+    private static func sortedHistory(_ task: FocusTask) -> [TaskHistoryEntry] {
+        task.history.sorted { $0.createdAt > $1.createdAt }
     }
 
     /// Sugestão ao ligar o vencimento numa tarefa que não tinha: hoje na próxima hora cheia

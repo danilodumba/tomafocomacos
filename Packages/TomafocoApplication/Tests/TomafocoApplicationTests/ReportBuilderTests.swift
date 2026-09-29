@@ -185,6 +185,41 @@ final class ReportBuilderTests: XCTestCase {
         XCTAssertEqual(report.summary.focusTotal, 25 * 60)
     }
 
+    // MARK: histórico das tarefas (FEAT-001)
+
+    /// Helper: tarefa com entradas de histórico em dias relativos a `day0`.
+    private func task(_ id: UUID, _ title: String, historyDays: [Int]) -> FocusTask {
+        let entries = historyDays.map {
+            TaskHistoryEntry(
+                id: UUID(),
+                createdAt: day0.addingTimeInterval(Double($0) * 86_400 + 36_000),
+                text: "entrada d\($0)")
+        }
+        return FocusTask(id: id, title: title, source: .manual, createdAt: day0, history: entries)
+    }
+
+    func test_historico_maisRecentePrimeiroComTituloResolvido() {
+        let report = build([], tasks: [
+            task(taskA, "Alpha", historyDays: [0, 2]),
+            task(taskB, "Beta", historyDays: [1])
+        ])
+        XCTAssertEqual(report.historyEntries.map(\.text), ["entrada d2", "entrada d1", "entrada d0"])
+        XCTAssertEqual(report.historyEntries.map(\.taskTitle), ["Alpha", "Beta", "Alpha"])
+        XCTAssertEqual(report.historyEntries.first?.taskID, taskA)
+    }
+
+    func test_historico_recortaPeloIntervalo() {
+        let onlyDay2 = DateInterval(start: day0.addingTimeInterval(2 * 86_400), duration: 86_400)
+        let report = build([], tasks: [task(taskA, "Alpha", historyDays: [0, 1, 2])], interval: onlyDay2)
+        XCTAssertEqual(report.historyEntries.map(\.text), ["entrada d2"])
+    }
+
+    func test_historico_tarefaSemEntradas_naoPolui() {
+        let report = build([], tasks: [task(taskA, "Alpha"), task(taskB, "Beta", historyDays: [1])])
+        XCTAssertEqual(report.historyEntries.count, 1)
+        XCTAssertEqual(report.historyEntries.first?.taskTitle, "Beta")
+    }
+
     func test_vazio_tudoZerado() {
         let report = build([])
         XCTAssertTrue(report.taskTotals.isEmpty)
@@ -192,5 +227,6 @@ final class ReportBuilderTests: XCTestCase {
         XCTAssertEqual(report.summary.focusTotal, 0)
         XCTAssertEqual(report.summary.streakDays, 0)
         XCTAssertEqual(report.summary.dailyFocusAverage, 0)
+        XCTAssertTrue(report.historyEntries.isEmpty)
     }
 }

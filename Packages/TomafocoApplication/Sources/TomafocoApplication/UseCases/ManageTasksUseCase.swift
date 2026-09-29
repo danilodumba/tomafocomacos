@@ -88,14 +88,16 @@ public final class ManageTasksUseCase {
         return task
     }
 
-    /// Edição completa de uma tarefa (RF-09.6): título, tags, notas, vencimento e prioridade
+    /// Edição completa de uma tarefa (RF-09.6): título, tags, vencimento e prioridade
     /// numa transação só — a UI abre um formulário e salva tudo de uma vez.
     ///
     /// Lança `emptyTaskTitle` (título em branco) ou `duplicateEntry` (outra tarefa ATIVA com o
     /// mesmo título — a própria tarefa é excluída da comparação, senão salvar sem mexer no título
     /// acusaria duplicata). Tarefa inexistente é no-op (devolve `nil`).
     ///
-    /// Notas em branco viram `nil` (não guarda string vazia). `dueDate == nil` limpa o vencimento.
+    /// `notes` (vinda da importação do Lembretes) não é editável aqui e fica intacta — o campo
+    /// "Observação" saiu do formulário, substituído pelo histórico (FEAT-001).
+    /// `dueDate == nil` limpa o vencimento.
     /// **Não** espelha nada de volta no Lembretes: o write-back é só de conclusão — editar aqui
     /// mantém a tarefa local divergente do lembrete de origem de propósito.
     @discardableResult
@@ -103,7 +105,6 @@ public final class ManageTasksUseCase {
         id: UUID,
         title: String,
         tags: [String],
-        notes: String?,
         dueDate: Date?,
         priority: TaskPriority
     ) throws -> FocusTask? {
@@ -119,16 +120,35 @@ public final class ManageTasksUseCase {
         guard !duplicated else { throw DomainError.duplicateEntry(trimmedTitle) }
 
         let normalizedTags = FocusTask.normalizeTags(tags)
-        let trimmedNotes = notes?.trimmingCharacters(in: .whitespacesAndNewlines)
         let edited = try update(id: id) {
             $0.title = trimmedTitle
             $0.tags = normalizedTags
-            $0.notes = (trimmedNotes?.isEmpty ?? true) ? nil : trimmedNotes
             $0.dueDate = dueDate
             $0.priority = priority.rawPriority
         }
         registerInCatalog(normalizedTags)
         return edited
+    }
+
+    // MARK: - Histórico (FEAT-001)
+
+    /// Acrescenta uma entrada ao histórico da tarefa: data da inclusão (`now`) + descrição.
+    /// Descrição em branco lança `DomainError.emptyHistoryEntry`; tarefa inexistente é no-op
+    /// (devolve `nil`). Entradas nascem no fim da lista — quem ordena para exibição é a UI.
+    @discardableResult
+    public func addHistoryEntry(taskID: UUID, text: String) throws -> FocusTask? {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { throw DomainError.emptyHistoryEntry }
+
+        let entry = TaskHistoryEntry(id: makeID(), createdAt: now(), text: trimmed)
+        return try update(id: taskID) { $0.history.append(entry) }
+    }
+
+    /// Remove UMA entrada do histórico. Entrada ou tarefa inexistente é no-op.
+    /// Não existe "editar entrada" de propósito: histórico é log (FEAT-001).
+    @discardableResult
+    public func deleteHistoryEntry(taskID: UUID, entryID: UUID) throws -> FocusTask? {
+        try update(id: taskID) { $0.history.removeAll { $0.id == entryID } }
     }
 
     /// Substitui as tags de uma tarefa (normalizadas). Tarefa inexistente é no-op.
