@@ -79,7 +79,7 @@ final class AppleScriptBrowserBlockerTests: XCTestCase {
         let (sut, runner) = makeSUT()
         runner.tabListing = ["Safari": listing([(1, 2, "https://www.globo.com/esporte")])]
 
-        try await sut.activate(domains: try domains("globo.com"))
+        try await sut.activate(domains: try domains("*.globo.com"))
 
         XCTAssertEqual(runner.redirects.count, 1)
         XCTAssertTrue(runner.redirects[0].contains("set URL of tab 2 of window 1"))
@@ -90,7 +90,7 @@ final class AppleScriptBrowserBlockerTests: XCTestCase {
         let (sut, runner) = makeSUT()
         runner.tabListing = ["Safari": listing([(1, 1, "https://developer.apple.com")])]
 
-        try await sut.activate(domains: try domains("globo.com"))
+        try await sut.activate(domains: try domains("*.globo.com"))
 
         XCTAssertTrue(runner.redirects.isEmpty)
     }
@@ -104,7 +104,7 @@ final class AppleScriptBrowserBlockerTests: XCTestCase {
             (2, 2, "https://swift.org")
         ])]
 
-        try await sut.activate(domains: try domains("globo.com"))
+        try await sut.activate(domains: try domains("*.globo.com"))
 
         XCTAssertEqual(runner.redirects.count, 2)
     }
@@ -114,7 +114,7 @@ final class AppleScriptBrowserBlockerTests: XCTestCase {
         let (sut, runner) = makeSUT()
         runner.tabListing = ["Safari": listing([(1, 1, Self.blockPage)])]
 
-        try await sut.activate(domains: try domains("globo.com"))
+        try await sut.activate(domains: try domains("*.globo.com"))
 
         XCTAssertTrue(runner.redirects.isEmpty)
     }
@@ -125,7 +125,7 @@ final class AppleScriptBrowserBlockerTests: XCTestCase {
         let (sut, runner) = makeSUT(redirectURL: "https://example.com")
         runner.tabListing = ["Safari": listing([(1, 1, "https://globo.com")])]
 
-        try await sut.activate(domains: try domains("globo.com"))
+        try await sut.activate(domains: try domains("*.globo.com"))
 
         XCTAssertEqual(runner.redirects.count, 1)
         XCTAssertTrue(runner.redirects[0].contains("https://example.com"))
@@ -136,7 +136,7 @@ final class AppleScriptBrowserBlockerTests: XCTestCase {
         let (sut, runner) = makeSUT(redirectURL: "example.com/foco")
         runner.tabListing = ["Safari": listing([(1, 1, "https://globo.com")])]
 
-        try await sut.activate(domains: try domains("globo.com"))
+        try await sut.activate(domains: try domains("*.globo.com"))
 
         XCTAssertTrue(runner.redirects[0].contains("https://example.com/foco"))
     }
@@ -145,7 +145,7 @@ final class AppleScriptBrowserBlockerTests: XCTestCase {
         let (sut, runner) = makeSUT(redirectURL: "   ")
         runner.tabListing = ["Safari": listing([(1, 1, "https://globo.com")])]
 
-        try await sut.activate(domains: try domains("globo.com"))
+        try await sut.activate(domains: try domains("*.globo.com"))
 
         XCTAssertTrue(runner.redirects[0].contains(Self.blockPage))
     }
@@ -155,7 +155,7 @@ final class AppleScriptBrowserBlockerTests: XCTestCase {
         let (sut, runner) = makeSUT(redirectURL: "https://globo.com/home")
         runner.tabListing = ["Safari": listing([(1, 1, "https://globo.com")])]
 
-        try await sut.activate(domains: try domains("globo.com"))
+        try await sut.activate(domains: try domains("*.globo.com"))
 
         XCTAssertTrue(runner.redirects[0].contains(Self.blockPage))
     }
@@ -176,7 +176,7 @@ final class AppleScriptBrowserBlockerTests: XCTestCase {
                                     browsers: [.safari, .chrome])
         runner.tabListing = ["Safari": listing([(1, 1, "https://globo.com")])]
 
-        try await sut.activate(domains: try domains("globo.com"))
+        try await sut.activate(domains: try domains("*.globo.com"))
 
         XCTAssertFalse(runner.executed.contains { $0.contains("Google Chrome") })
         XCTAssertEqual(runner.redirects.count, 1)
@@ -191,7 +191,7 @@ final class AppleScriptBrowserBlockerTests: XCTestCase {
             "Google Chrome": listing([(1, 1, "https://www.globo.com/tv")])
         ]
 
-        try await sut.activate(domains: try domains("globo.com"))
+        try await sut.activate(domains: try domains("*.globo.com"))
 
         XCTAssertEqual(runner.redirects.count, 2)
     }
@@ -204,7 +204,7 @@ final class AppleScriptBrowserBlockerTests: XCTestCase {
         runner.failingApplications = ["Safari"]
         runner.tabListing = ["Google Chrome": listing([(1, 1, "https://globo.com")])]
 
-        try await sut.activate(domains: try domains("globo.com"))
+        try await sut.activate(domains: try domains("*.globo.com"))
 
         XCTAssertEqual(runner.redirects.count, 1)
         XCTAssertTrue(runner.redirects[0].contains("Google Chrome"))
@@ -215,7 +215,7 @@ final class AppleScriptBrowserBlockerTests: XCTestCase {
         let (sut, runner) = makeSUT()
         runner.failingApplications = ["Safari"]
 
-        try await sut.activate(domains: try domains("globo.com"))
+        try await sut.activate(domains: try domains("*.globo.com"))
         let afterFirst = runner.executed.count
         sut.sweep()
 
@@ -228,7 +228,7 @@ final class AppleScriptBrowserBlockerTests: XCTestCase {
         let (sut, runner) = makeSUT()
         runner.busyApplications = ["Safari"]
 
-        try await sut.activate(domains: try domains("globo.com"))
+        try await sut.activate(domains: try domains("*.globo.com"))
         let afterFirst = runner.executed.count
         sut.sweep()
 
@@ -242,7 +242,7 @@ final class AppleScriptBrowserBlockerTests: XCTestCase {
         runner.busyApplications = ["Safari"]
         runner.tabListing = ["Safari": listing([(1, 1, "https://globo.com")])]
 
-        try await sut.activate(domains: try domains("globo.com"))
+        try await sut.activate(domains: try domains("*.globo.com"))
         XCTAssertTrue(runner.redirects.isEmpty)
 
         runner.busyApplications = []
@@ -256,7 +256,7 @@ final class AppleScriptBrowserBlockerTests: XCTestCase {
     func test_activate_ligaAVarreduraEDeactivateDesliga() async throws {
         let (sut, _) = makeSUT()
 
-        try await sut.activate(domains: try domains("globo.com"))
+        try await sut.activate(domains: try domains("*.globo.com"))
         var active = await sut.isActive
         XCTAssertTrue(active)
 
@@ -268,7 +268,7 @@ final class AppleScriptBrowserBlockerTests: XCTestCase {
     func test_aposDeactivate_varreduraNaoRedirecionaMais() async throws {
         let (sut, runner) = makeSUT()
         runner.tabListing = ["Safari": listing([(1, 1, "https://globo.com")])]
-        try await sut.activate(domains: try domains("globo.com"))
+        try await sut.activate(domains: try domains("*.globo.com"))
         try await sut.deactivate()
 
         let afterDeactivate = runner.executed.count

@@ -8,4 +8,8 @@ public enum DomainError: Error, Equatable {
     case duplicateEntry(String)
     /// Título de tarefa vazio após normalização (RF-09).
     case emptyTaskTitle
+    /// Descrição de entrada de histórico vazia após trim (FEAT-001).
+    case emptyHistoryEntry
+    /// Senha de desbloqueio de apps curta demais (FEAT-002).
+    case weakPassword(minimumLength: Int)
 }

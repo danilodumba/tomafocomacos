@@ -264,6 +264,47 @@ Como ficou:
 - `make test` verde, build limpo. Ambiente: certificado *Apple Development* venceu em 2026-08-10 ("Mac Development" não encontrado) — **renovado no mesmo dia** pelo Xcode (Settings › Accounts › Manage Certificates), build assinado voltou a passar; assinatura nova pode re-pedir TCC (Automação/Lembretes) na primeira execução. Developer ID (release) intacto até 2027-02-01. E o `.spm-cache/workspace-state.json` ainda apontava `…/tomafoco/ds.focus` (pré-rename) — corrigido com sed para `…/APP`.
 - ⚠️ Validar à mão: ligar checkbox → concluídas riscadas no fim; busca as filtra; círculo reabre; lápis edita; estado sobrevive a reiniciar o app.
 
+**🕘 Histórico nas tarefas (FEAT-001 / RF-09.7 + RF-10.3, 2026-09-09):** cada tarefa passa a ter N
+entradas datadas (data de inclusão + descrição), e elas aparecem nos relatórios. Suíte **244 verdes**
+(Domain 52, Application 148, Infra 44), `xcodebuild` limpo.
+- Domain: `TaskHistoryEntry` (`id`/`createdAt`/`text`, tudo `let` — é log) embutido em
+  `FocusTask.history`. **Decode com `decodeIfPresent ?? []`**, igual a `tags`: `tasks.json` gravado
+  antes da feature tem que abrir sem migração — decode que lança viraria `tasks.json.bak` e o
+  usuário abriria o app sem tarefa nenhuma. Regressão em `TaskLinkCodingTests`. Novo
+  `DomainError.emptyHistoryEntry`.
+- Application: `ManageTasksUseCase.addHistoryEntry(taskID:text:)` / `deleteHistoryEntry(taskID:entryID:)`
+  em cima do `update(id:)` que já existia, com `now`/`makeID` injetados (nada de `Date()`/`UUID()`
+  inline). **`editTask` não muda** — ele muta só os campos que lista, então o histórico sobrevive
+  a salvar o formulário; há teste de regressão explícito para isso.
+- **Decisão de produto:** entrada é **só manual** (nada de log automático de sessão/conclusão — não
+  toca `SessionCoordinator` nem a máquina) e é **append + delete, sem edição**.
+- **Decisão técnica:** a entrada **grava na hora**, fora do rascunho transacional do `editSheet`.
+  "Cancelar" desfaz título/tags/vencimento, mas NÃO desfaz entrada já adicionada. Coerente com log
+  e evita mais um parâmetro em `editTask`; a UI avisa com a legenda "· gravado na hora".
+- App: seção "Histórico" dentro do formulário de edição (`TasksView.historySection`) — `ScrollView`
+  + `VStack`, **não `List`**, porque `List` dentro de `Form` tem altura imprevisível. Badge
+  `clock.arrow.circlepath` + contagem na linha da tarefa. VM: `editingHistory` (ordenado desc) +
+  `newHistoryText`; erros vão para `editFeedback`, não `feedback` (o sheet cobre a lista).
+- Relatórios: `FocusReport.HistoryItem` (`Identifiable` pelo id da entrada — `ForEach` precisa de
+  identidade estável) montado de `tasks.flatMap(\.history)` filtrado pelo `interval`. **Sem fallback
+  "Tarefa removida"**: a entrada mora dentro da tarefa e some com ela, diferente de `taskTotals`.
+  `ReportCSVExporter.taskHistoryCSV` (`Tarefa,Data,Descrição`) em CSV separado — a granularidade é
+  outra (1 tarefa → N entradas) e concatenar numa célula estragaria a planilha. `exportCSV()` da
+  `ReportsView` virou `save(csv:defaultName:)`, usado pelos dois botões.
+- **Bug corrigido (2026-09-29):** Return no campo "Nova entrada" disparava "Salvar" (`.defaultAction`
+  é key equivalent da janela e roda ANTES do `onSubmit`) → sheet fechava sem gravar a entrada. Agora
+  `FocusHost` (dono do `@FocusState`, dentro do sheet) tira o `.defaultAction` do "Salvar" enquanto o
+  campo de histórico está focado; e `saveEdit()` grava texto pendente no campo como entrada.
+  E o campo nem focava: dentro do `Form(.grouped)`, linha com `Button` vira alvo de clique inteira
+  (clique ia pro "Adicionar", desabilitado com texto vazio). `historySection` saiu do `Form` — fica
+  entre o `Form` e a barra Cancelar/Salvar. Também corrige a nota antiga acima sobre "seção dentro do formulário".
+- **Campo "Observação" removido do formulário (2026-09-29)** — obsoleto com o histórico.
+  `editTask` perdeu o parâmetro `notes` e não toca mais em `FocusTask.notes`. O campo `notes`
+  **continua no modelo**: vem da importação do Lembretes e ainda aparece (só leitura) na linha da
+  tarefa; apagar do modelo perderia dado já gravado. Teste `test_editTask_preservaNotasImportadas`.
+- ⚠️ Validar à mão: adicionar/apagar entrada no formulário; "Cancelar" não desfaz; salvar edição não
+  zera o histórico; reabrir o app persiste; seção e CSV de histórico nos Relatórios (acentos com BOM).
+
 ## Como retomar
 
 ```bash
@@ -292,6 +333,16 @@ Pré-requisitos: `brew install xcodegen` (e opcional `brew install swiftlint`). 
 **🔎 Importação do Lembretes agora é por picker pesquisável (2026-07-23):** substituiu o import em lote por lista (toggle de listas foi removido do fluxo). "Importar do Lembretes…" abre sheet com **busca por título** + lista de lembretes individuais; **clicar num importa só ele na hora**; já-importado fica cinza/desabilitado (`importedReminderIDs` = `reminderID`s das tarefas). `ManageTasksUseCase` ganhou `loadImportableReminders(fromLists:)` e `importReminder(_:)` (dedup por `reminderID` contra TODAS as tarefas; título vazio ignorado; helper `makeFocusTask(from:title:)` compartilhado com o lote). `importFromReminders(fromLists:)` continua existindo (reusa o helper). **Campos ricos importados:** `FocusTask` ganhou `notes`, `dueDate`, `priority` (0 do EventKit → `nil`), `sourceURL` — todos opcionais, decode manual `decodeIfPresent` (JSON antigo → `nil`, regressão em `TaskLinkCodingTests`). `ImportedReminder` carrega os mesmos campos; `EventKitReminderImporter` lê `notes`/`dueDateComponents?.date`/`priority`/`url?.absoluteString`. **`sourceURL` NÃO é deep-link pro app Lembretes** (EventKit não expõe) — é a URL que o usuário anexou ao lembrete; exibida como `Link` na linha da tarefa junto com data de vencimento e notas (2 linhas). `make test` verde, `xcodebuild` limpo. ⚠️ Validar à mão: buscar por título, clicar importa 1, reimportar não duplica, campos gravados em `tasks.json`.
 
 **✅ Sincronização de conclusão de volta no Lembretes (2026-07-23):** concluir/reabrir uma tarefa importada espelha o estado no app Lembretes (write-back), **duas vias**, com **toggle nas Configurações › Comportamento** ("Sincronizar conclusão com o Lembretes", padrão **ligado**). Port `TaskImporting.setReminderCompleted(reminderID:completed:) async -> Bool` (best-effort: `false` = lembrete apagado/falha, não desfaz a conclusão local). `EventKitReminderImporter`: `store.calendarItem(withIdentifier:)` + `reminder.isCompleted = …` + `store.save(_:commit:true)` (o `requestFullAccessToReminders` já dá escrita). `ManageTasksUseCase.completeTask`/`reopenTask` viraram **async** (única caller é `TasksViewModel.setCompleted`, que passou a rodar em `Task {}`); só escrevem se `source == .reminders` E o toggle (lido por closure `shouldSyncReminderCompletion` injetada, default `false` nos testes) estiver ligado. `update(id:_:)` agora `@discardableResult` retorna a `FocusTask` mutada. `PomodoroConfiguration.syncReminderCompletion: Bool = true` — ganhou **`init(from:)` manual com `decodeIfPresent` em TODOS os campos** (não só o novo): sem isso, JSON antigo sem a chave lançaria e o store resetaria TODA a config para o padrão (mesma armadilha do rename `autoStartNextFocus`). +6 testes no use case, +2 no config coding. `make test` verde (Application 126), `xcodebuild` limpo. ⚠️ Validar à mão: concluir tarefa importada → aparece riscada no Lembretes; reabrir → volta; desligar o toggle → não mexe.
+
+**🔒 FEAT-002 — bloqueio contínuo + senha de desbloqueio de apps (2026-09-29, T-43, ADR-10):**
+- Flags `blockAppsWhileRunning`/`blockSitesWhileRunning` (`PomodoroConfiguration`, `decodeIfPresent`) — toggles nas abas Apps/Sites.
+- `TomafocoApplication/Blocking/PersistentBlocking.swift`: decoradores `PersistentAppBlocker`/`PersistentWebsiteBlocker` envolvem os blockers reais; Coordinator/Recover recebem os decorados. **Invariante mudou:** fim do foco derruba o bloqueio **salvo flag ligada**. `PersistentBlockingController.refresh()` roda no lançamento (depois da recuperação) e a cada mudança de flag/lista (closures injetadas em `SettingsViewModel`/`BlockListViewModel`). No foco, `refresh` é no-op.
+- Senha: `AppLaunchGate` (Domain, puro — Infra não depende da Application) chaveado por **PID**. `WorkspaceAppBlocker` **esconde** o app durante o prompt (loop de 200ms re-esconde e devolve o foco ao Tomafoco), senha certa → `unhide` + `activate` da mesma instância; cancelou → `terminateReliably` (reenvia `terminate()` em 0,5/1/2s). Liberação pendente só se o app fechou durante o prompt. Observer de término vive o tempo todo.
+- 🐛 **Bug corrigido (2026-09-29):** a 1ª versão encerrava no `didLaunch` e relançava após a senha — o app recém-lançado ignora `terminate()` enquanto carrega, então fechava tarde (ou não fechava) e nunca reabria. Reproduzido com harness SPM (Calculadora + prompt stub) no scratchpad. **Regra: nunca confiar num único `terminate()` no `didLaunch`.**
+- `KeychainAppUnlockPasswordStore` (PBKDF2-SHA256, salt 16B, 100k iter, comparação constante) atrás de `SecretStorage` — testes usam storage em memória, nunca o Keychain real.
+- UI: `App/UI/AppUnlock/` — `AppUnlockPromptPresenter` (fila de prompts; `NSApp.activate` + `canBecomeKey`, senão o teclado não chega), `ProtectedActionAuthorizer` (desligar flag/trocar/remover senha pedem senha), `UnlockPasswordViewModel`.
+- **Sites casam pelo host completo** (revisão do mesmo dia): `BlockedDomain` não remove mais `www.`; ganhou `host` + `includesSubdomains` (`value` = forma exibida, `*.globo.com` para curinga). `www.globo.com` ≠ `ge.globo.com` ≠ `globo.com`. Codable manual: grava `pattern` (+ `value` = host, para versão anterior ainda ler); JSON antigo só com `value` → **curinga** (antes `globo.com` casava subdomínios — migrar como exato tiraria bloqueio do usuário). Testes do `AppleScriptBrowserBlocker` usam `*.globo.com`.
+- Suíte 287 verdes (Domain 74, Application 159, Infra 54); `xcodebuild` limpo. ⚠️ Validar à mão: prompt de senha, relançamento, bloqueio fora do foco, desligar flag com senha.
 
 ## Convenções / gotchas
 

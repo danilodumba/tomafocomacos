@@ -36,6 +36,7 @@ struct TomafocoApp: App {
             SettingsView(
                 settingsViewModel: container.settingsViewModel,
                 blockListViewModel: container.blockListViewModel,
+                unlockPasswordViewModel: container.unlockPasswordViewModel,
                 updater: container.updater
             )
         }

@@ -14,7 +14,7 @@ public enum URLBlockingPolicy {
     /// A URL pertence a algum dos domínios bloqueados?
     public static func isBlocked(urlString: String, domains: [BlockedDomain]) -> Bool {
         guard !domains.isEmpty, let host = host(of: urlString) else { return false }
-        return domains.contains { matches(host: host, domain: $0.value) }
+        return domains.contains { matches(host: host, domain: $0) }
     }
 
     /// Host normalizado da URL, ou `nil` quando não há o que bloquear.
@@ -31,9 +31,10 @@ public enum URLBlockingPolicy {
         return host.isEmpty ? nil : host
     }
 
-    /// Casa o host exato e qualquer subdomínio — `m.globo.com` e `www.globo.com` são `globo.com`.
-    /// `naoglobo.com` **não** casa: a comparação exige o ponto separador.
-    private static func matches(host: String, domain: String) -> Bool {
-        host == domain || host.hasSuffix(".\(domain)")
+    /// Host completo (FEAT-002): `www.globo.com` casa só `www.globo.com`. O curinga `*.globo.com`
+    /// casa `globo.com` e qualquer subdomínio. `naoglobo.com` **nunca** casa: exige o ponto separador.
+    private static func matches(host: String, domain: BlockedDomain) -> Bool {
+        if host == domain.host { return true }
+        return domain.includesSubdomains && host.hasSuffix(".\(domain.host)")
     }
 }

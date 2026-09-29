@@ -6,6 +6,7 @@ import TomafocoInfrastructure
 struct SettingsView: View {
     @ObservedObject var settingsViewModel: SettingsViewModel
     @ObservedObject var blockListViewModel: BlockListViewModel
+    @ObservedObject var unlockPasswordViewModel: UnlockPasswordViewModel
     @ObservedObject var updater: UpdaterController
 
     /// Largura da coluna de rótulos — evita que "Ciclos até o intervalo longo" seja truncado.
@@ -18,7 +19,7 @@ struct SettingsView: View {
             appsTab.tabItem { Label("Apps", systemImage: "app.badge") }
         }
         .tint(Brand.cyan)
-        .frame(width: 560, height: 500)
+        .frame(width: 560, height: 560)
         .background(Brand.background)
     }
 
@@ -156,7 +157,12 @@ struct SettingsView: View {
 
     private var sitesTab: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Sites bloqueados durante o foco")
+            alwaysOnToggle(
+                "Bloquear sites sempre que o Tomafoco estiver aberto",
+                isOn: settingsViewModel.blockSitesWhileRunning,
+                set: settingsViewModel.setBlockSitesWhileRunning)
+
+            Text(settingsViewModel.blockSitesWhileRunning ? "Sites bloqueados" : "Sites bloqueados durante o foco")
                 .font(.system(size: 12, weight: .semibold))
                 .foregroundStyle(Brand.textSecondary)
 
@@ -168,6 +174,11 @@ struct SettingsView: View {
                     .buttonStyle(.borderedProminent)
                     .tint(Brand.cyan)
             }
+
+            Text("Bloqueia o endereço exato: “www.globo.com” não bloqueia “ge.globo.com” nem “globo.com”. Use “*.globo.com” para bloquear o domínio e todos os subdomínios.")
+                .font(.system(size: 11))
+                .foregroundStyle(Brand.textFaint)
+                .fixedSize(horizontal: false, vertical: true)
 
             errorLine
 
@@ -206,8 +217,13 @@ struct SettingsView: View {
 
     private var appsTab: some View {
         VStack(alignment: .leading, spacing: 12) {
+            alwaysOnToggle(
+                "Bloquear apps sempre que o Tomafoco estiver aberto",
+                isOn: settingsViewModel.blockAppsWhileRunning,
+                set: settingsViewModel.setBlockAppsWhileRunning)
+
             HStack {
-                Text("Apps bloqueados durante o foco")
+                Text(settingsViewModel.blockAppsWhileRunning ? "Apps bloqueados" : "Apps bloqueados durante o foco")
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundStyle(Brand.textSecondary)
                 Spacer()
@@ -247,8 +263,63 @@ struct SettingsView: View {
                 blockListViewModel.addApps(fromDroppedURLs: urls)
                 return true
             }
+
+            Divider().padding(.vertical, 2)
+
+            unlockPasswordSection
         }
         .padding(20)
+    }
+
+    // MARK: - Senha de desbloqueio (FEAT-002)
+
+    private var unlockPasswordSection: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text("Senha de desbloqueio")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(Brand.textSecondary)
+                Spacer()
+                if unlockPasswordViewModel.hasPassword {
+                    Button("Remover senha") { Task { await unlockPasswordViewModel.remove() } }
+                        .buttonStyle(.borderless)
+                        .foregroundStyle(Brand.danger)
+                }
+            }
+            HStack(spacing: 8) {
+                SecureField(unlockPasswordViewModel.hasPassword ? "Nova senha" : "Senha",
+                            text: $unlockPasswordViewModel.newPassword)
+                    .textFieldStyle(.roundedBorder)
+                SecureField("Confirmar", text: $unlockPasswordViewModel.confirmation)
+                    .textFieldStyle(.roundedBorder)
+                    .onSubmit { Task { await unlockPasswordViewModel.save() } }
+                Button(unlockPasswordViewModel.hasPassword ? "Alterar" : "Definir") {
+                    Task { await unlockPasswordViewModel.save() }
+                }
+                .disabled(!unlockPasswordViewModel.canSave)
+            }
+            if let error = unlockPasswordViewModel.errorMessage {
+                Text(error).font(.system(size: 11)).foregroundStyle(Brand.danger)
+            } else if let info = unlockPasswordViewModel.infoMessage {
+                Text(info).font(.system(size: 11)).foregroundStyle(Brand.textSecondary)
+            }
+            Text("Com senha, abrir um app bloqueado pede a senha — certa, o app abre e fica liberado até ser fechado. Desligar o bloqueio contínuo e trocar a senha também pedem a senha.")
+                .font(.system(size: 11))
+                .foregroundStyle(Brand.textFaint)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    /// Toggle do bloqueio contínuo. Não escreve direto no VM: desligar pode pedir senha, e se o
+    /// usuário cancelar o toggle precisa voltar a ligado.
+    private func alwaysOnToggle(_ title: String, isOn: Bool,
+                                set: @escaping (Bool) async -> Void) -> some View {
+        Toggle(isOn: Binding(get: { isOn }, set: { value in Task { await set(value) } })) {
+            Text(title)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(Brand.textPrimary)
+        }
+        .toggleStyle(.switch)
     }
 
     // MARK: - Peças compartilhadas

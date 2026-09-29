@@ -15,10 +15,14 @@ final class BlockListViewModel: ObservableObject {
 
     private let useCase: ManageBlockListUseCase
     private let appPicker: ApplicationPicking
+    /// Reaplica o bloqueio contínuo (FEAT-002) — fora do foco a lista nova vale na hora.
+    private let onListChanged: () -> Void
 
-    init(useCase: ManageBlockListUseCase, appPicker: ApplicationPicking) {
+    init(useCase: ManageBlockListUseCase, appPicker: ApplicationPicking,
+         onListChanged: @escaping () -> Void = {}) {
         self.useCase = useCase
         self.appPicker = appPicker
+        self.onListChanged = onListChanged
         reload()
     }
 
@@ -34,6 +38,7 @@ final class BlockListViewModel: ObservableObject {
             let list = try useCase.addDomain(raw: newDomain)
             domains = list.domains
             newDomain = ""
+            onListChanged()
         } catch DomainError.invalidDomain(let raw) {
             errorMessage = "Domínio inválido: \(raw)"
         } catch DomainError.duplicateEntry {
@@ -45,6 +50,7 @@ final class BlockListViewModel: ObservableObject {
 
     func removeDomain(_ domain: BlockedDomain) {
         domains = useCase.removeDomain(domain).domains
+        onListChanged()
     }
 
     /// Abre o seletor de apps (`NSOpenPanel` em `/Applications`) e adiciona os escolhidos (T-20, UC-05).
@@ -60,6 +66,7 @@ final class BlockListViewModel: ObservableObject {
         let result = useCase.addApps(picked.apps)
         apps = result.list.apps
         errorMessage = Self.message(for: result, unreadableNames: picked.unreadableNames)
+        onListChanged()
     }
 
     /// Adiciona apps arrastados para a lista (drag-and-drop de `.app`, T-20).
@@ -71,6 +78,7 @@ final class BlockListViewModel: ObservableObject {
         let result = useCase.addApps(picked.apps)
         apps = result.list.apps
         errorMessage = Self.message(for: result, unreadableNames: picked.unreadableNames)
+        onListChanged()
     }
 
     /// Monta o aviso das seleções que não entraram na lista. `nil` quando tudo foi adicionado.
@@ -87,9 +95,11 @@ final class BlockListViewModel: ObservableObject {
 
     func removeApp(_ app: BlockedApp) {
         apps = useCase.removeApp(bundleID: app.bundleID).apps
+        onListChanged()
     }
 
     func setApp(_ app: BlockedApp, enabled: Bool) {
         apps = useCase.setApp(bundleID: app.bundleID, enabled: enabled).apps
+        onListChanged()
     }
 }

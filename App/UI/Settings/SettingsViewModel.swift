@@ -19,6 +19,10 @@ final class SettingsViewModel: ObservableObject {
     @Published var syncReminderCompletion: Bool { didSet { save() } }
     /// Permite selecionar mais de uma tarefa por sessão de foco (RF-09.4).
     @Published var allowMultipleTasksInFocus: Bool { didSet { save() } }
+    /// Bloqueio contínuo com o Tomafoco aberto (FEAT-002). Só mudam via `setBlock…` — desligar
+    /// exige senha, então o `Toggle` não escreve direto aqui.
+    @Published private(set) var blockAppsWhileRunning: Bool
+    @Published private(set) var blockSitesWhileRunning: Bool
 
     /// Iniciar junto com o macOS (item de login). NÃO vive na `PomodoroConfiguration`:
     /// a fonte da verdade é o sistema (`SMAppService`), que o usuário pode mudar por fora.
@@ -30,10 +34,20 @@ final class SettingsViewModel: ObservableObject {
 
     private let settings: SettingsRepository
     private let loginItem: LoginItemManaging
+    private let authorizer: ProtectedActionAuthorizer
+    /// Reaplica o bloqueio fora do foco quando uma flag muda.
+    private let onBlockingSettingsChanged: () -> Void
 
-    init(settings: SettingsRepository, loginItem: LoginItemManaging) {
+    init(
+        settings: SettingsRepository,
+        loginItem: LoginItemManaging,
+        authorizer: ProtectedActionAuthorizer,
+        onBlockingSettingsChanged: @escaping () -> Void
+    ) {
         self.settings = settings
         self.loginItem = loginItem
+        self.authorizer = authorizer
+        self.onBlockingSettingsChanged = onBlockingSettingsChanged
         // Observadores de propriedade não disparam durante a init — nenhum save espúrio aqui.
         let config = settings.loadConfiguration()
         focusMinutes = config.focusDuration / 60
@@ -45,6 +59,8 @@ final class SettingsViewModel: ObservableObject {
         blockedRedirectURL = config.blockedRedirectURL ?? ""
         syncReminderCompletion = config.syncReminderCompletion
         allowMultipleTasksInFocus = config.allowMultipleTasksInFocus
+        blockAppsWhileRunning = config.blockAppsWhileRunning
+        blockSitesWhileRunning = config.blockSitesWhileRunning
         launchAtLogin = loginItem.isEnabled
     }
 
@@ -69,6 +85,22 @@ final class SettingsViewModel: ObservableObject {
         }
     }
 
+    func setBlockAppsWhileRunning(_ enabled: Bool) async {
+        guard enabled != blockAppsWhileRunning else { return }
+        if !enabled, !(await authorizer.authorize("desligar o bloqueio contínuo de apps")) { return }
+        blockAppsWhileRunning = enabled
+        save()
+        onBlockingSettingsChanged()
+    }
+
+    func setBlockSitesWhileRunning(_ enabled: Bool) async {
+        guard enabled != blockSitesWhileRunning else { return }
+        if !enabled, !(await authorizer.authorize("desligar o bloqueio contínuo de sites")) { return }
+        blockSitesWhileRunning = enabled
+        save()
+        onBlockingSettingsChanged()
+    }
+
     /// Persiste a configuração atual.
     func save() {
         let config = PomodoroConfiguration(
@@ -82,7 +114,9 @@ final class SettingsViewModel: ObservableObject {
             blockedRedirectURL: blockedRedirectURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                 ? nil : blockedRedirectURL.trimmingCharacters(in: .whitespacesAndNewlines),
             syncReminderCompletion: syncReminderCompletion,
-            allowMultipleTasksInFocus: allowMultipleTasksInFocus
+            allowMultipleTasksInFocus: allowMultipleTasksInFocus,
+            blockAppsWhileRunning: blockAppsWhileRunning,
+            blockSitesWhileRunning: blockSitesWhileRunning
         )
         settings.save(config)
     }

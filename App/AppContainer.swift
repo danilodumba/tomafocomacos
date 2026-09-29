@@ -22,6 +22,10 @@ final class AppContainer: ObservableObject {
     let timerViewModel: TimerViewModel
     let settingsViewModel: SettingsViewModel
     let blockListViewModel: BlockListViewModel
+    let unlockPasswordViewModel: UnlockPasswordViewModel
+    /// Bloqueio contínuo com o app aberto (FEAT-002): reaplicado no lançamento e a cada
+    /// mudança de flag ou de lista.
+    let persistentBlocking: PersistentBlockingController
     let tasksViewModel: TasksViewModel
     let reportsViewModel: ReportsViewModel
     /// Atualização automática (ADR-9). Criado aqui — e não sob demanda numa View — porque o
@@ -45,17 +49,26 @@ final class AppContainer: ObservableObject {
         sessions: SessionRepository,
         tasks: TaskRepository,
         appPicker: ApplicationPicking,
+        persistentBlocking: PersistentBlockingController,
+        authorizer: ProtectedActionAuthorizer,
+        passwordStore: AppUnlockPasswordStoring,
         notificationAdapter: UNNotificationAdapter?
     ) {
+        self.persistentBlocking = persistentBlocking
         self.coordinator = coordinator
         self.recover = recover
         self.manageBlockList = manageBlockList
         self.notificationAdapter = notificationAdapter
         self.timerViewModel = TimerViewModel(
             coordinator: coordinator, settings: settings, manageTasks: manageTasks)
+        let refreshBlocking = { Task { await persistentBlocking.refresh() } }
         self.settingsViewModel = SettingsViewModel(
-            settings: settings, loginItem: SMAppServiceLoginItem())
-        self.blockListViewModel = BlockListViewModel(useCase: manageBlockList, appPicker: appPicker)
+            settings: settings, loginItem: SMAppServiceLoginItem(),
+            authorizer: authorizer, onBlockingSettingsChanged: { _ = refreshBlocking() })
+        self.blockListViewModel = BlockListViewModel(
+            useCase: manageBlockList, appPicker: appPicker,
+            onListChanged: { _ = refreshBlocking() })
+        self.unlockPasswordViewModel = UnlockPasswordViewModel(store: passwordStore, authorizer: authorizer)
         // Mudança na lista de tarefas precisa refletir no seletor do timer na hora.
         let timerViewModel = self.timerViewModel
         self.tasksViewModel = TasksViewModel(useCase: manageTasks) {
@@ -92,16 +105,29 @@ final class AppContainer: ObservableObject {
             // Relê a cada varredura: mudar o site nas Configurações vale na próxima passada.
             redirectURLProvider: { settings.loadConfiguration().blockedRedirectURL }
         )
-        let appBlocker = WorkspaceAppBlocker(notifier: notifier)
+        // Senha de desbloqueio (FEAT-002): abrir app bloqueado pede a senha em vez de só encerrar.
+        let passwordStore = KeychainAppUnlockPasswordStore()
+        let unlockPrompt = AppUnlockPromptPresenter()
+        let authorizer = ProtectedActionAuthorizer(store: passwordStore, presenter: unlockPrompt)
+        let rawAppBlocker = WorkspaceAppBlocker(
+            notifier: notifier, passwordStore: passwordStore, prompt: unlockPrompt)
+
+        // Bloqueio contínuo (FEAT-002): decoradores mantêm o bloqueio ao fim do foco quando a
+        // flag está ligada. Coordinator e recuperação recebem os decorados e não sabem disso.
+        let appBlocker = PersistentAppBlocker(wrapping: rawAppBlocker, settings: settings)
+        let persistentWebsiteBlocker = PersistentWebsiteBlocker(wrapping: websiteBlocker, settings: settings)
+        let persistentBlocking = PersistentBlockingController(
+            apps: appBlocker, websites: persistentWebsiteBlocker,
+            onWebsiteFailure: { _ in notifier.notify(.websiteBlockingUnavailable) })
         let clock = DispatchSessionClock()
         let sessions = FileSessionSnapshotStore()
 
         let coordinator = SessionCoordinator(
-            clock: clock, appBlocker: appBlocker, websiteBlocker: websiteBlocker,
+            clock: clock, appBlocker: appBlocker, websiteBlocker: persistentWebsiteBlocker,
             sessions: sessions, settings: settings, notifier: notifier
         )
         let recover = RecoverFromCrashUseCase(
-            sessions: sessions, websiteBlocker: websiteBlocker,
+            sessions: sessions, websiteBlocker: persistentWebsiteBlocker,
             appBlocker: appBlocker, clock: clock
         )
         let manageBlockList = ManageBlockListUseCase(settings: settings)
@@ -119,11 +145,18 @@ final class AppContainer: ObservableObject {
         let container = AppContainer(
             coordinator: coordinator, recover: recover, manageBlockList: manageBlockList,
             manageTasks: manageTasks, settings: settings, sessions: sessions, tasks: taskStore,
-            appPicker: appPicker, notificationAdapter: notificationAdapter
+            appPicker: appPicker, persistentBlocking: persistentBlocking,
+            authorizer: authorizer, passwordStore: passwordStore,
+            notificationAdapter: notificationAdapter
         )
         // Sem janela principal não há `.task` de View para disparar isso — o app é só barra
         // de menus e o popover pode nunca ser aberto.
-        Task { await container.recoverFromCrashIfNeeded() }
+        Task {
+            await container.recoverFromCrashIfNeeded()
+            // Depois da recuperação: se uma sessão foi retomada, o refresh é no-op (foco ativo);
+            // senão liga o bloqueio contínuo desde o lançamento.
+            await persistentBlocking.refresh()
+        }
         return container
     }
 

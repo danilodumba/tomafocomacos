@@ -81,4 +81,22 @@ final class PomodoroConfigurationCodingTests: XCTestCase {
         XCTAssertTrue(config.autoAdvancePhases)
         XCTAssertTrue(config.forceTerminateApps)
     }
+
+    func test_configAntigaSemFlagsDeBloqueioContinuo_decodificaDesligadas() throws {
+        let json = """
+        {"focusDuration":1200,"shortBreakDuration":300,"longBreakDuration":900,
+         "cyclesBeforeLongBreak":4,"autoStartNextFocus":false,"forceTerminateApps":true}
+        """
+        let config = try JSONDecoder().decode(PomodoroConfiguration.self, from: Data(json.utf8))
+        XCTAssertFalse(config.blockAppsWhileRunning)
+        XCTAssertFalse(config.blockSitesWhileRunning)
+        XCTAssertEqual(config.focusDuration, 1200)
+        XCTAssertTrue(config.forceTerminateApps)
+    }
+
+    func test_flagsDeBloqueioContinuo_sobrevivemAoRoundTrip() throws {
+        let original = PomodoroConfiguration(blockAppsWhileRunning: true, blockSitesWhileRunning: true)
+        let data = try JSONEncoder().encode(original)
+        XCTAssertEqual(try JSONDecoder().decode(PomodoroConfiguration.self, from: data), original)
+    }
 }

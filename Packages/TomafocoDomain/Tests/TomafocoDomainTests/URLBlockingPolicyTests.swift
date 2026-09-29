@@ -16,21 +16,17 @@ final class URLBlockingPolicyTests: XCTestCase {
             urlString: "https://globo.com/esporte", domains: try domains("globo.com")))
     }
 
-    func test_www_bloqueia() throws {
-        XCTAssertTrue(URLBlockingPolicy.isBlocked(
-            urlString: "https://www.globo.com", domains: try domains("globo.com")))
-    }
-
-    func test_subdominioQualquer_bloqueia() throws {
-        let ds = try domains("globo.com")
-        for url in ["https://m.globo.com", "http://ge.globo.com/futebol", "https://a.b.globo.com"] {
+    func test_curinga_bloqueiaRaizWwwEQualquerSubdominio() throws {
+        let ds = try domains("*.globo.com")
+        for url in ["https://globo.com", "https://www.globo.com", "https://m.globo.com",
+                    "http://ge.globo.com/futebol", "https://a.b.globo.com"] {
             XCTAssertTrue(URLBlockingPolicy.isBlocked(urlString: url, domains: ds), url)
         }
     }
 
     func test_maiusculasEPorta_bloqueiam() throws {
         XCTAssertTrue(URLBlockingPolicy.isBlocked(
-            urlString: "HTTPS://WWW.Globo.COM:443/feed", domains: try domains("globo.com")))
+            urlString: "HTTPS://WWW.Globo.COM:443/feed", domains: try domains("www.globo.com")))
     }
 
     func test_hostComPontoFinal_bloqueia() throws {
@@ -52,7 +48,7 @@ final class URLBlockingPolicyTests: XCTestCase {
 
     /// O caso perigoso: sufixo sem o ponto separador é outro site.
     func test_dominioComSufixoParecido_naoBloqueia() throws {
-        let ds = try domains("globo.com")
+        let ds = try domains("globo.com", "*.globo.com")
         for url in ["https://naoglobo.com", "https://globo.com.br.evil.com", "https://xglobo.com"] {
             XCTAssertFalse(URLBlockingPolicy.isBlocked(urlString: url, domains: ds), url)
         }
@@ -80,6 +76,42 @@ final class URLBlockingPolicyTests: XCTestCase {
         XCTAssertFalse(URLBlockingPolicy.isBlocked(urlString: "https://globo.com", domains: []))
         XCTAssertFalse(URLBlockingPolicy.isBlocked(urlString: "", domains: try domains("globo.com")))
         XCTAssertFalse(URLBlockingPolicy.isBlocked(urlString: "não é url", domains: try domains("globo.com")))
+    }
+
+    // MARK: - Host completo (FEAT-002)
+
+    func test_www_bloqueiaSoOWww() throws {
+        let ds = try domains("www.globo.com")
+        XCTAssertTrue(URLBlockingPolicy.isBlocked(urlString: "https://www.globo.com/x", domains: ds))
+        for url in ["https://ge.globo.com", "https://globo.com", "https://m.www.globo.com"] {
+            XCTAssertFalse(URLBlockingPolicy.isBlocked(urlString: url, domains: ds), url)
+        }
+    }
+
+    func test_raizSemCuringa_naoBloqueiaWwwNemSubdominios() throws {
+        let ds = try domains("globo.com")
+        for url in ["https://www.globo.com", "https://ge.globo.com"] {
+            XCTAssertFalse(URLBlockingPolicy.isBlocked(urlString: url, domains: ds), url)
+        }
+    }
+
+    func test_subdominioCadastrado_bloqueiaSoEle() throws {
+        let ds = try domains("ge.globo.com")
+        XCTAssertTrue(URLBlockingPolicy.isBlocked(urlString: "https://ge.globo.com/futebol", domains: ds))
+        for url in ["https://globo.com", "https://www.globo.com", "https://g1.globo.com",
+                    "https://oge.globo.com", "https://www.ge.globo.com", "https://m.ge.globo.com"] {
+            XCTAssertFalse(URLBlockingPolicy.isBlocked(urlString: url, domains: ds), url)
+        }
+    }
+
+    func test_curingaDeSubdominio_bloqueiaEleEFilhosMasNaoOPai() throws {
+        let ds = try domains("*.ge.globo.com")
+        for url in ["https://ge.globo.com", "https://www.ge.globo.com", "https://m.ge.globo.com"] {
+            XCTAssertTrue(URLBlockingPolicy.isBlocked(urlString: url, domains: ds), url)
+        }
+        for url in ["https://globo.com", "https://g1.globo.com"] {
+            XCTAssertFalse(URLBlockingPolicy.isBlocked(urlString: url, domains: ds), url)
+        }
     }
 
     // MARK: - host(of:)

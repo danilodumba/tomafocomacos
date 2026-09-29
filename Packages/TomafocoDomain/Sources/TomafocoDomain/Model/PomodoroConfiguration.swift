@@ -18,6 +18,10 @@ public struct PomodoroConfiguration: Equatable, Codable, Sendable {
     /// Permite selecionar mais de uma tarefa para uma mesma sessão de foco (RF-09.4).
     /// Desligado, o seletor volta a ser de tarefa única (comportamento padrão).
     public var allowMultipleTasksInFocus: Bool
+    /// Mantém o bloqueio de apps ligado enquanto o Tomafoco estiver aberto, não só no foco (FEAT-002).
+    public var blockAppsWhileRunning: Bool
+    /// Mantém o bloqueio de sites ligado enquanto o Tomafoco estiver aberto, não só no foco (FEAT-002).
+    public var blockSitesWhileRunning: Bool
 
     /// A chave persistida continua sendo `autoStartNextFocus`: renomear quebraria a
     /// decodificação das configurações já salvas, e o store cai silenciosamente no padrão
@@ -27,6 +31,7 @@ public struct PomodoroConfiguration: Equatable, Codable, Sendable {
         case autoAdvancePhases = "autoStartNextFocus"
         case forceTerminateApps, blockedRedirectURL, syncReminderCompletion
         case allowMultipleTasksInFocus
+        case blockAppsWhileRunning, blockSitesWhileRunning
     }
 
     public init(
@@ -38,7 +43,9 @@ public struct PomodoroConfiguration: Equatable, Codable, Sendable {
         forceTerminateApps: Bool = false,
         blockedRedirectURL: String? = nil,
         syncReminderCompletion: Bool = true,
-        allowMultipleTasksInFocus: Bool = false
+        allowMultipleTasksInFocus: Bool = false,
+        blockAppsWhileRunning: Bool = false,
+        blockSitesWhileRunning: Bool = false
     ) {
         self.focusDuration = focusDuration
         self.shortBreakDuration = shortBreakDuration
@@ -49,6 +56,8 @@ public struct PomodoroConfiguration: Equatable, Codable, Sendable {
         self.blockedRedirectURL = blockedRedirectURL
         self.syncReminderCompletion = syncReminderCompletion
         self.allowMultipleTasksInFocus = allowMultipleTasksInFocus
+        self.blockAppsWhileRunning = blockAppsWhileRunning
+        self.blockSitesWhileRunning = blockSitesWhileRunning
     }
 
     // Decode tolerante a chaves ausentes: `syncReminderCompletion` (e qualquer campo futuro)
@@ -66,6 +75,8 @@ public struct PomodoroConfiguration: Equatable, Codable, Sendable {
         blockedRedirectURL = try c.decodeIfPresent(String.self, forKey: .blockedRedirectURL)
         syncReminderCompletion = try c.decodeIfPresent(Bool.self, forKey: .syncReminderCompletion) ?? d.syncReminderCompletion
         allowMultipleTasksInFocus = try c.decodeIfPresent(Bool.self, forKey: .allowMultipleTasksInFocus) ?? d.allowMultipleTasksInFocus
+        blockAppsWhileRunning = try c.decodeIfPresent(Bool.self, forKey: .blockAppsWhileRunning) ?? d.blockAppsWhileRunning
+        blockSitesWhileRunning = try c.decodeIfPresent(Bool.self, forKey: .blockSitesWhileRunning) ?? d.blockSitesWhileRunning
     }
 
     /// Duração de uma dada fase segundo esta configuração.
