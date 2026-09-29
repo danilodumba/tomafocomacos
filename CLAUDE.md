@@ -344,6 +344,10 @@ Pré-requisitos: `brew install xcodegen` (e opcional `brew install swiftlint`). 
 - **Sites casam pelo host completo** (revisão do mesmo dia): `BlockedDomain` não remove mais `www.`; ganhou `host` + `includesSubdomains` (`value` = forma exibida, `*.globo.com` para curinga). `www.globo.com` ≠ `ge.globo.com` ≠ `globo.com`. Codable manual: grava `pattern` (+ `value` = host, para versão anterior ainda ler); JSON antigo só com `value` → **curinga** (antes `globo.com` casava subdomínios — migrar como exato tiraria bloqueio do usuário). Testes do `AppleScriptBrowserBlocker` usam `*.globo.com`.
 - Suíte 287 verdes (Domain 74, Application 159, Infra 54); `xcodebuild` limpo. ⚠️ Validar à mão: prompt de senha, relançamento, bloqueio fora do foco, desligar flag com senha.
 
+**🚀 Release 1.10 publicada (2026-09-29)** — `MARKETING_VERSION 1.10` / `CURRENT_PROJECT_VERSION 11`. Conteúdo: FEAT-002 (bloqueio contínuo, senha de desbloqueio de apps, sites por host completo com curinga `*.`) + FEAT-001 (histórico nas tarefas, que estava commitado localmente sem release).
+- Notarização `Accepted`, staple ok, `spctl` → `Notarized Developer ID`. DMG 3,9 MB.
+- Publicação: DMG + notas + `appcast.xml` em `site/downloads/`, bump nos 5 arquivos do site (regex pegou `1.9` mas não `Tomafoco-1.9.dmg` — conferir com `grep 1\.9` depois do bump), commit + push nos 2 repos, tag `v1.10`. Deploy no ar em ~60s. Verificado ao vivo: `/`, DMG, appcast, `app.js` **200**; DMG servido com o **mesmo SHA-256** do local; notas `.html` **301** (normal no Azure SWA).
+
 ## Convenções / gotchas
 
 - Nunca usar `Date()`/`Timer` no Domain/Application — tudo via `SessionClock` (testabilidade).
