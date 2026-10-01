@@ -389,3 +389,14 @@ centraliza `setCompleted`/`delete`: `busyTaskIDs` (linha troca círculo/lixeira 
 trava **global** `isMutatingTask` (todos os botões de concluir/apagar e o "Apagar" do menu de contexto
 ficam desabilitados) que dura a ação + `actionCooldown` de 400 ms. Clique durante a trava é ignorado.
 Só UI; `xcodebuild` limpo. ⚠️ Validar à mão: clicar várias vezes rápido no círculo/lixeira → só 1 tarefa afetada.
+
+**🚀 Release 1.12 publicada (2026-10-01)** — `MARKETING_VERSION 1.12` / `CURRENT_PROJECT_VERSION 13`.
+Conteúdo: criação de tarefas em lote (RF-09.8) + loading/trava em concluir/apagar.
+- ⚠️ Primeira tentativa falhou: `notarytool` **403 "A required agreement is missing or has expired"** —
+  o Apple Developer Program License Agreement tinha versão nova. Aceite em developer.apple.com e
+  levou **~10 min** para o 403 sumir. Sintoma aparece no pré-check do `release.sh` como "credencial
+  inválida", mas a credencial está ok — rodar `xcrun notarytool history --keychain-profile tomafoco`
+  para ver o erro real.
+- Notarização **Accepted** (app e DMG), `spctl` → `Notarized Developer ID`, universal (`x86_64 arm64`), DMG 4,1 MB.
+- Site: bump `1.11`→`1.12` nos 4 arquivos (sed `1\.11`), DMG + notas + appcast no mesmo commit. Tag `v1.12`.
+  Verificado ao vivo: `/`, DMG, appcast (`sparkle:version 13`), `app.js` **200**; SHA-256 do DMG servido = local.
