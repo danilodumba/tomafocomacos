@@ -363,3 +363,29 @@ Pré-requisitos: `brew install xcodegen` (e opcional `brew install swiftlint`). 
 - ⚠️ Mudança de comportamento: colar URL completa agora vira bloqueio de caminho (antes `https://reddit.com/r/swift` → `reddit.com`). Listas salvas não mudam. Downgrade: versão anterior lê só `value` (= host) → bloqueia o site inteiro como curinga.
 - `make release`: notarização **Accepted** nas duas etapas, `spctl` → `source=Notarized Developer ID`. DMG 3,9 MB.
 - Site: bump `1.10`→`1.11` em `index.html`, `404.html`, `privacidade.html`, `assets/js/app.js`; removido "Bloqueio por URL específica" da seção de limitações; card de sites cita `www.youtube.com/shorts`. GitHub deu **500 no push** dos dois repos — retry passou. Verificado ao vivo: `/`, DMG, appcast, `app.js` **200**; SHA-256 do DMG servido = local; notas `.html` **301** (normal).
+**📋 Criação de tarefas em lote (RF-09.8 / T-45, 2026-10-01):** colar texto (1 linha = 1 tarefa) →
+**Próximo** → grid editável (título, prioridade, tags, vencimento) → **Criar N tarefas**.
+- Application: `UseCases/BulkTaskText.swift` — `NewTaskDraft` + `BulkTaskText.parseTitles` (LF/CRLF/CR,
+  trima, descarta vazias e marcadores `- `/`* `/`• `/`[ ] `/`[x] `/`1. `/`1) `; "-5 kg" e "3.5 horas" ficam).
+  `ManageTasksUseCase.validateNewTasks(_:) -> [Int: DomainError]` (vazio; duplicata contra ATIVA ou linha
+  anterior do lote — a 1ª ocorrência é válida) e `addTasks(_:)` **atômico** (um inválido → nada grava;
+  um `saveTasks` só; tags vão ao catálogo). +15 testes (`ManageTasksBulkAddTests`, `BulkTaskTextTests`).
+- App: `BulkAddTasksViewModel` (sheet via `.sheet(item: $viewModel.bulkAdd)`, observado direto pela
+  `BulkAddTasksView`) — revalida a cada mudança de `rows`; Voltar refaz o texto com os títulos do grid e
+  Próximo **preserva** prioridade/tags/data das linhas de mesmo título. "Próximo" sem `.defaultAction`
+  (Return no `TextEditor` precisa quebrar linha). Grid = `ScrollView` + `LazyVStack` com colunas fixas —
+  `Table(Binding)` é macOS 14+.
+- Refactor: `priorityName/Color/Glyph` viraram `TaskPriority.displayName/displayColor/glyph` +
+  `displayOrder` (`TaskPriorityStyle.swift`); `tagSuggestionsMenu` virou `TagSuggestionsMenu` (View).
+  `TasksViewModel.defaultDueDate()` deixou de ser `private`.
+- `make test`: **309 verdes** (Domain 81, Application 174, Infra 54); `xcodebuild` limpo.
+- ⚠️ Validar à mão: colar lista com vazias e "- " → grid limpo; duplicar título → linha vermelha e
+  "Criar" desabilitado; lixeira remove linha; Voltar/Próximo mantém ajustes; Criar → tarefas com campos
+  certos, picker do timer atualiza; largura do sheet (800pt) dentro da janela Tarefas (mín. 520).
+
+**⏳ Loading + trava em concluir/apagar tarefa (2026-10-01):** cliques repetidos concluíam/apagavam
+tarefas sem querer — a linha some e a de baixo sobe para debaixo do cursor. `TasksViewModel.runRowAction`
+centraliza `setCompleted`/`delete`: `busyTaskIDs` (linha troca círculo/lixeira por `ProgressView`) +
+trava **global** `isMutatingTask` (todos os botões de concluir/apagar e o "Apagar" do menu de contexto
+ficam desabilitados) que dura a ação + `actionCooldown` de 400 ms. Clique durante a trava é ignorado.
+Só UI; `xcodebuild` limpo. ⚠️ Validar à mão: clicar várias vezes rápido no círculo/lixeira → só 1 tarefa afetada.

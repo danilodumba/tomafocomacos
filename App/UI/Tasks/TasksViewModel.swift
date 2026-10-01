@@ -62,6 +62,16 @@ final class TasksViewModel: ObservableObject {
     @Published var searchText = ""
     @Published var tagFilter: String?
     @Published var priorityFilter: TaskPriority?
+    /// Tarefas com concluir/reabrir/apagar em andamento — a linha mostra loading no lugar do botão.
+    @Published private(set) var busyTaskIDs: Set<UUID> = []
+    /// Trava global das ações de linha (concluir/apagar) enquanto uma está em andamento e por
+    /// `actionCooldown` depois. Sem ela, cliques repetidos acertavam a linha que sobe para o
+    /// lugar da que sumiu e concluíam/apagavam tarefas sem querer.
+    var isMutatingTask: Bool { !busyTaskIDs.isEmpty }
+    private static let actionCooldown: Duration = .milliseconds(400)
+
+    /// Sheet de criação em lote (RF-09.8) — `nil` = fechado.
+    @Published var bulkAdd: BulkAddTasksViewModel?
     /// Abre a tela de gestão de tags (item 1).
     @Published var showsTagManager = false
     /// Mensagem de resultado/erro exibida sob a toolbar (some na próxima ação).
@@ -211,23 +221,58 @@ final class TasksViewModel: ObservableObject {
         }
     }
 
-    func setCompleted(_ task: FocusTask, _ completed: Bool) {
+    // MARK: - Criação em lote (RF-09.8)
+
+    func beginBulkAdd() {
         feedback = nil
+        bulkAdd = BulkAddTasksViewModel(
+            useCase: useCase,
+            knownTags: knownTags,
+            onCreated: { [weak self] count in
+                guard let self else { return }
+                self.bulkAdd = nil
+                self.reload()
+                self.feedback = count == 1 ? "1 tarefa criada." : "\(count) tarefas criadas."
+            },
+            onCancel: { [weak self] in self?.bulkAdd = nil }
+        )
+    }
+
+    func setCompleted(_ task: FocusTask, _ completed: Bool) {
+        runRowAction(task) {
+            let outcome = completed
+                ? try await self.useCase.completeTask(id: task.id)
+                : try await self.useCase.reopenTask(id: task.id)
+            self.reload()
+            // Falha de espelhamento não desfaz a mudança local, mas precisa aparecer:
+            // sem aviso, o usuário só descobre abrindo o Lembretes.
+            if outcome == .failed {
+                self.feedback = "Tarefa atualizada aqui, mas não foi possível refletir no Lembretes"
+                    + " (lembrete apagado ou acesso negado em Ajustes › Privacidade › Lembretes)."
+            }
+        } onError: { error in
+            "Não foi possível atualizar: \(error.localizedDescription)"
+        }
+    }
+
+    /// Executa uma ação de linha (concluir/reabrir/apagar) com loading na linha e trava global:
+    /// clique enquanto outra ação roda — ou logo depois, dentro do `actionCooldown` — é ignorado.
+    private func runRowAction(
+        _ task: FocusTask,
+        _ action: @escaping () async throws -> Void,
+        onError: @escaping (Error) -> String
+    ) {
+        guard !isMutatingTask else { return }
+        feedback = nil
+        busyTaskIDs.insert(task.id)
         Task {
             do {
-                let outcome = completed
-                    ? try await useCase.completeTask(id: task.id)
-                    : try await useCase.reopenTask(id: task.id)
-                reload()
-                // Falha de espelhamento não desfaz a mudança local, mas precisa aparecer:
-                // sem aviso, o usuário só descobre abrindo o Lembretes.
-                if outcome == .failed {
-                    feedback = "Tarefa atualizada aqui, mas não foi possível refletir no Lembretes"
-                        + " (lembrete apagado ou acesso negado em Ajustes › Privacidade › Lembretes)."
-                }
+                try await action()
             } catch {
-                feedback = "Não foi possível atualizar: \(error.localizedDescription)"
+                feedback = onError(error)
             }
+            try? await Task.sleep(for: Self.actionCooldown)
+            busyTaskIDs.remove(task.id)
         }
     }
 
@@ -321,7 +366,7 @@ final class TasksViewModel: ObservableObject {
 
     /// Sugestão ao ligar o vencimento numa tarefa que não tinha: hoje na próxima hora cheia
     /// (data crua com segundos do "agora" viraria um horário estranho no picker).
-    private static func defaultDueDate() -> Date {
+    static func defaultDueDate() -> Date {
         let calendar = Calendar.current
         let next = calendar.date(byAdding: .hour, value: 1, to: Date()) ?? Date()
         var parts = calendar.dateComponents([.year, .month, .day, .hour], from: next)
@@ -385,12 +430,11 @@ final class TasksViewModel: ObservableObject {
     }
 
     func delete(_ task: FocusTask) {
-        feedback = nil
-        do {
-            try useCase.deleteTask(id: task.id)
-            reload()
-        } catch {
-            feedback = "Não foi possível apagar: \(error.localizedDescription)"
+        runRowAction(task) {
+            try self.useCase.deleteTask(id: task.id)
+            self.reload()
+        } onError: { error in
+            "Não foi possível apagar: \(error.localizedDescription)"
         }
     }
 

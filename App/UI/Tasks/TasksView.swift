@@ -33,6 +33,9 @@ struct TasksView: View {
         .sheet(isPresented: $viewModel.showsTagManager) {
             TagManagerView(viewModel: viewModel)
         }
+        .sheet(item: $viewModel.bulkAdd) { bulk in
+            BulkAddTasksView(viewModel: bulk)
+        }
         .sheet(item: $viewModel.editingTask) { _ in
             FocusHost { historyFocused in editSheet(historyFocused: historyFocused) }
         }
@@ -57,11 +60,19 @@ struct TasksView: View {
                     .textFieldStyle(.roundedBorder)
                     .frame(width: 130)
                     .onSubmit { viewModel.addTask() }
-                tagSuggestionsMenu(for: $viewModel.newTags)
+                TagSuggestionsMenu(knownTags: viewModel.knownTags, text: $viewModel.newTags)
             }
 
             Button("Adicionar") { viewModel.addTask() }
                 .disabled(viewModel.newTitle.trimmingCharacters(in: .whitespaces).isEmpty)
+
+            Button {
+                viewModel.beginBulkAdd()
+            } label: {
+                Image(systemName: "text.badge.plus")
+            }
+            .help("Adicionar em lote — uma tarefa por linha")
+            .accessibilityLabel("Adicionar em lote")
 
             Button {
                 Task { await viewModel.prepareImport() }
@@ -74,34 +85,6 @@ struct TasksView: View {
             }
             .disabled(viewModel.isImporting)
         }
-    }
-
-    /// Autocomplete simples: menu com as tags já conhecidas; clicar acrescenta ao campo (item 1).
-    /// Recebe o `Binding` porque serve tanto o campo de criação quanto o de edição.
-    private func tagSuggestionsMenu(for text: Binding<String>) -> some View {
-        Menu {
-            if viewModel.knownTags.isEmpty {
-                Text("Nenhuma tag ainda")
-            } else {
-                ForEach(viewModel.knownTags, id: \.self) { tag in
-                    Button(tag) { appendTag(tag, to: text) }
-                }
-            }
-        } label: {
-            Image(systemName: "tag")
-        }
-        .menuIndicator(.hidden)
-        .fixedSize()
-        .help("Adicionar uma tag existente")
-    }
-
-    /// Acrescenta uma tag ao texto de um campo (evitando duplicar), respeitando vírgulas.
-    private func appendTag(_ tag: String, to text: Binding<String>) {
-        let existing = TasksViewModel.parseTags(text.wrappedValue)
-            .map { $0.trimmingCharacters(in: .whitespaces) }
-        guard !existing.contains(where: { $0.caseInsensitiveCompare(tag) == .orderedSame }) else { return }
-        let trimmed = text.wrappedValue.trimmingCharacters(in: .whitespaces)
-        text.wrappedValue = trimmed.isEmpty ? tag : trimmed + ", " + tag
     }
 
     // MARK: - Barra de ordenação e filtros (itens 5 e 7)
@@ -143,11 +126,11 @@ struct TasksView: View {
                 Divider()
                 ForEach([TaskPriority.high, .medium, .low, .none], id: \.self) { p in
                     Button { viewModel.priorityFilter = p } label: {
-                        Label(priorityName(p), systemImage: viewModel.priorityFilter == p ? "checkmark" : "")
+                        Label(p.displayName, systemImage: viewModel.priorityFilter == p ? "checkmark" : "")
                     }
                 }
             } label: {
-                Label(viewModel.priorityFilter.map(priorityName) ?? "Prioridade", systemImage: "flag")
+                Label(viewModel.priorityFilter.map(\.displayName) ?? "Prioridade", systemImage: "flag")
             }
             .fixedSize()
 
@@ -248,40 +231,13 @@ struct TasksView: View {
             .background(Brand.cyan.opacity(0.14), in: Capsule())
     }
 
-    private func priorityName(_ p: TaskPriority) -> String {
-        switch p {
-        case .none: return "Nenhuma"
-        case .low: return "Baixa"
-        case .medium: return "Média"
-        case .high: return "Alta"
-        }
-    }
-
-    private func priorityColor(_ p: TaskPriority) -> Color {
-        switch p {
-        case .none: return Brand.textFaint
-        case .low: return Brand.textSecondary
-        case .medium: return .orange
-        case .high: return Brand.danger
-        }
-    }
-
-    private func priorityGlyph(_ p: TaskPriority) -> String {
-        switch p {
-        case .none: return ""
-        case .low: return "!"
-        case .medium: return "!!"
-        case .high: return "!!!"
-        }
-    }
-
     /// Menu de prioridade estilo Lembretes: nenhuma / baixa / média / alta (item 4).
     private func priorityControl(_ task: FocusTask) -> some View {
         let current = TaskPriority(rawPriority: task.priority)
         return Menu {
-            ForEach([TaskPriority.none, .low, .medium, .high], id: \.self) { p in
+            ForEach(TaskPriority.displayOrder, id: \.self) { p in
                 Button { viewModel.setPriority(task, p) } label: {
-                    Label(priorityName(p), systemImage: current == p ? "checkmark" : "")
+                    Label(p.displayName, systemImage: current == p ? "checkmark" : "")
                 }
             }
         } label: {
@@ -289,14 +245,14 @@ struct TasksView: View {
                 Image(systemName: "flag")
                     .foregroundStyle(Brand.textFaint)
             } else {
-                Text(priorityGlyph(current))
+                Text(current.glyph)
                     .font(.system(size: 12, weight: .bold))
-                    .foregroundStyle(priorityColor(current))
+                    .foregroundStyle(current.displayColor)
             }
         }
         .menuIndicator(.hidden)
         .fixedSize()
-        .accessibilityLabel("Prioridade: \(priorityName(current))")
+        .accessibilityLabel("Prioridade: \(current.displayName)")
     }
 
     // MARK: - Formulário de edição (RF-09.6)
@@ -316,15 +272,15 @@ struct TasksView: View {
                     .onSubmit { viewModel.saveEdit() }
 
                 Picker("Prioridade", selection: $viewModel.editPriority) {
-                    ForEach([TaskPriority.none, .low, .medium, .high], id: \.self) { p in
-                        Text(priorityName(p)).tag(p)
+                    ForEach(TaskPriority.displayOrder, id: \.self) { p in
+                        Text(p.displayName).tag(p)
                     }
                 }
                 .pickerStyle(.segmented)
 
                 HStack(spacing: 4) {
                     TextField("Tags (vírgula)", text: $viewModel.editTags)
-                    tagSuggestionsMenu(for: $viewModel.editTags)
+                    TagSuggestionsMenu(knownTags: viewModel.knownTags, text: $viewModel.editTags)
                 }
 
                 VStack(alignment: .leading, spacing: 4) {
@@ -449,14 +405,17 @@ struct TasksView: View {
     private func row(_ task: FocusTask) -> some View {
         let overdue = viewModel.isOverdue(task)
         return HStack(spacing: 10) {
-            Button {
-                viewModel.setCompleted(task, !task.isCompleted)
-            } label: {
-                Image(systemName: task.isCompleted ? "checkmark.circle.fill" : "circle")
-                    .foregroundStyle(task.isCompleted ? Brand.cyan : Brand.textFaint)
+            busySwap(task) {
+                Button {
+                    viewModel.setCompleted(task, !task.isCompleted)
+                } label: {
+                    Image(systemName: task.isCompleted ? "checkmark.circle.fill" : "circle")
+                        .foregroundStyle(task.isCompleted ? Brand.cyan : Brand.textFaint)
+                }
+                .buttonStyle(.plain)
+                .disabled(viewModel.isMutatingTask)
+                .accessibilityLabel(task.isCompleted ? "Reabrir tarefa" : "Concluir tarefa")
             }
-            .buttonStyle(.plain)
-            .accessibilityLabel(task.isCompleted ? "Reabrir tarefa" : "Concluir tarefa")
 
             priorityControl(task)
 
@@ -520,14 +479,17 @@ struct TasksView: View {
             .accessibilityLabel("Editar tarefa")
             .help("Editar tarefa")
 
-            Button(role: .destructive) {
-                viewModel.delete(task)
-            } label: {
-                Image(systemName: "trash")
+            busySwap(task) {
+                Button(role: .destructive) {
+                    viewModel.delete(task)
+                } label: {
+                    Image(systemName: "trash")
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(Brand.textFaint)
+                .disabled(viewModel.isMutatingTask)
+                .accessibilityLabel("Apagar tarefa")
             }
-            .buttonStyle(.plain)
-            .foregroundStyle(Brand.textFaint)
-            .accessibilityLabel("Apagar tarefa")
         }
         .padding(.vertical, 2)
         .contentShape(Rectangle())
@@ -535,6 +497,20 @@ struct TasksView: View {
         .contextMenu {
             Button("Editar…") { viewModel.beginEditing(task) }
             Button("Apagar", role: .destructive) { viewModel.delete(task) }
+                .disabled(viewModel.isMutatingTask)
+        }
+    }
+
+    /// Loading no lugar dos botões de concluir/apagar enquanto a ação da linha está em andamento.
+    @ViewBuilder
+    private func busySwap(_ task: FocusTask, @ViewBuilder content: () -> some View) -> some View {
+        if viewModel.busyTaskIDs.contains(task.id) {
+            ProgressView()
+                .controlSize(.small)
+                .frame(width: 16, height: 16)
+                .accessibilityLabel("Atualizando tarefa")
+        } else {
+            content()
         }
     }
 }

@@ -88,6 +88,56 @@ public final class ManageTasksUseCase {
         return task
     }
 
+    // MARK: - Criação em lote (RF-09.8)
+
+    /// Problemas de cada rascunho, por índice no lote: `emptyTaskTitle`, ou `duplicateEntry`
+    /// contra tarefa ATIVA (mesma regra do `addTask`) ou contra uma linha ANTERIOR do próprio
+    /// lote — a primeira ocorrência fica válida, as repetições é que acusam. Vazio = lote ok.
+    public func validateNewTasks(_ drafts: [NewTaskDraft]) throws -> [Int: DomainError] {
+        let activeTitles = try tasks.loadTasks().filter { !$0.isCompleted }.map(\.title)
+        var seen: [String] = []
+        var issues: [Int: DomainError] = [:]
+        for (index, draft) in drafts.enumerated() {
+            let trimmed = draft.title.trimmingCharacters(in: .whitespacesAndNewlines)
+            if trimmed.isEmpty {
+                issues[index] = .emptyTaskTitle
+                continue
+            }
+            let clashes = { (other: String) in other.compare(trimmed, options: [.caseInsensitive]) == .orderedSame }
+            if activeTitles.contains(where: clashes) || seen.contains(where: clashes) {
+                issues[index] = .duplicateEntry(trimmed)
+            }
+            seen.append(trimmed)
+        }
+        return issues
+    }
+
+    /// Cria todas as tarefas do lote numa gravação só. **Atômico**: qualquer rascunho inválido
+    /// lança o erro do primeiro e nada é gravado (criar metade e avisar a outra metade deixaria
+    /// o usuário sem saber o que sobrou). Tags entram no catálogo, como no `editTask`.
+    @discardableResult
+    public func addTasks(_ drafts: [NewTaskDraft]) throws -> [FocusTask] {
+        guard !drafts.isEmpty else { return [] }
+        if let first = try validateNewTasks(drafts).min(by: { $0.key < $1.key }) {
+            throw first.value
+        }
+
+        let created = drafts.map { draft in
+            FocusTask(
+                id: makeID(),
+                title: draft.title.trimmingCharacters(in: .whitespacesAndNewlines),
+                source: .manual,
+                createdAt: now(),
+                tags: draft.tags,
+                dueDate: draft.dueDate,
+                priority: draft.priority.rawPriority
+            )
+        }
+        try tasks.saveTasks(try tasks.loadTasks() + created)
+        registerInCatalog(created.flatMap(\.tags))
+        return created
+    }
+
     /// Edição completa de uma tarefa (RF-09.6): título, tags, vencimento e prioridade
     /// numa transação só — a UI abre um formulário e salva tudo de uma vez.
     ///
