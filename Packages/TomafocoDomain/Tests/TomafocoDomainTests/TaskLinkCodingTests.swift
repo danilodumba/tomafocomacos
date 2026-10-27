@@ -124,6 +124,33 @@ final class TaskLinkCodingTests: XCTestCase {
         XCTAssertEqual(task.history, [])
     }
 
+    // MARK: - Tarefa diária (FEAT-004)
+
+    /// `tasks.json` anterior à FEAT-004 não tem `repeatsDaily`/`completionLog` — tem que abrir
+    /// como tarefa comum, sem lançar (decode que lança apagaria a lista do usuário).
+    func test_focusTaskAntigaSemRecorrencia_decodificaComPadroes() throws {
+        let json = """
+        {"id":"00000000-0000-0000-0000-0000000000AB","title":"Deploy",
+         "source":"manual","createdAt":"2026-07-20T09:00:00Z"}
+        """
+        let task = try decoder.decode(FocusTask.self, from: Data(json.utf8))
+        XCTAssertFalse(task.repeatsDaily)
+        XCTAssertEqual(task.completionLog, [])
+    }
+
+    func test_focusTaskRoundtripDiaria_preserva() throws {
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        let log = [Date(timeIntervalSince1970: 86_400), Date(timeIntervalSince1970: 172_800)]
+        let task = FocusTask(
+            id: UUID(), title: "Inglês", source: .manual,
+            createdAt: Date(timeIntervalSince1970: 0), repeatsDaily: true, completionLog: log
+        )
+        let decoded = try decoder.decode(FocusTask.self, from: encoder.encode(task))
+        XCTAssertTrue(decoded.repeatsDaily)
+        XCTAssertEqual(decoded.completionLog, log)
+    }
+
     func test_focusTaskRoundtripComHistorico_preserva() throws {
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601

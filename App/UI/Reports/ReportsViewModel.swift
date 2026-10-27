@@ -20,7 +20,8 @@ final class ReportsViewModel: ObservableObject {
     }
     @Published private(set) var report: FocusReport?
     /// Todas as tarefas concluídas (fonte para a lista e o CSV), antes de busca/tag.
-    @Published private(set) var completedAll: [FocusTask] = []
+    /// Uma linha por conclusão — tarefa diária (FEAT-004) aparece uma vez por dia concluído.
+    @Published private(set) var completedAll: [CompletedTaskOccurrence] = []
     /// Todas as tags conhecidas — alimenta o filtro por tag.
     @Published private(set) var knownTags: [String] = []
     /// Busca por título e filtro por tag da lista de concluídas (item 3).
@@ -42,22 +43,21 @@ final class ReportsViewModel: ObservableObject {
         report = ReportBuilder.build(
             records: records, tasks: allTasks,
             interval: interval(for: period), now: Date(), calendar: calendar)
-        completedAll = allTasks.filter(\.isCompleted)
-            .sorted { ($0.completedAt ?? .distantPast) > ($1.completedAt ?? .distantPast) }
+        completedAll = CompletedTaskOccurrence.occurrences(of: allTasks)
         knownTags = allTasks.flatMap(\.tags).reduce(into: [String]()) { acc, tag in
             if !acc.contains(where: { $0.caseInsensitiveCompare(tag) == .orderedSame }) { acc.append(tag) }
         }.sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
     }
 
     /// Concluídas após busca por título e filtro por tag.
-    var completedTasks: [FocusTask] {
+    var completedTasks: [CompletedTaskOccurrence] {
         var list = completedAll
         let query = searchText.trimmingCharacters(in: .whitespaces)
         if !query.isEmpty {
-            list = list.filter { $0.title.localizedCaseInsensitiveContains(query) }
+            list = list.filter { $0.task.title.localizedCaseInsensitiveContains(query) }
         }
         if let tag = tagFilter {
-            list = list.filter { $0.tags.contains { $0.caseInsensitiveCompare(tag) == .orderedSame } }
+            list = list.filter { $0.task.tags.contains { $0.caseInsensitiveCompare(tag) == .orderedSame } }
         }
         return list
     }
@@ -69,7 +69,7 @@ final class ReportsViewModel: ObservableObject {
     /// CSV das tarefas concluídas filtradas (item 3). Datas formatadas em pt-BR.
     func csv() -> String {
         ReportCSVExporter.completedTasksCSV(
-            tasks: completedTasks,
+            tasks: completedTasks.map(\.task),
             report: report ?? FocusReport(taskTotals: [], dailyTotals: [], summary: emptySummary()),
             dateString: { Self.csvDateFormatter.string(from: $0) })
     }

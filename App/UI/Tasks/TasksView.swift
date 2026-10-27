@@ -293,13 +293,20 @@ struct TasksView: View {
                     .disabled(!viewModel.editHasDueDate)
                     .opacity(viewModel.editHasDueDate ? 1 : 0.4)
                 }
+
+                // FEAT-004: concluída num dia, volta a ficar ativa no dia seguinte.
+                Toggle("Repetir diariamente", isOn: $viewModel.editRepeatsDaily)
             }
             .formStyle(.grouped)
+            // Altura do conteúdo: sem isso o `Form` (que rola sozinho) disputa espaço com o
+            // histórico e um dos dois fica espremido.
+            .fixedSize(horizontal: false, vertical: true)
 
             // Fora do `Form` de propósito: em `.grouped`, linha com `Button` vira alvo de clique
             // inteira — o clique no campo "Nova entrada" ia para o botão e o campo nunca focava.
             historySection(focused: historyFocused)
                 .padding(.horizontal, 4)
+                .frame(maxHeight: .infinity, alignment: .top)
 
             if let error = viewModel.editFeedback {
                 Text(error)
@@ -316,7 +323,8 @@ struct TasksView: View {
             }
         }
         .padding(16)
-        .frame(width: 420)
+        // Sheet maior que o conteúdo do formulário: a sobra vai toda para o histórico, que rola.
+        .frame(width: 560, height: 680)
     }
 
     // MARK: - Histórico da tarefa (FEAT-001)
@@ -344,21 +352,29 @@ struct TasksView: View {
                     .disabled(viewModel.newHistoryText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
 
-            if viewModel.editingHistory.isEmpty {
-                Text("Sem entradas ainda.")
-                    .font(.system(size: 11))
-                    .foregroundStyle(Brand.textFaint)
-                    .padding(.vertical, 4)
-            } else {
-                ScrollView {
+            // Área de rolagem ocupa todo o espaço que sobra no sheet — lista longa (ex.: conclusões
+            // diárias da FEAT-004) rola aqui dentro em vez de empurrar os botões para fora.
+            ScrollView {
+                if viewModel.editingHistory.isEmpty {
+                    Text("Sem entradas ainda.")
+                        .font(.system(size: 11))
+                        .foregroundStyle(Brand.textFaint)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.vertical, 4)
+                } else {
                     VStack(alignment: .leading, spacing: 4) {
                         ForEach(viewModel.editingHistory) { entry in
                             historyRow(entry)
                         }
                     }
                 }
-                .frame(maxHeight: 140)
             }
+            .frame(minHeight: 120, maxHeight: .infinity)
+            .padding(6)
+            .background(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .strokeBorder(Brand.surfaceStroke, lineWidth: 1)
+            )
         }
     }
 
@@ -437,6 +453,14 @@ struct TasksView: View {
                             .font(.system(size: 10))
                             .foregroundStyle(Brand.textFaint)
                     }
+                    if task.repeatsDaily {
+                        Label("Diária", systemImage: "repeat")
+                            .font(.system(size: 10))
+                            .foregroundStyle(Brand.cyan)
+                            .help(task.completionLog.isEmpty
+                                  ? "Repete todo dia"
+                                  : "Repete todo dia · concluída \(task.completionLog.count) vez(es)")
+                    }
                     if let due = task.dueDate {
                         Label(due.formatted(date: .abbreviated, time: .shortened), systemImage: "calendar")
                             .font(.system(size: 10))
@@ -496,6 +520,9 @@ struct TasksView: View {
         .onTapGesture(count: 2) { viewModel.beginEditing(task) }
         .contextMenu {
             Button("Editar…") { viewModel.beginEditing(task) }
+            Toggle("Repetir diariamente", isOn: Binding(
+                get: { task.repeatsDaily },
+                set: { viewModel.setRepeatsDaily(task, $0) }))
             Button("Apagar", role: .destructive) { viewModel.delete(task) }
                 .disabled(viewModel.isMutatingTask)
         }

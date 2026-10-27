@@ -138,7 +138,7 @@ final class AppContainer: ObservableObject {
         let manageTasks = ManageTasksUseCase(
             tasks: taskStore, importer: EventKitReminderImporter(), now: { clock.now },
             shouldSyncReminderCompletion: { settings.loadConfiguration().syncReminderCompletion },
-            tagCatalog: UserDefaultsTagCatalog())
+            tagCatalog: UserDefaultsTagCatalog(), calendar: .autoupdatingCurrent)
 
         notificationAdapter.requestAuthorization()
 

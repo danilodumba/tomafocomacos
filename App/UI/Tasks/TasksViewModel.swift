@@ -38,6 +38,8 @@ final class TasksViewModel: ObservableObject {
     @Published var editHasDueDate = false
     @Published var editDueDate = Date()
     @Published var editPriority: TaskPriority = .none
+    /// "Repetir diariamente" (FEAT-004): concluída num dia, volta ativa no seguinte.
+    @Published var editRepeatsDaily = false
     /// Erro do formulário — separado de `feedback` porque o sheet cobre a lista.
     @Published var editFeedback: String?
     /// Histórico da tarefa aberta no formulário (FEAT-001), mais recente primeiro.
@@ -244,6 +246,10 @@ final class TasksViewModel: ObservableObject {
                 ? try await self.useCase.completeTask(id: task.id)
                 : try await self.useCase.reopenTask(id: task.id)
             self.reload()
+            // Diária (FEAT-004) não some da lista — sem aviso, o clique pareceria não ter feito nada.
+            if completed && task.repeatsDaily {
+                self.feedback = "\"\(task.title)\" concluída hoje — volta com vencimento amanhã."
+            }
             // Falha de espelhamento não desfaz a mudança local, mas precisa aparecer:
             // sem aviso, o usuário só descobre abrindo o Lembretes.
             if outcome == .failed {
@@ -287,6 +293,7 @@ final class TasksViewModel: ObservableObject {
         editHasDueDate = task.dueDate != nil
         editDueDate = task.dueDate ?? Self.defaultDueDate()
         editPriority = TaskPriority(rawPriority: task.priority)
+        editRepeatsDaily = task.repeatsDaily
         editingHistory = Self.sortedHistory(task)
         newHistoryText = ""
         editingTask = task
@@ -308,7 +315,8 @@ final class TasksViewModel: ObservableObject {
                 title: editTitle,
                 tags: Self.parseTags(editTags),
                 dueDate: editHasDueDate ? editDueDate : nil,
-                priority: editPriority
+                priority: editPriority,
+                repeatsDaily: editRepeatsDaily
             )
             // Texto digitado no histórico sem clicar "Adicionar" entra junto ao salvar — não
             // descartar em silêncio o que o usuário escreveu.
@@ -389,6 +397,17 @@ final class TasksViewModel: ObservableObject {
             reload()
         } catch {
             feedback = "Não foi possível definir a prioridade: \(error.localizedDescription)"
+        }
+    }
+
+    /// Liga/desliga "Repetir diariamente" pelo menu de contexto da linha (FEAT-004).
+    func setRepeatsDaily(_ task: FocusTask, _ repeatsDaily: Bool) {
+        feedback = nil
+        do {
+            try useCase.setRepeatsDaily(id: task.id, repeatsDaily)
+            reload()
+        } catch {
+            feedback = "Não foi possível alterar a repetição: \(error.localizedDescription)"
         }
     }
 

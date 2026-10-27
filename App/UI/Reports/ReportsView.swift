@@ -94,8 +94,8 @@ struct ReportsView: View {
                     .foregroundStyle(Brand.textFaint)
                     .padding(.vertical, 8)
             } else {
-                ForEach(viewModel.completedTasks) { task in
-                    completedRow(task)
+                ForEach(viewModel.completedTasks) { occurrence in
+                    completedRow(occurrence.task)
                 }
             }
         }

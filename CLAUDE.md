@@ -400,3 +400,30 @@ Conteúdo: criação de tarefas em lote (RF-09.8) + loading/trava em concluir/ap
 - Notarização **Accepted** (app e DMG), `spctl` → `Notarized Developer ID`, universal (`x86_64 arm64`), DMG 4,1 MB.
 - Site: bump `1.11`→`1.12` nos 4 arquivos (sed `1\.11`), DMG + notas + appcast no mesmo commit. Tag `v1.12`.
   Verificado ao vivo: `/`, DMG, appcast (`sparkle:version 13`), `app.js` **200**; SHA-256 do DMG servido = local.
+
+**🔁 Tarefas diárias (FEAT-004 / RF-09.9 + RF-10.4 / T-46, 2026-10-27):** toggle "Repetir diariamente".
+Concluir uma diária **não fecha a tarefa**: ela continua ativa, o vencimento pula para **amanhã** e a
+conclusão de hoje é registrada no histórico ("Concluída em dd/MM/yyyy") e no `completionLog`.
+- **Decisões do usuário (não rediscutir):** mesma tarefa (mesmo `id`, foco acumula), todo dia (sem dias da
+  semana), vale também para tarefa do Lembretes, e **volta na mesma hora** com vencimento no dia seguinte
+  (1ª versão reabria na virada do dia com `DailyTaskScheduler` — descartada no mesmo dia, não há mais
+  observer de meia-noite).
+- Domain: `FocusTask.repeatsDaily` + `completionLog: [Date]` (decode `decodeIfPresent ?? false/[]`,
+  regressão em `TaskLinkCodingTests`); pura `nextDailyDueDate(now:calendar:)` = amanhã no horário do
+  vencimento atual, ou 23:59 sem vencimento (não fica atrasada antes do dia acabar).
+- Application: `ManageTasksUseCase` ganhou `calendar` (default `.current`; container passa
+  `.autoupdatingCurrent`). `completeTask` de diária: log + entrada de histórico + vencimento, e devolve
+  `.notApplicable` — **não espelha no Lembretes** (localmente segue aberta, o lembrete também).
+  `CompletedTaskOccurrence` (log ∪ `completedAt`) → relatório e CSV com 1 linha por conclusão; id composto
+  porque `ForEach` quebraria com a mesma tarefa repetida.
+- App: toggle no `editSheet` (dentro do `Form`) e no menu de contexto, badge `repeat` "Diária"; concluir
+  diária mostra feedback "concluída hoje — volta com vencimento amanhã" (senão o clique parece não fazer nada).
+- **Sem desfazer:** clicar de novo no mesmo dia registra outra conclusão; apagar a entrada do histórico não
+  mexe no log nem no vencimento.
+- `make test` **325 verdes** (Domain 86, Application 185, Infra 54); `xcodebuild` limpo.
+- ⚠️ Validar à mão: concluir diária → continua na lista, vencimento amanhã, entrada no histórico, aviso na
+  tela; relatórios/CSV com uma linha por dia.
+- **Formulário de edição maior (2026-10-27):** sheet 420pt → **560×680**; `Form` com
+  `.fixedSize(vertical)` (altura do conteúdo) e o histórico ocupa a sobra numa `ScrollView` com borda
+  (`minHeight 120`, `maxHeight .infinity`) — antes era `maxHeight: 140` e só aparecia com entradas.
+  ⚠️ Validar à mão: campos do `Form` sem corte e histórico longo rolando sem empurrar Cancelar/Salvar.

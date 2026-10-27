@@ -41,6 +41,8 @@ public final class ManageTasksUseCase {
     /// Configurações vale na próxima ação, sem religar). Default `false` nos testes.
     private let shouldSyncReminderCompletion: () -> Bool
     private let tagCatalog: TagCatalog
+    /// Define o que é "amanhã" para a tarefa diária (FEAT-004). Injetado: testes fixam o fuso.
+    private let calendar: Calendar
 
     // `now` sem default de propósito: `Date()` é proibido na Application (testabilidade) —
     // o Composition Root injeta o relógio real.
@@ -50,7 +52,8 @@ public final class ManageTasksUseCase {
         now: @escaping () -> Date,
         makeID: @escaping () -> UUID = { UUID() },
         shouldSyncReminderCompletion: @escaping () -> Bool = { false },
-        tagCatalog: TagCatalog = EphemeralTagCatalog()
+        tagCatalog: TagCatalog = EphemeralTagCatalog(),
+        calendar: Calendar = .current
     ) {
         self.tasks = tasks
         self.importer = importer
@@ -58,6 +61,7 @@ public final class ManageTasksUseCase {
         self.makeID = makeID
         self.shouldSyncReminderCompletion = shouldSyncReminderCompletion
         self.tagCatalog = tagCatalog
+        self.calendar = calendar
     }
 
     public func allTasks() throws -> [FocusTask] { try tasks.loadTasks() }
@@ -156,7 +160,8 @@ public final class ManageTasksUseCase {
         title: String,
         tags: [String],
         dueDate: Date?,
-        priority: TaskPriority
+        priority: TaskPriority,
+        repeatsDaily: Bool = false
     ) throws -> FocusTask? {
         let trimmedTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedTitle.isEmpty else { throw DomainError.emptyTaskTitle }
@@ -175,6 +180,7 @@ public final class ManageTasksUseCase {
             $0.tags = normalizedTags
             $0.dueDate = dueDate
             $0.priority = priority.rawPriority
+            $0.repeatsDaily = repeatsDaily
         }
         registerInCatalog(normalizedTags)
         return edited
@@ -213,6 +219,12 @@ public final class ManageTasksUseCase {
     /// Define a prioridade de uma tarefa (`TaskPriority`). Tarefa inexistente é no-op.
     public func setPriority(id: UUID, priority: TaskPriority) throws {
         try update(id: id) { $0.priority = priority.rawPriority }
+    }
+
+    /// Liga/desliga "Repetir diariamente" (FEAT-004). Desligar não apaga o log de conclusões
+    /// nem o histórico. Tarefa inexistente é no-op.
+    public func setRepeatsDaily(id: UUID, _ repeatsDaily: Bool) throws {
+        try update(id: id) { $0.repeatsDaily = repeatsDaily }
     }
 
     /// Todas as tags conhecidas (em uso pelas tarefas + catálogo de cadastro), ordenadas —
@@ -272,14 +284,39 @@ public final class ManageTasksUseCase {
     /// virava "concluí no Tomafoco e no Lembretes não mudou nada, sem explicação").
     @discardableResult
     public func completeTask(id: UUID) async throws -> ReminderSyncOutcome {
-        let task = try update(id: id) { $0.completedAt = self.now() }
-        return await syncReminderCompletion(task, completed: true)
+        let completedAt = now()
+        guard let current = try tasks.loadTasks().first(where: { $0.id == id }) else { return .notApplicable }
+        guard current.repeatsDaily else {
+            let task = try update(id: id) { $0.completedAt = completedAt }
+            return await syncReminderCompletion(task, completed: true)
+        }
+        // Diária (FEAT-004): continua ativa. A conclusão de hoje vai pro log (relatório) e pro
+        // histórico (visível na tarefa); o vencimento pula para amanhã. Nada é espelhado no
+        // Lembretes — localmente a tarefa segue aberta, e o lembrete também deve seguir.
+        let entry = TaskHistoryEntry(
+            id: makeID(), createdAt: completedAt,
+            text: "Concluída em \(dailyCompletionFormatter.string(from: completedAt))")
+        try update(id: id) {
+            $0.completionLog.append(completedAt)
+            $0.history.append(entry)
+            $0.dueDate = $0.nextDailyDueDate(now: completedAt, calendar: self.calendar)
+        }
+        return .notApplicable
     }
 
     @discardableResult
     public func reopenTask(id: UUID) async throws -> ReminderSyncOutcome {
         let task = try update(id: id) { $0.completedAt = nil }
         return await syncReminderCompletion(task, completed: false)
+    }
+
+    /// Data da conclusão diária no texto do histórico — pt-BR fixo, no fuso do `calendar`.
+    private var dailyCompletionFormatter: DateFormatter {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "pt_BR")
+        formatter.timeZone = calendar.timeZone
+        formatter.dateFormat = "dd/MM/yyyy"
+        return formatter
     }
 
     private func syncReminderCompletion(_ task: FocusTask?, completed: Bool) async -> ReminderSyncOutcome {

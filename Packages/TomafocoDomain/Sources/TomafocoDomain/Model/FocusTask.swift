@@ -31,6 +31,12 @@ public struct FocusTask: Equatable, Codable, Sendable, Identifiable {
     /// Histórico da tarefa (FEAT-001): entradas com data de inclusão e descrição, na ordem em
     /// que foram acrescentadas. É log — só acrescenta e apaga, nunca edita.
     public var history: [TaskHistoryEntry]
+    /// Tarefa diária (FEAT-004): concluir não fecha a tarefa — registra a conclusão (log +
+    /// histórico) e empurra o vencimento para o dia seguinte. Mesmo `id`: o foco acumula nela.
+    public var repeatsDaily: Bool
+    /// Datas em que a tarefa diária foi concluída, na ordem. A diária nunca fica com
+    /// `completedAt` preenchido, então é daqui que o relatório tira as conclusões.
+    public var completionLog: [Date]
 
     public var isCompleted: Bool { completedAt != nil }
 
@@ -46,7 +52,9 @@ public struct FocusTask: Equatable, Codable, Sendable, Identifiable {
         dueDate: Date? = nil,
         priority: Int? = nil,
         sourceURL: String? = nil,
-        history: [TaskHistoryEntry] = []
+        history: [TaskHistoryEntry] = [],
+        repeatsDaily: Bool = false,
+        completionLog: [Date] = []
     ) {
         self.id = id
         self.title = title
@@ -60,6 +68,8 @@ public struct FocusTask: Equatable, Codable, Sendable, Identifiable {
         self.priority = priority
         self.sourceURL = sourceURL
         self.history = history
+        self.repeatsDaily = repeatsDaily
+        self.completionLog = completionLog
     }
 
     // Decode manual por causa de `tags` e dos campos ricos de importação: JSON gravado antes
@@ -68,6 +78,7 @@ public struct FocusTask: Equatable, Codable, Sendable, Identifiable {
     private enum CodingKeys: String, CodingKey {
         case id, title, source, reminderID, createdAt, completedAt, tags
         case notes, dueDate, priority, sourceURL, history
+        case repeatsDaily, completionLog
     }
 
     public init(from decoder: Decoder) throws {
@@ -84,6 +95,23 @@ public struct FocusTask: Equatable, Codable, Sendable, Identifiable {
         self.priority = try c.decodeIfPresent(Int.self, forKey: .priority)
         self.sourceURL = try c.decodeIfPresent(String.self, forKey: .sourceURL)
         self.history = try c.decodeIfPresent([TaskHistoryEntry].self, forKey: .history) ?? []
+        self.repeatsDaily = try c.decodeIfPresent(Bool.self, forKey: .repeatsDaily) ?? false
+        self.completionLog = try c.decodeIfPresent([Date].self, forKey: .completionLog) ?? []
+    }
+
+    // MARK: - Tarefa diária (FEAT-004)
+
+    /// Próximo vencimento ao concluir a diária: **amanhã** (dia seguinte ao de `now`), no mesmo
+    /// horário do vencimento atual. Sem vencimento → amanhã 23:59, para não aparecer atrasada
+    /// antes de o dia acabar.
+    public func nextDailyDueDate(now: Date, calendar: Calendar) -> Date {
+        let today = calendar.startOfDay(for: now)
+        let tomorrow = calendar.date(byAdding: .day, value: 1, to: today) ?? today.addingTimeInterval(86_400)
+        let time = dueDate.map { calendar.dateComponents([.hour, .minute, .second], from: $0) }
+            ?? DateComponents(hour: 23, minute: 59, second: 0)
+        return calendar.date(
+            bySettingHour: time.hour ?? 0, minute: time.minute ?? 0, second: time.second ?? 0, of: tomorrow
+        ) ?? tomorrow
     }
 
     /// Limpa uma lista de tags crua: trim, descarta vazias, deduplica por caixa (mantém a
