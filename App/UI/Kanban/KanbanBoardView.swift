@@ -254,26 +254,10 @@ struct KanbanBoardView: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
 
-            HStack(spacing: 6) {
-                if let due = task.dueDate {
-                    Label(due.formatted(date: .abbreviated, time: .shortened), systemImage: "calendar")
-                        .foregroundStyle(overdue ? Brand.danger : Brand.textFaint)
-                }
-                if task.repeatsDaily {
-                    Label("Diária", systemImage: "repeat").foregroundStyle(Brand.cyan)
-                }
-                if let url = task.linkURL {
-                    Link(destination: url) {
-                        Label(url.host ?? "Link", systemImage: "link")
-                    }
-                    .foregroundStyle(Brand.cyan)
-                    .help(url.absoluteString)
-                }
-                if !task.history.isEmpty {
-                    Label("\(task.history.count)", systemImage: "clock.arrow.circlepath")
-                        .foregroundStyle(Brand.textFaint)
-                        .help("\(task.history.count) entrada(s) no histórico")
-                }
+            // Metadados um por linha: na largura do cartão (260–360pt) a linha única cortava
+            // data/link e empurrava o histórico e o pai para fora. Ordem: pai/subtarefas,
+            // vencimento, link, e por fim "Diária" + histórico juntos (curtos, cabem lado a lado).
+            VStack(alignment: .leading, spacing: 3) {
                 // FEAT-003: pai mostra o progresso; subtarefa mostra de quem é (cartão próprio,
                 // move independente).
                 if let parentTitle = viewModel.parentTitle(of: task) {
@@ -287,6 +271,30 @@ struct KanbanBoardView: View {
                         Label("\(progress.done)/\(progress.total)", systemImage: "checklist")
                             .foregroundStyle(progress.done == progress.total ? Brand.cyan : Brand.textFaint)
                             .help("\(progress.done) de \(progress.total) subtarefa(s) concluída(s)")
+                    }
+                }
+                if let due = task.dueDate {
+                    Label(due.formatted(date: .abbreviated, time: .shortened), systemImage: "calendar")
+                        .foregroundStyle(overdue ? Brand.danger : Brand.textFaint)
+                }
+                if let url = task.linkURL {
+                    Link(destination: url) {
+                        Label(url.host ?? "Link", systemImage: "link")
+                            .lineLimit(1)
+                    }
+                    .foregroundStyle(Brand.cyan)
+                    .help(url.absoluteString)
+                }
+                if task.repeatsDaily || !task.history.isEmpty {
+                    HStack(spacing: 8) {
+                        if task.repeatsDaily {
+                            Label("Diária", systemImage: "repeat").foregroundStyle(Brand.cyan)
+                        }
+                        if !task.history.isEmpty {
+                            Label("\(task.history.count)", systemImage: "clock.arrow.circlepath")
+                                .foregroundStyle(Brand.textFaint)
+                                .help("\(task.history.count) entrada(s) no histórico")
+                        }
                     }
                 }
             }
