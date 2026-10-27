@@ -164,6 +164,34 @@ public final class ManageTasksUseCase {
         return task
     }
 
+    /// Transforma uma tarefa existente em subtarefa de `parentID` (arrastar uma linha sobre a
+    /// outra na lista). Vale para tarefa de topo e para subtarefa trocando de pai. Regras:
+    /// - `parentTaskNotFound` — pai não existe; tarefa inexistente é no-op (`nil`).
+    /// - `taskHasSubtasks` — a tarefa já é pai: levá-la junto com as filhas criaria 2 níveis.
+    /// - `subtaskNestingNotAllowed` — o pai já é subtarefa, ou é a própria tarefa.
+    /// - `duplicateEntry` — tarefa ativa com título repetido entre as filhas ativas do novo pai.
+    /// Mesmo pai de antes → nada muda nem grava. A raia do Kanban é **mantida** (a tarefa já
+    /// mora numa raia; só a hierarquia muda — diferente de `addSubtask`, que nasce na do pai).
+    /// Invariante "subtarefa ativa ⇒ pai ativo": pai concluído é reaberto na mesma gravação.
+    @discardableResult
+    public func makeSubtask(id: UUID, parentID: UUID) throws -> FocusTask? {
+        var all = try tasks.loadTasks()
+        guard let idx = all.firstIndex(where: { $0.id == id }) else { return nil }
+        guard let parentIdx = all.firstIndex(where: { $0.id == parentID }) else { throw DomainError.parentTaskNotFound }
+        guard !all.contains(where: { $0.parentID == id }) else { throw DomainError.taskHasSubtasks }
+        guard id != parentID, !all[parentIdx].isSubtask else { throw DomainError.subtaskNestingNotAllowed }
+        if all[idx].parentID == parentID { return all[idx] }
+        if !all[idx].isCompleted {
+            guard !Self.hasActiveSibling(titled: all[idx].title, parentID: parentID, excluding: id, in: all) else {
+                throw DomainError.duplicateEntry(all[idx].title)
+            }
+            if all[parentIdx].isCompleted { applyReopen(to: &all[parentIdx]) }
+        }
+        all[idx].parentID = parentID
+        try tasks.saveTasks(all)
+        return all[idx]
+    }
+
     /// Unicidade de título é por **irmãos ativos**: entre as tarefas de topo (`parentID == nil`)
     /// ou entre as subtarefas do mesmo pai. `excluding` tira a própria tarefa na edição.
     private static func hasActiveSibling(

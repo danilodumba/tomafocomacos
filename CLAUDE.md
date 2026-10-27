@@ -335,6 +335,36 @@ Conteúdo: Kanban (FEAT-005), subtarefas (FEAT-003), nota/link/urgente (T-48), e
   bump + notas. Site: bump nos 4 arquivos (sed `1\.12`), DMG + notas + appcast no mesmo commit, push
   em `tomafoco-site` (deploy via GitHub Actions). Tag `v1.13` no repo do app.
 
+**🫳 Arrastar tarefa para virar subtarefa + chip visível (FEAT-003 cont., 2026-10-27, pós-1.13):**
+- Lista: badge `0/1` saiu da linha de metadados → **chip** ao lado do título (`checklist 2/5
+  subtarefas ▸`, cápsula; cyan cheio com tudo feito). `subtaskBadge` só mudou de lugar e visual.
+- `ManageTasksUseCase.makeSubtask(id:parentID:) -> FocusTask?`: topo → filha e filha trocando de
+  pai. Recusa: **`DomainError.taskHasSubtasks`** (novo — a arrastada já é pai),
+  `subtaskNestingNotAllowed` (alvo é subtarefa ou ela mesma), `duplicateEntry` (irmãs ativas do
+  novo pai; concluída não disputa), `parentTaskNotFound`; tarefa inexistente → `nil`. Mesmo pai →
+  no-op sem gravar. **Raia mantida** (≠ `addSubtask`). Pai concluído reabre na mesma gravação.
+- `TasksView`: `.draggable(uuid)` + `.dropDestination(for: String.self)` em **toda** linha,
+  `targetedTaskID` (@State) → borda cyan. `TasksViewModel.handleDrop(_:onto:)` (mesmo padrão do
+  Kanban: recusa durante `isMutatingTask` e drop sobre si mesma) → `makeSubtask(_:of:)` devolve
+  `Bool` — `false` faz o arraste voltar e o motivo vai pro `feedback`. Pai alvo entra em
+  `expandedTaskIDs`. Menu de contexto "Tornar subtarefa de ▸" (`possibleParents(for:)`: topo ativas
+  menos ela e o pai atual; vazio se já é pai) como alternativa acessível.
+- `make test` **450 verdes** (Domain 138, Application 255, Infra 57); `xcodebuild` limpo.
+- ⚠️ Validar à mão: item 8 da validação manual na FEAT-003 (arrastar topo → filha; pai com filhas
+  volta + aviso; soltar sobre filha avisa; filha troca de pai; menu de contexto).
+
+**🏷️ Seletor do foco: tags nos itens e filha sem "Pai › Filha" (2026-10-27, pós-1.13):** reverte
+parte do T-50. `TimerViewModel.displayTitle(of:)`/`menuTitle(of:)` **removidos**; botão do seletor e
+anel (`resolveTaskTitle`) usam só `task.title` — a filha segue com ícone ↳ no menu. `TaskTree.displayTitle`
+continua existindo para os Relatórios. `MainView.menuItemText(_:)`: `Text(título) + Text("  tag1 · tag2")`
+esmaecido (`NSMenu` não renderiza chip). `xcodebuild` limpo; nenhum teste afetado (só App/).
+⚠️ Validar à mão: menu com tags em cinza, filha só com o título, anel sem "Pai › ".
+
+**↩️ Editor da subtarefa → pai (2026-10-27, pós-1.13):** "↳ Pai" no header do `TaskEditorSheet`
+é botão (cyan + chevron) → `TaskEditorViewModel.openParent()` → `onOpenTask(parent)` (lista e Kanban
+já passavam o closure → `beginEditing`). VM guarda `parent: FocusTask?`; `parentTitle` computado.
+Rascunho não gravado ao trocar (igual pai → filha). Só App/, `xcodebuild` limpo.
+
 ## Como retomar
 
 ```bash

@@ -39,12 +39,24 @@ struct TaskEditorSheet: View {
         VStack(alignment: .leading, spacing: 2) {
             Text(viewModel.parentTitle == nil ? "Editar tarefa" : "Editar subtarefa")
                 .font(.system(size: 14, weight: .semibold))
-            // FEAT-003: subtarefa mostra de quem é — o formulário é o mesmo da tarefa.
+            // FEAT-003: subtarefa mostra de quem é — e o clique abre o editor do pai (troca o
+            // sheet; o rascunho daqui NÃO é gravado, igual a abrir uma filha pelo pai).
             if let parentTitle = viewModel.parentTitle {
-                Label(parentTitle, systemImage: "arrow.turn.down.right")
+                Button {
+                    viewModel.openParent()
+                } label: {
+                    HStack(spacing: 4) {
+                        Label(parentTitle, systemImage: "arrow.turn.down.right")
+                            .lineLimit(1)
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 8, weight: .semibold))
+                    }
                     .font(.system(size: 11))
-                    .foregroundStyle(Brand.textFaint)
-                    .lineLimit(1)
+                    .foregroundStyle(Brand.cyan)
+                }
+                .buttonStyle(.plain)
+                .help("Abrir a tarefa pai (alterações não salvas aqui são descartadas)")
+                .accessibilityLabel("Abrir a tarefa pai: \(parentTitle)")
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)

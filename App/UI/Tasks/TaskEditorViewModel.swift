@@ -12,8 +12,10 @@ import TomafocoApplication
 final class TaskEditorViewModel: ObservableObject, Identifiable {
     let task: FocusTask
     let knownTags: [String]
-    /// Título do pai quando a tarefa editada é uma subtarefa (FEAT-003) — vai no cabeçalho.
-    let parentTitle: String?
+    /// Pai quando a tarefa editada é uma subtarefa (FEAT-003) — título no cabeçalho, que é um
+    /// botão para abrir o editor do pai (`openParent`).
+    let parent: FocusTask?
+    var parentTitle: String? { parent?.title }
 
     @Published var title: String
     /// Tags do rascunho, separadas por vírgula (mesmo formato do campo de criação).
@@ -71,7 +73,7 @@ final class TaskEditorViewModel: ObservableObject, Identifiable {
         history = Self.sortedHistory(task)
         let all = (try? useCase.allTasks()) ?? []
         subtasks = Self.sortedChildren(of: task, in: all)
-        parentTitle = TaskTree.parent(of: task, in: all)?.title
+        parent = TaskTree.parent(of: task, in: all)
     }
 
     /// Um nível só (FEAT-003): subtarefa não tem a seção de subtarefas.
@@ -243,6 +245,13 @@ final class TaskEditorViewModel: ObservableObject, Identifiable {
     /// Edição completa da subtarefa (tags, prioridade, vencimento…): troca este editor pelo dela.
     func openSubtask(_ subtask: FocusTask) {
         onOpenTask(subtask)
+    }
+
+    /// Caminho inverso: do editor da subtarefa para o do pai (clique no "↳ Pai" do cabeçalho).
+    /// Mesma troca de editor que `openSubtask` — o rascunho desta não é gravado.
+    func openParent() {
+        guard let parent else { return }
+        onOpenTask(parent)
     }
 
     private func refreshSubtasks() {

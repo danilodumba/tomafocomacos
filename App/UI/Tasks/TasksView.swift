@@ -7,6 +7,8 @@ import TomafocoDomain
 struct TasksView: View {
     @ObservedObject var viewModel: TasksViewModel
     @Environment(\.openWindow) private var openWindow
+    /// Linha sob o cursor durante o arraste de outra tarefa (FEAT-003: soltar = virar subtarefa).
+    @State private var targetedTaskID: UUID?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -267,26 +269,49 @@ struct TasksView: View {
 
     // MARK: - Subtarefas (FEAT-003)
 
-    /// Badge `checklist 2/5` + chevron: clicar abre/fecha as subtarefas embaixo da linha.
-    /// Cyan quando tudo está feito.
+    /// Chip `checklist 2/5 subtarefas` + chevron na linha do título (era um badge miúdo no meio
+    /// dos metadados — passava despercebido). Clicar abre/fecha as subtarefas embaixo da linha.
+    /// Cyan cheio quando tudo está feito.
     private func subtaskBadge(_ task: FocusTask) -> some View {
         let progress = viewModel.subtaskProgress(of: task)
         let expanded = viewModel.isExpanded(task)
         let allDone = progress.done == progress.total
+        let tint = allDone ? Brand.cyan : Brand.textSecondary
         return Button {
             viewModel.toggleExpanded(task.id)
         } label: {
-            HStack(spacing: 2) {
-                Label("\(progress.done)/\(progress.total)", systemImage: "checklist")
+            HStack(spacing: 4) {
+                Image(systemName: "checklist")
+                Text("\(progress.done)/\(progress.total)")
+                    .fontWeight(.semibold)
+                Text(progress.total == 1 ? "subtarefa" : "subtarefas")
                 Image(systemName: expanded ? "chevron.down" : "chevron.right")
-                    .font(.system(size: 8, weight: .semibold))
+                    .font(.system(size: 8, weight: .bold))
             }
-            .font(.system(size: 10))
-            .foregroundStyle(allDone ? Brand.cyan : Brand.textFaint)
+            .font(.system(size: 11))
+            .foregroundStyle(tint)
+            .padding(.horizontal, 7)
+            .padding(.vertical, 2)
+            .background(Capsule().fill(tint.opacity(0.12)))
+            .overlay(Capsule().strokeBorder(tint.opacity(0.35), lineWidth: 1))
         }
         .buttonStyle(.plain)
         .help(expanded ? "Ocultar subtarefas" : "Mostrar subtarefas")
         .accessibilityLabel("\(progress.done) de \(progress.total) subtarefas · \(expanded ? "ocultar" : "mostrar")")
+    }
+
+    /// Submenu "Tornar subtarefa de ▸" — alternativa acessível (VoiceOver/teclado) ao arraste.
+    @ViewBuilder
+    private func makeSubtaskMenu(_ task: FocusTask) -> some View {
+        let parents = viewModel.possibleParents(for: task)
+        if !parents.isEmpty {
+            Menu("Tornar subtarefa de") {
+                ForEach(parents) { parent in
+                    Button(parent.title) { viewModel.makeSubtask(task, of: parent) }
+                }
+            }
+            .disabled(viewModel.isMutatingTask)
+        }
     }
 
     // MARK: - Prioridade
@@ -331,6 +356,7 @@ struct TasksView: View {
     private func row(_ task: FocusTask, depth: Int = 0) -> some View {
         let overdue = task.isOverdue
         let urgent = task.showsUrgent
+        let targeted = targetedTaskID == task.id
         return HStack(spacing: 10) {
             // RF-09.13: barra vermelha à esquerda — o destaque mais forte da linha.
             if urgent {
@@ -375,6 +401,9 @@ struct TasksView: View {
                         .strikethrough(task.isCompleted)
                         .foregroundStyle(task.isCompleted ? Brand.textFaint
                                          : (overdue || urgent ? Brand.danger : Brand.textPrimary))
+                    if depth == 0, viewModel.subtaskProgress(of: task).total > 0 {
+                        subtaskBadge(task)
+                    }
                 }
                 HStack(spacing: 6) {
                     if task.source == .reminders {
@@ -408,9 +437,6 @@ struct TasksView: View {
                             .font(.system(size: 10))
                             .foregroundStyle(Brand.textFaint)
                             .help("\(task.history.count) entrada(s) no histórico")
-                    }
-                    if depth == 0, viewModel.subtaskProgress(of: task).total > 0 {
-                        subtaskBadge(task)
                     }
                     ForEach(task.tags, id: \.self) { tag in
                         TagChip(tag: tag)
@@ -449,19 +475,38 @@ struct TasksView: View {
             }
         }
         .padding(.vertical, 2)
-        .padding(.horizontal, urgent ? 6 : 0)
+        .padding(.horizontal, urgent || targeted ? 6 : 0)
         .background(
             RoundedRectangle(cornerRadius: 6, style: .continuous)
-                .fill(urgent ? Brand.danger.opacity(0.08) : Color.clear)
+                .fill(targeted ? Brand.cyan.opacity(0.12)
+                      : (urgent ? Brand.danger.opacity(0.08) : Color.clear))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .strokeBorder(Brand.cyan, lineWidth: targeted ? 2 : 0)
         )
         .contentShape(Rectangle())
         .onTapGesture(count: 2) { viewModel.beginEditing(task) }
+        // FEAT-003: arrastar uma linha sobre a outra torna a arrastada subtarefa da alvo. O
+        // payload é o UUID em texto (mesmo formato dos cartões do Kanban). A regra (pai com
+        // filhas, alvo já subtarefa…) mora no use case; a recusa vira `feedback` e o arraste volta.
+        .draggable(task.id.uuidString)
+        .dropDestination(for: String.self) { items, _ in
+            viewModel.handleDrop(items, onto: task)
+        } isTargeted: { isTargeted in
+            if isTargeted {
+                targetedTaskID = task.id
+            } else if targetedTaskID == task.id {
+                targetedTaskID = nil
+            }
+        }
         .contextMenu {
             Button("Editar…") { viewModel.beginEditing(task) }
             if depth == 0 {
                 // A criação fica no formulário do pai (campo "Nova subtarefa").
                 Button("Adicionar subtarefa…") { viewModel.beginEditing(task) }
             }
+            makeSubtaskMenu(task)
             Toggle("Urgente", isOn: Binding(
                 get: { task.isUrgent },
                 set: { viewModel.setUrgent(task, $0) }))

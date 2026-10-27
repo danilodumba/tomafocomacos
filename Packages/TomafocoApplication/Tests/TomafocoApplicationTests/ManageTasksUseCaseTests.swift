@@ -433,6 +433,106 @@ final class ManageTasksUseCaseTests: XCTestCase {
         XCTAssertNil(try stored(parent.id).completedAt)
     }
 
+    // MARK: makeSubtask (arrastar uma tarefa sobre a outra)
+
+    func test_makeSubtask_tarefaDeTopoViraFilhaMantendoARaia() throws {
+        let parent = try sut.addTask(title: "Apresentação")
+        let task = try sut.addTask(title: "Esboço", tags: ["slides"])
+        let lane = UUID()
+        try sut.update(id: task.id) { $0.laneID = lane }
+        let before = repo.saveCallCount
+
+        let result = try sut.makeSubtask(id: task.id, parentID: parent.id)
+
+        XCTAssertEqual(result?.parentID, parent.id)
+        XCTAssertEqual(try stored(task.id).parentID, parent.id)
+        XCTAssertEqual(try stored(task.id).laneID, lane)
+        XCTAssertEqual(try stored(task.id).tags, ["slides"])
+        XCTAssertEqual(repo.saveCallCount - before, 1)
+    }
+
+    func test_makeSubtask_filhaTrocaDePai() throws {
+        let p1 = try sut.addTask(title: "P1")
+        let p2 = try sut.addTask(title: "P2")
+        let child = try sut.addSubtask(parentID: p1.id, title: "Filha")
+
+        try sut.makeSubtask(id: child.id, parentID: p2.id)
+
+        XCTAssertEqual(try stored(child.id).parentID, p2.id)
+    }
+
+    func test_makeSubtask_mesmoPai_naoGrava() throws {
+        let parent = try sut.addTask(title: "P")
+        let child = try sut.addSubtask(parentID: parent.id, title: "Filha")
+        let before = repo.saveCallCount
+
+        XCTAssertEqual(try sut.makeSubtask(id: child.id, parentID: parent.id)?.id, child.id)
+
+        XCTAssertEqual(repo.saveCallCount, before)
+    }
+
+    func test_makeSubtask_tarefaQueJaEPai_lanca() throws {
+        let parent = try sut.addTask(title: "Pai")
+        try sut.addSubtask(parentID: parent.id, title: "Filha")
+        let other = try sut.addTask(title: "Outra")
+        let before = repo.saveCallCount
+
+        XCTAssertThrowsError(try sut.makeSubtask(id: parent.id, parentID: other.id)) { error in
+            XCTAssertEqual(error as? DomainError, .taskHasSubtasks)
+        }
+        XCTAssertNil(try stored(parent.id).parentID)
+        XCTAssertEqual(repo.saveCallCount, before)
+    }
+
+    func test_makeSubtask_sobreSubtarefaOuSobreSiMesma_lanca() throws {
+        let parent = try sut.addTask(title: "Pai")
+        let child = try sut.addSubtask(parentID: parent.id, title: "Filha")
+        let other = try sut.addTask(title: "Outra")
+
+        XCTAssertThrowsError(try sut.makeSubtask(id: other.id, parentID: child.id)) { error in
+            XCTAssertEqual(error as? DomainError, .subtaskNestingNotAllowed)
+        }
+        XCTAssertThrowsError(try sut.makeSubtask(id: other.id, parentID: other.id)) { error in
+            XCTAssertEqual(error as? DomainError, .subtaskNestingNotAllowed)
+        }
+        XCTAssertNil(try stored(other.id).parentID)
+    }
+
+    func test_makeSubtask_paiInexistente_lanca_eTarefaInexistenteENoOp() throws {
+        let task = try sut.addTask(title: "T")
+        XCTAssertThrowsError(try sut.makeSubtask(id: task.id, parentID: UUID())) { error in
+            XCTAssertEqual(error as? DomainError, .parentTaskNotFound)
+        }
+        XCTAssertNil(try sut.makeSubtask(id: UUID(), parentID: task.id))
+    }
+
+    func test_makeSubtask_duplicataEntreIrmasAtivasDoNovoPai_lanca() async throws {
+        let parent = try sut.addTask(title: "Pai")
+        try sut.addSubtask(parentID: parent.id, title: "Revisar")
+        let active = try sut.addTask(title: " revisar ")
+        XCTAssertThrowsError(try sut.makeSubtask(id: active.id, parentID: parent.id)) { error in
+            XCTAssertEqual(error as? DomainError, .duplicateEntry("revisar"))
+        }
+        // Concluída não disputa título: entra sem checar duplicata.
+        let done = try sut.addTask(title: "Revisar!")
+        try sut.update(id: done.id) { $0.title = "Revisar" }
+        try await sut.completeTask(id: done.id)
+        XCTAssertNoThrow(try sut.makeSubtask(id: done.id, parentID: parent.id))
+        XCTAssertEqual(try stored(done.id).parentID, parent.id)
+    }
+
+    func test_makeSubtask_tarefaAtivaSobPaiConcluido_reabreOPai() async throws {
+        let parent = try sut.addTask(title: "Pai")
+        try await sut.completeTask(id: parent.id)
+        let task = try sut.addTask(title: "T")
+        let before = repo.saveCallCount
+
+        try sut.makeSubtask(id: task.id, parentID: parent.id)
+
+        XCTAssertNil(try stored(parent.id).completedAt)
+        XCTAssertEqual(repo.saveCallCount - before, 1)
+    }
+
     /// Invariante "subtarefa ativa ⇒ pai ativo": filha ativa sob pai concluído ficaria invisível
     /// na lista (só aparece aninhada). Criar filha num pai concluído reabre o pai, numa gravação só.
     func test_addSubtask_paiConcluido_reabreOPai() async throws {

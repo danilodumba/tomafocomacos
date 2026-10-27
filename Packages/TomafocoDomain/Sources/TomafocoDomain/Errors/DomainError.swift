@@ -14,6 +14,8 @@ public enum DomainError: Error, Equatable {
     case parentTaskNotFound
     /// Subtarefa de subtarefa: a hierarquia tem um nível só (FEAT-003).
     case subtaskNestingNotAllowed
+    /// Tarefa que já tem subtarefas não pode virar subtarefa de outra — viraria dois níveis (FEAT-003).
+    case taskHasSubtasks
     /// Senha de desbloqueio de apps curta demais (FEAT-002).
     case weakPassword(minimumLength: Int)
     /// Link da tarefa que não vira URL nem com `https://` na frente (RF-09.13) — valor cru para a UI.

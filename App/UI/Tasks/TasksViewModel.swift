@@ -242,6 +242,50 @@ final class TasksViewModel: ObservableObject, TaskRowActionRunning {
         return (done, done + (activeChildren[task.id]?.count ?? 0))
     }
 
+    /// Soltar uma linha sobre outra: a arrastada vira subtarefa da alvo. O payload é texto (o
+    /// arraste pode vir de fora do app) — só UUID de tarefa existente conta. Soltar sobre si
+    /// mesma ou durante uma ação de linha é recusado de cara. Devolve `false` quando a regra
+    /// recusa (pai com filhas, alvo já é subtarefa…) para o arraste voltar; o motivo vai pro
+    /// `feedback`.
+    func handleDrop(_ items: [String], onto target: FocusTask) -> Bool {
+        guard !isMutatingTask,
+              let dragged = items.lazy.compactMap(UUID.init(uuidString:))
+                  .compactMap({ id in self.allTasks.first { $0.id == id } }).first,
+              dragged.id != target.id else { return false }
+        return makeSubtask(dragged, of: target)
+    }
+
+    /// Alvos possíveis para "Tornar subtarefa de ▸" (alternativa acessível ao arraste): tarefas
+    /// de topo ativas, menos ela mesma e o pai atual. Vazio quando a tarefa já é pai — a regra
+    /// recusaria de qualquer forma.
+    func possibleParents(for task: FocusTask) -> [FocusTask] {
+        guard subtaskProgress(of: task).total == 0 else { return [] }
+        return TaskTree.topLevel(activeTasks)
+            .filter { $0.id != task.id && $0.id != task.parentID }
+            .sorted(by: sortOrder.areInIncreasingOrder)
+    }
+
+    @discardableResult
+    func makeSubtask(_ task: FocusTask, of parent: FocusTask) -> Bool {
+        feedback = nil
+        do {
+            try useCase.makeSubtask(id: task.id, parentID: parent.id)
+            expandedTaskIDs.insert(parent.id)
+            reload()
+            feedback = "\"\(task.title)\" agora é subtarefa de \"\(parent.title)\"."
+            return true
+        } catch DomainError.taskHasSubtasks {
+            feedback = "Não é possível: \"\(task.title)\" já é uma tarefa pai (tem subtarefas)."
+        } catch DomainError.subtaskNestingNotAllowed {
+            feedback = "Não é possível: \"\(parent.title)\" já é uma subtarefa — só existe um nível."
+        } catch DomainError.duplicateEntry(let title) {
+            feedback = "Não é possível: \"\(parent.title)\" já tem uma subtarefa ativa chamada \"\(title)\"."
+        } catch {
+            feedback = "Não foi possível mover: \(error.localizedDescription)"
+        }
+        return false
+    }
+
     // MARK: - Edição completa (RF-09.6)
 
     /// Abre o formulário com os valores atuais da tarefa. Clicar numa subtarefa dentro do

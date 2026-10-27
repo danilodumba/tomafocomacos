@@ -242,9 +242,9 @@ final class TimerViewModel: ObservableObject {
         // Fora do cache: procura nas ativas já carregadas e, em último caso, no disco
         // (uma vez por conjunto — o cache segura os ticks seguintes).
         let all = activeSnapshot + ((try? manageTasks.allTasks()) ?? [])
-        // Subtarefa (FEAT-003) aparece como "Pai › Filha" no anel.
+        // Subtarefa (FEAT-003) mostra só o próprio título — o "Pai › " só ocupava espaço no anel.
         let titles = taskIDs.compactMap { id in
-            all.first { $0.id == id }.map { TaskTree.displayTitle(of: $0, in: all) }
+            all.first { $0.id == id }?.title
         }
         guard !titles.isEmpty else { return nil }
         let title = joinedTitle(titles)
@@ -272,20 +272,6 @@ final class TimerViewModel: ObservableObject {
         availableTasks = TaskTree.grouped(inScope)
         let live = Set(availableTasks.map(\.id))
         selectedTaskIDs.formIntersection(live)
-    }
-
-    /// Rótulo fora do contexto do pai (botão do seletor, resumo): subtarefa vira "Pai › Filha".
-    func displayTitle(of task: FocusTask) -> String {
-        TaskTree.displayTitle(of: task, in: activeSnapshot)
-    }
-
-    /// Rótulo dentro do menu: a subtarefa já está logo abaixo do pai, então só o título dela
-    /// (o ícone ↳ diferencia). Se o pai não está no menu (fora do escopo), volta a "Pai › Filha".
-    func menuTitle(of task: FocusTask) -> String {
-        guard let parentID = task.parentID, availableTasks.contains(where: { $0.id == parentID }) else {
-            return displayTitle(of: task)
-        }
-        return task.title
     }
 
     /// Fração decorrida da fase — 0 no início, 1 no fim.

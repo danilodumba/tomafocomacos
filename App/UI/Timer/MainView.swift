@@ -136,7 +136,9 @@ struct MainView: View {
     /// quando ligado (RF-09.4). Ocioso escolhe a(s) do próximo foco (RF-09); pausado troca a(s)
     /// da sessão corrente (RF-09.1). `toggle` alterna uma tarefa; `clear` esvazia a seleção.
     /// Itens são `Toggle` (checkmark nativo do menu) para liberar o slot de imagem: a subtarefa
-    /// (FEAT-003) leva o ícone ↳ e só o próprio título, já que vem logo abaixo do pai.
+    /// (FEAT-003) leva o ícone ↳ e só o próprio título — nunca "Pai › Filha", nem no botão nem
+    /// no anel. As tags vão como sufixo esmaecido no texto do item (item de `NSMenu` só
+    /// renderiza texto e imagem; chip não dá).
     private func taskSelector(
         selected: Set<UUID>, accessibility: String,
         toggle: @escaping (UUID) -> Void, clear: @escaping () -> Void
@@ -149,9 +151,9 @@ struct MainView: View {
             ForEach(viewModel.availableTasks) { task in
                 Toggle(isOn: Binding(get: { selected.contains(task.id) }, set: { _ in toggle(task.id) })) {
                     if task.isSubtask {
-                        Label(viewModel.menuTitle(of: task), systemImage: "arrow.turn.down.right")
+                        Label { menuItemText(task) } icon: { Image(systemName: "arrow.turn.down.right") }
                     } else {
-                        Text(task.title)
+                        menuItemText(task)
                     }
                 }
             }
@@ -186,12 +188,21 @@ struct MainView: View {
         .accessibilityLabel(accessibility)
     }
 
+    /// Título + tags (`Título  tag1 · tag2`, tags esmaecidas) para o item do menu.
+    private func menuItemText(_ task: FocusTask) -> Text {
+        guard !task.tags.isEmpty else { return Text(task.title) }
+        return Text(task.title)
+            + Text("  " + task.tags.joined(separator: " · "))
+                .font(.system(size: 11))
+                .foregroundColor(Brand.textFaint)
+    }
+
     /// Rótulo do seletor: "Sem tarefa", o título quando é uma só, ou "N tarefas".
     private func selectionSummary(_ selected: Set<UUID>) -> String {
         guard !selected.isEmpty else { return "Sem tarefa" }
         if selected.count == 1, let id = selected.first,
            let task = viewModel.availableTasks.first(where: { $0.id == id }) {
-            return viewModel.displayTitle(of: task)
+            return task.title
         }
         return "\(selected.count) tarefas"
     }
