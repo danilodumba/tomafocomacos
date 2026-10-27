@@ -595,11 +595,10 @@ em `../DOCS - Tomafoco/APP/Features/FEAT-005 Criar um Kanban.md`.
   edição maior" da FEAT-004. Sheet 560×760. Função interna chama `scrollBody` — `body(focused:)`
   colide com `var body` da `View`.
 - `make test` **419 verdes** (Domain 130, Application 232, Infra 57); `xcodebuild` limpo.
-- ⚠️ Validar à mão: criar filha por Return 3× e pelo menu; lápis troca para o editor da filha (sem
-  seção de subtarefas); linha aninhada conclui/edita/apaga; concluir pai → filhas feitas, reabrir não
-  desfaz; apagar pai → diálogo; cartão da filha move sozinho, pai → Done leva as filhas, escopo por
-  tag só no pai mantém a filha; seletor "Pai › Filha" e relatório somando; busca pela filha abre o
-  pai; `tasks.json` antigo abre sem `.bak`.
+- ✅ Validado à mão pelo usuário em 2026-10-27 (itens 1–7 da FEAT-003): criar filha por Return e
+  pelo menu; editor da filha; linha aninhada conclui/edita/apaga; cascata de concluir/reabrir/apagar;
+  Kanban (cartão próprio, pai → Done leva as filhas, escopo herdado); seletor e relatório; busca pela
+  filha abre o pai; `tasks.json` antigo abre sem `.bak`.
 
 **🎯 Seletor do foco: ícone na subtarefa + escopo por tag (RF-09.15 / T-50, 2026-10-27, mesmo dia):**
 - Pedido: no menu do seletor a filha só tinha o título → agora ícone `arrow.turn.down.right` + título
