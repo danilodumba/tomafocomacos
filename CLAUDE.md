@@ -498,6 +498,45 @@ conclusão de hoje é registrada no histórico ("Concluída em dd/MM/yyyy") e no
   (`minHeight 120`, `maxHeight .infinity`) — antes era `maxHeight: 140` e só aparecia com entradas.
   ⚠️ Validar à mão: campos do `Form` sem corte e histórico longo rolando sem empurrar Cancelar/Salvar.
 
+**🔁 Diária revisada: concluir FECHA e CLONA (2026-10-27, pós-1.14).** Pedido do usuário: "ao finalizar,
+gerar um clone da tarefa com a data do dia seguinte e não reabrir a tarefa". **Substitui** a decisão
+"mesma tarefa, mesmo `id`" acima — não voltar a ela.
+- Domain: `FocusTask.nextDailyOccurrence(id:now:calendar:)` (puro, testado): tarefa nova com
+  título/tags/nota/link/prioridade/urgência/`parentID`/`source`+`reminderID`; `createdAt = now`;
+  **sem** histórico, `completionLog` e raia; vencimento = `nextDailyDueDate`. (Chegou a copiar
+  `createdAt` + histórico por pedido do usuário no mesmo dia — **cancelado por ele em seguida**;
+  não voltar a copiar.) `completionLog` virou
+  **legado** (ninguém grava; `CompletedTaskOccurrence` ainda lê para não perder conclusões antigas).
+- Application: `applyCompletionCascade` fecha a tarefa (e filhas abertas) e **acrescenta o clone na
+  mesma lista** → 1 gravação, tanto em `completeTask` quanto em `ManageKanbanUseCase.moveTask`.
+  `applyCompletion(to:)` e o `dailyCompletionFormatter` foram removidos. **Filha diária fechada
+  pela cascata do pai NÃO clona** (clone ativo sem pai ativo violaria a invariante da FEAT-003).
+  `syncCompletion` passou a espelhar a diária no Lembretes (ela fecha de verdade); o clone leva o
+  `reminderID`, então o picker segue mostrando o lembrete como importado.
+- Kanban: a concluída **mantém o `laneID`** como qualquer outra (saiu o `laneID = nil` da diária);
+  o clone nasce sem raia → 1ª raia.
+- App: feedbacks "concluída — nova cópia criada com vencimento amanhã" (lista) e "…na primeira raia,
+  com vencimento amanhã" (Kanban); tooltip do badge "Diária" sem contagem do log.
+- Edge aceito: reabrir a diária concluída à mão deixa duas ativas com o mesmo título (reopen não
+  checa duplicata) — o usuário pediu "não reabrir", a reabertura manual continua sendo escolha dele.
+- `make test` **456 verdes** (Domain 141, Application 258, Infra 57); `xcodebuild` limpo.
+- ⚠️ Validar à mão: concluir diária na lista → some das ativas + cópia com vencimento amanhã (mesma
+  hora) + aviso; Kanban → cartão na Done e cópia na 1ª raia; diária do Lembretes → riscada lá; pai
+  diário com filhas → filhas fecham, cópia sem filhas; relatório "Hoje" lista a concluída.
+
+**📅 Datas só leitura no formulário da tarefa (2026-10-27, pós-1.14):** `TaskEditorSheet.draftForm`
+ganhou "Data de cadastro" (`createdAt`) e "Data de encerramento" (`completedAt`, "—" quando aberta)
+como `LabeledContent` no fim do `Form`. `TaskEditorViewModel.createdAtText`/`completedAtText` lêem
+da `task` como foi aberta — concluir/reabrir acontece fora do sheet, então não há o que atualizar.
+Fora do rascunho (não entram no `save()`). Só App/, `xcodebuild` limpo. ⚠️ Validar à mão: tarefa
+aberta mostra "—"; concluída mostra data/hora; texto selecionável.
+
+**🔁 Botão "Tarefas" na janela Kanban (2026-10-27, pós-1.14):** espelho do botão "Kanban" da janela
+Tarefas — `KanbanBoardView` ganhou `@Environment(\.openWindow)` e botão `Label("Tarefas",
+systemImage: "checklist")` antes de "Configurar quadro…" na barra (`openWindow(id: "tasks")` +
+`NSApp.activate`). Só App/, `xcodebuild` limpo. ⚠️ Validar à mão: abre/traz a janela Tarefas à
+frente, inclusive com o Kanban em tela cheia.
+
 **🗂️ Kanban (FEAT-005 / RF-09.10–12 / T-47, 2026-10-27):** janela própria `Window("kanban")` (tela cheia
 via `.allowsFullScreen()` — liga `.fullScreenPrimary` na `NSWindow`, necessário em app `LSUIElement`),
 aberta por ⌥⌘K (menu Janela), engrenagem do popover e botão na janela Tarefas. Plano completo e desvios

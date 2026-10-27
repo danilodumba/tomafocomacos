@@ -190,9 +190,10 @@ final class TasksViewModel: ObservableObject, TaskRowActionRunning {
                 ? try await self.useCase.completeTask(id: task.id)
                 : try await self.useCase.reopenTask(id: task.id)
             self.reload()
-            // Diária (FEAT-004) não some da lista — sem aviso, o clique pareceria não ter feito nada.
+            // Diária (FEAT-004): a concluída sai e um clone entra — sem aviso, parece que o clique
+            // não fez nada (ou que a tarefa "não concluiu").
             if completed && task.repeatsDaily {
-                self.feedback = "\"\(task.title)\" concluída hoje — volta com vencimento amanhã."
+                self.feedback = "\"\(task.title)\" concluída — nova cópia criada com vencimento amanhã."
             }
             // Falha de espelhamento não desfaz a mudança local, mas precisa aparecer:
             // sem aviso, o usuário só descobre abrindo o Lembretes.

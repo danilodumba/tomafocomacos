@@ -592,28 +592,34 @@ final class ManageTasksUseCaseTests: XCTestCase {
         XCTAssertEqual(try stored(child.id).completedAt, now)
     }
 
-    /// Pai diário nunca fecha (`completedAt` fica `nil`), então não há cascata.
-    func test_completeTask_paiDiario_naoTocaFilhas() async throws {
+    /// Pai diário fecha como qualquer outro (cascata nas filhas) e só ELE é clonado — o clone
+    /// nasce sem filhas.
+    func test_completeTask_paiDiario_fechaFilhasEClonaSoOPai() async throws {
         let parent = try sut.addTask(title: "Treino")
         try sut.setRepeatsDaily(id: parent.id, true)
         let child = try sut.addSubtask(parentID: parent.id, title: "alongar")
 
         try await sut.completeTask(id: parent.id)
 
-        XCTAssertNil(try stored(child.id).completedAt)
-        XCTAssertEqual(try stored(parent.id).completionLog, [now])
+        XCTAssertEqual(try stored(parent.id).completedAt, now)
+        XCTAssertEqual(try stored(child.id).completedAt, now)
+        XCTAssertEqual(repo.tasks.count, 3)
+        let clone = try XCTUnwrap(repo.tasks.first { $0.id != parent.id && $0.title == "Treino" })
+        XCTAssertNil(clone.parentID)
+        XCTAssertTrue(TaskTree.children(of: clone.id, in: repo.tasks).isEmpty)
     }
 
-    /// Filha diária na cascata registra o dia (regra própria) em vez de fechar.
-    func test_completeTask_cascataRespeitaFilhaDiaria() async throws {
+    /// Filha diária fechada pela cascata do pai NÃO gera clone: o pai acabou, e um clone ativo
+    /// ficaria sem pai ativo (invariante "subtarefa ativa ⇒ pai ativo").
+    func test_completeTask_cascataNaoClonaFilhaDiaria() async throws {
         let parent = try sut.addTask(title: "Apresentação")
         let child = try sut.addSubtask(parentID: parent.id, title: "revisar notas")
         try sut.setRepeatsDaily(id: child.id, true)
 
         try await sut.completeTask(id: parent.id)
 
-        XCTAssertNil(try stored(child.id).completedAt)
-        XCTAssertEqual(try stored(child.id).completionLog, [now])
+        XCTAssertEqual(try stored(child.id).completedAt, now)
+        XCTAssertEqual(repo.tasks.count, 2)
     }
 
     func test_completeTask_idInexistente_naoGrava() async throws {

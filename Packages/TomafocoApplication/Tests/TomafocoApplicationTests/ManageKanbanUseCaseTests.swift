@@ -154,21 +154,28 @@ final class ManageKanbanUseCaseTests: XCTestCase {
         XCTAssertEqual(try sut.board().lane(for: stored(task.id)), doing)
     }
 
-    func test_moveTask_diariaParaDone_registraConclusaoEVoltaParaPrimeira() async throws {
+    /// Diária (FEAT-004): o cartão vai para a Done como qualquer outro e o clone para amanhã
+    /// nasce na 1ª raia, numa gravação só.
+    func test_moveTask_diariaParaDone_concluiECriaCloneNaPrimeiraRaia() async throws {
         let (todo, doing, done) = try lanes()
         let task = try tasks.addTask(title: "Inglês")
         try tasks.setRepeatsDaily(id: task.id, true)
         try await sut.moveTask(id: task.id, toLane: doing.id)
+        let savesBefore = taskRepo.saveCallCount
 
         try await sut.moveTask(id: task.id, toLane: done.id)
 
         let saved = stored(task.id)
-        XCTAssertNil(saved.completedAt)
-        XCTAssertEqual(saved.completionLog, [now])
-        XCTAssertNil(saved.laneID)
-        XCTAssertEqual(try sut.board().lane(for: saved), todo)
+        XCTAssertEqual(saved.completedAt, now)
+        XCTAssertEqual(saved.laneID, doing.id, "concluída mantém a raia para reabrir voltar a ela")
+        XCTAssertEqual(try sut.board().lane(for: saved), done)
         XCTAssertTrue(saved.history.contains { $0.text == "Movida: Em andamento → Concluído" })
-        XCTAssertTrue(saved.history.contains { $0.text.hasPrefix("Concluída em") })
+        let clone = try XCTUnwrap(taskRepo.tasks.first { $0.id != task.id && $0.title == "Inglês" })
+        XCTAssertNil(clone.completedAt)
+        XCTAssertNil(clone.laneID)
+        XCTAssertEqual(try sut.board().lane(for: clone), todo)
+        XCTAssertTrue(clone.history.isEmpty)
+        XCTAssertEqual(taskRepo.saveCallCount, savesBefore + 1)
     }
 
     // MARK: - Raias

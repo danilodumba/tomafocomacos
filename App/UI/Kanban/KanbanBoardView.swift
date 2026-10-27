@@ -6,6 +6,7 @@ import TomafocoDomain
 /// poder usar tela cheia e Split View.
 struct KanbanBoardView: View {
     @ObservedObject var viewModel: KanbanViewModel
+    @Environment(\.openWindow) private var openWindow
     /// Coluna sob o arraste — destaque visual.
     @State private var targetedLaneID: UUID?
 
@@ -106,6 +107,15 @@ struct KanbanBoardView: View {
             .fixedSize()
 
             Spacer()
+
+            // Espelho do botão "Kanban" da janela Tarefas: as duas janelas se abrem mutuamente.
+            Button {
+                openWindow(id: "tasks")
+                NSApp.activate(ignoringOtherApps: true)
+            } label: {
+                Label("Tarefas", systemImage: "checklist")
+            }
+            .help("Abrir a janela de Tarefas")
 
             OpenSettingsControl(tab: .kanban) {
                 Label("Configurar quadro…", systemImage: "slider.horizontal.3")

@@ -139,7 +139,7 @@ struct TaskEditorSheet: View {
                 .opacity(viewModel.hasDueDate ? 1 : 0.4)
             }
 
-            // FEAT-004: concluída num dia, volta a ficar ativa no dia seguinte.
+            // FEAT-004: ao concluir, fecha e cria uma cópia com vencimento amanhã.
             Toggle("Repetir diariamente", isOn: $viewModel.repeatsDaily)
 
             // RF-09.13: destaque forte na lista e no quadro; vai para o topo.
@@ -165,6 +165,19 @@ struct TaskEditorSheet: View {
             // RF-09.13: nota livre, multilinha (Return quebra linha; o Return do título salva).
             TextField("Nota (opcional)", text: $viewModel.notes, axis: .vertical)
                 .lineLimit(2...6)
+
+            // Só leitura: cadastro e encerramento. Não entram no rascunho — vêm do modelo.
+            LabeledContent("Data de cadastro") {
+                Text(viewModel.createdAtText)
+                    .foregroundStyle(Brand.textSecondary)
+                    .textSelection(.enabled)
+            }
+            LabeledContent("Data de encerramento") {
+                Text(viewModel.completedAtText ?? "—")
+                    .foregroundStyle(viewModel.completedAtText == nil ? Brand.textFaint : Brand.textSecondary)
+                    .textSelection(.enabled)
+                    .help(viewModel.completedAtText == nil ? "Tarefa ainda aberta" : "")
+            }
         }
         .formStyle(.grouped)
         .fixedSize(horizontal: false, vertical: true)

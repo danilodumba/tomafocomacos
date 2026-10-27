@@ -33,11 +33,13 @@ public struct FocusTask: Equatable, Codable, Sendable, Identifiable {
     /// Histórico da tarefa (FEAT-001): entradas com data de inclusão e descrição, na ordem em
     /// que foram acrescentadas. É log — só acrescenta e apaga, nunca edita.
     public var history: [TaskHistoryEntry]
-    /// Tarefa diária (FEAT-004): concluir não fecha a tarefa — registra a conclusão (log +
-    /// histórico) e empurra o vencimento para o dia seguinte. Mesmo `id`: o foco acumula nela.
+    /// Tarefa diária (FEAT-004): concluir **fecha** a tarefa como qualquer outra e cria um
+    /// **clone** (`nextDailyOccurrence`) com vencimento no dia seguinte. A concluída fica no
+    /// histórico e nunca é reaberta pelo app; o clone é a ocorrência de amanhã.
     public var repeatsDaily: Bool
-    /// Datas em que a tarefa diária foi concluída, na ordem. A diária nunca fica com
-    /// `completedAt` preenchido, então é daqui que o relatório tira as conclusões.
+    /// Legado da 1ª versão da diária (até 2026-10-27), em que a mesma tarefa seguia aberta e
+    /// cada conclusão entrava aqui. Hoje nada mais grava neste log — ele continua sendo lido
+    /// (`CompletedTaskOccurrence`) para o relatório não perder as conclusões antigas.
     public var completionLog: [Date]
     /// Raia do Kanban onde a tarefa aberta está (FEAT-005). `nil` = primeira raia. Não decide
     /// conclusão: tarefa concluída fica sempre na raia Done (`KanbanBoard.lane(for:)`), e o valor
@@ -146,9 +148,33 @@ public struct FocusTask: Equatable, Codable, Sendable, Identifiable {
 
     // MARK: - Tarefa diária (FEAT-004)
 
-    /// Próximo vencimento ao concluir a diária: **amanhã** (dia seguinte ao de `now`), no mesmo
-    /// horário do vencimento atual. Sem vencimento → amanhã 23:59, para não aparecer atrasada
-    /// antes de o dia acabar.
+    /// Clone da diária para o dia seguinte, criado ao concluí-la: tarefa **nova** (`id` próprio,
+    /// `createdAt = now`, aberta, **sem histórico** — decisão do usuário em 2026-10-27, não
+    /// copiar), com os mesmos título, tags, nota, link, prioridade, urgência, pai e origem (o
+    /// `reminderID` vai junto — concluir o clone amanhã espelha a próxima ocorrência do lembrete
+    /// recorrente). Vencimento = `nextDailyDueDate`. Sem raia (`laneID = nil`): o dia novo
+    /// começa na primeira raia do Kanban.
+    public func nextDailyOccurrence(id: UUID, now: Date, calendar: Calendar) -> FocusTask {
+        FocusTask(
+            id: id,
+            title: title,
+            source: source,
+            reminderID: reminderID,
+            createdAt: now,
+            tags: tags,
+            notes: notes,
+            dueDate: nextDailyDueDate(now: now, calendar: calendar),
+            priority: priority,
+            sourceURL: sourceURL,
+            repeatsDaily: true,
+            isUrgent: isUrgent,
+            parentID: parentID
+        )
+    }
+
+    /// Vencimento do clone da diária: **amanhã** (dia seguinte ao de `now`), no mesmo horário
+    /// do vencimento atual. Sem vencimento → amanhã 23:59, para não aparecer atrasada antes de
+    /// o dia acabar.
     public func nextDailyDueDate(now: Date, calendar: Calendar) -> Date {
         let today = calendar.startOfDay(for: now)
         let tomorrow = calendar.date(byAdding: .day, value: 1, to: today) ?? today.addingTimeInterval(86_400)

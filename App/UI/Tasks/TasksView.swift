@@ -415,9 +415,7 @@ struct TasksView: View {
                         Label("Diária", systemImage: "repeat")
                             .font(.system(size: 10))
                             .foregroundStyle(Brand.cyan)
-                            .help(task.completionLog.isEmpty
-                                  ? "Repete todo dia"
-                                  : "Repete todo dia · concluída \(task.completionLog.count) vez(es)")
+                            .help("Repete todo dia: ao concluir, uma cópia é criada com vencimento amanhã")
                     }
                     if let due = task.dueDate {
                         Label(due.formatted(date: .abbreviated, time: .shortened), systemImage: "calendar")

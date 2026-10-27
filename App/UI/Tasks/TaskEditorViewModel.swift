@@ -79,6 +79,15 @@ final class TaskEditorViewModel: ObservableObject, Identifiable {
     /// Um nível só (FEAT-003): subtarefa não tem a seção de subtarefas.
     var canHaveSubtasks: Bool { !task.isSubtask }
 
+    /// Datas só leitura do formulário: cadastro e encerramento. Vêm da tarefa como foi aberta
+    /// (concluir/reabrir acontece fora do sheet); encerramento vazio = tarefa aberta.
+    var createdAtText: String { Self.readOnlyDate(task.createdAt) }
+    var completedAtText: String? { task.completedAt.map(Self.readOnlyDate) }
+
+    private static func readOnlyDate(_ date: Date) -> String {
+        date.formatted(date: .abbreviated, time: .shortened)
+    }
+
     /// Progresso do checklist para o cabeçalho da seção (`2/5`).
     var subtaskProgress: (done: Int, total: Int) {
         (subtasks.filter(\.isCompleted).count, subtasks.count)

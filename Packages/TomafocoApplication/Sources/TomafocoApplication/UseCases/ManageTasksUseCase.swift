@@ -488,37 +488,26 @@ public final class ManageTasksUseCase {
         return (all[idx], all[parentIdx])
     }
 
-    /// Concluir com **cascata** (FEAT-003), sem I/O: aplica `applyCompletion` à tarefa e, se ela
-    /// fechou de verdade (não é diária), às subtarefas ainda abertas — cada uma pela própria
-    /// regra (uma filha diária registra o dia em vez de fechar). As já concluídas mantêm a data.
-    /// Reabrir não tem cascata. Devolve a tarefa gravada ou `nil` se não existe.
+    /// Concluir com **cascata** (FEAT-003), sem I/O: fecha a tarefa e as subtarefas ainda
+    /// abertas (as já concluídas mantêm a data). Reabrir não tem cascata.
+    /// Diária (FEAT-004): a tarefa fecha como qualquer outra e um **clone** para amanhã
+    /// (`FocusTask.nextDailyOccurrence`) entra no fim da lista. Só a tarefa concluída
+    /// diretamente é clonada — filha diária fechada pela cascata do pai não gera clone (o pai
+    /// acabou; um clone dela ficaria órfão de pai ativo, violando "subtarefa ativa ⇒ pai ativo").
+    /// Devolve a tarefa gravada ou `nil` se não existe.
     /// `internal`: o `ManageKanbanUseCase` aplica junto com a troca de raia numa gravação só.
     @discardableResult
     func applyCompletionCascade(id: UUID, in all: inout [FocusTask]) -> FocusTask? {
         guard let idx = all.firstIndex(where: { $0.id == id }) else { return nil }
-        applyCompletion(to: &all[idx])
-        if all[idx].isCompleted {
-            for child in all.indices where all[child].parentID == id && !all[child].isCompleted {
-                applyCompletion(to: &all[child])
-            }
+        let completedAt = now()
+        all[idx].completedAt = completedAt
+        for child in all.indices where all[child].parentID == id && !all[child].isCompleted {
+            all[child].completedAt = completedAt
+        }
+        if all[idx].repeatsDaily {
+            all.append(all[idx].nextDailyOccurrence(id: makeID(), now: completedAt, calendar: calendar))
         }
         return all[idx]
-    }
-
-    /// Núcleo de "concluir" UMA tarefa, sem I/O. Diária (FEAT-004): continua ativa; a conclusão
-    /// de hoje vai pro log (relatório) e pro histórico (visível na tarefa); o vencimento pula
-    /// para amanhã.
-    func applyCompletion(to task: inout FocusTask) {
-        let completedAt = now()
-        guard task.repeatsDaily else {
-            task.completedAt = completedAt
-            return
-        }
-        task.completionLog.append(completedAt)
-        task.history.append(TaskHistoryEntry(
-            id: makeID(), createdAt: completedAt,
-            text: "Concluída em \(dailyCompletionFormatter.string(from: completedAt))"))
-        task.dueDate = task.nextDailyDueDate(now: completedAt, calendar: calendar)
     }
 
     /// Reabrir não reabre as subtarefas (FEAT-003): o usuário reabre à mão o que quiser refazer.
@@ -526,20 +515,12 @@ public final class ManageTasksUseCase {
         task.completedAt = nil
     }
 
-    /// Espelha no Lembretes o estado de conclusão que a tarefa tem AGORA (best-effort). Diária
-    /// nunca fica concluída localmente, então nada é espelhado — o lembrete também segue aberto.
+    /// Espelha no Lembretes o estado de conclusão que a tarefa tem AGORA (best-effort). Vale
+    /// também para a diária: ela fecha de verdade, então o lembrete fecha junto (num lembrete
+    /// recorrente, o próprio Lembretes avança para a próxima ocorrência).
     func syncCompletion(of task: FocusTask?) async -> ReminderSyncOutcome {
-        guard let task, !task.repeatsDaily else { return .notApplicable }
+        guard let task else { return .notApplicable }
         return await syncReminderCompletion(task, completed: task.isCompleted)
-    }
-
-    /// Data da conclusão diária no texto do histórico — pt-BR fixo, no fuso do `calendar`.
-    private var dailyCompletionFormatter: DateFormatter {
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "pt_BR")
-        formatter.timeZone = calendar.timeZone
-        formatter.dateFormat = "dd/MM/yyyy"
-        return formatter
     }
 
     private func syncReminderCompletion(_ task: FocusTask?, completed: Bool) async -> ReminderSyncOutcome {

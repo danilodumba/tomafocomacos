@@ -147,9 +147,10 @@ final class KanbanViewModel: ObservableObject, TaskRowActionRunning {
         runRowAction(task.id) {
             let outcome = try await self.useCase.moveTask(id: task.id, toLane: lane.id)
             self.reload()
-            // Diária (FEAT-004) volta para a 1ª raia — sem aviso, o arraste pareceria não ter funcionado.
+            // Diária (FEAT-004): o cartão vai para a Done e um clone aparece na 1ª raia — sem
+            // aviso, o cartão novo pareceria um bug.
             if lane.isDone && task.repeatsDaily {
-                self.feedback = "\"\(task.title)\" concluída hoje — volta com vencimento amanhã."
+                self.feedback = "\"\(task.title)\" concluída — nova cópia criada na primeira raia, com vencimento amanhã."
             }
             if outcome == .failed {
                 self.feedback = "Tarefa movida aqui, mas não foi possível refletir no Lembretes"

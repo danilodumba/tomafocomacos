@@ -144,10 +144,9 @@ public final class ManageKanbanUseCase {
         all[idx].history.append(entry)
         if !target.isDone {
             all[idx].laneID = target.id
-        } else if all[idx].repeatsDaily {
-            all[idx].laneID = nil
         }
-        // Concluída não-diária mantém o `laneID`: reabrir pela lista a devolve à raia de antes.
+        // Concluída mantém o `laneID`: reabrir pela lista a devolve à raia de antes. Diária
+        // (FEAT-004) idem — o clone para amanhã que a cascata acrescentou nasce sem raia (1ª).
         try tasks.replaceAll(all)
         guard target.isDone || origin.isDone else { return .notApplicable }
         let outcome = await tasks.syncCompletion(of: all[idx])
