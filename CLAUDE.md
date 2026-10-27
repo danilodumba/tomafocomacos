@@ -305,6 +305,36 @@ entradas datadas (data de inclusão + descrição), e elas aparecem nos relatór
 - ⚠️ Validar à mão: adicionar/apagar entrada no formulário; "Cancelar" não desfaz; salvar edição não
   zera o histórico; reabrir o app persiste; seção e CSV de histórico nos Relatórios (acentos com BOM).
 
+**📊 Relatórios: período "Hoje" + relatório por tarefa (RF-10.5 / RF-10.6 / T-51, 2026-10-27):**
+- `ReportsViewModel.Period.today` ("Hoje" = início do dia → agora), primeiro no segmented.
+- **Mudança de comportamento:** a lista/CSV de **tarefas concluídas passou a respeitar o período**
+  (`completedAll` filtrado por `completedAt` no `interval`). Antes ignorava — com "Hoje" mostraria
+  tudo, o que anularia o filtro. Quem quer ver todas escolhe "Tudo".
+- Application: `TaskReport` (+ `Session` com `subtaskTitle`) e `ReportBuilder.taskReport(...)` no
+  mesmo arquivo do `ReportBuilder` (reusa `duration`/`dailyTotals`/`historyEntries` privados).
+  Sessão da filha entra no pai UMA vez; foco direto no pai vence (`subtaskTitle = nil`). Tarefa
+  apagada → `nil` (só vive como "Tarefa removida" nas `taskTotals`). Conclusões via
+  `CompletedTaskOccurrence` recortadas pelo período. `ReportCSVExporter.taskSessionsCSV` +
+  `outcomeLabel` **público** (a View usa no rótulo do desfecho).
+- VM guarda `loadedRecords`/`loadedTasks` para recalcular ao trocar `selectedTaskID` sem reler
+  disco; `taskOptions` = `taskTotals` com `taskID` que ainda existe (ordem por tempo desc).
+  Seleção fora da lista nova é limpa no `reload()`.
+- View: `taskReportSection` entre "Horas por tarefa" e "Tarefas concluídas"; itens do menu são
+  `Toggle` (checkmark nativo, mesma regra do seletor do timer). Gráfico em **minutos** (tarefa
+  raramente passa de 1h/dia) e só com >1 dia. `statTile` extraído do resumo.
+- `make test` **442 verdes** (Domain 138, Application 247, Infra 57); `xcodebuild` limpo.
+- ⚠️ Validar à mão: "Hoje" após um foco; escolher tarefa → sessões/duração/desfecho; filha com ↳ no
+  relatório do pai; trocar período limpa seleção se a tarefa sai; CSV abre no Numbers/Excel com acentos.
+
+**🚀 Release 1.13 publicada (2026-10-27)** — `MARKETING_VERSION 1.13` / `CURRENT_PROJECT_VERSION 14`.
+Conteúdo: Kanban (FEAT-005), subtarefas (FEAT-003), nota/link/urgente (T-48), escopo por tag no foco
+(T-50), período "Hoje" + relatório por tarefa (T-51) e as correções do code review.
+- `make release`: notarização **Accepted** (app e DMG), staple ok, `spctl` → `Notarized Developer ID`,
+  universal (`x86_64 arm64`), DMG 5,1 MB. Appcast `sparkle:version 14`, sem `hardwareRequirements`.
+- Trabalho pendente foi commitado em **dois commits**: `feat:` com todas as features e `release:` com o
+  bump + notas. Site: bump nos 4 arquivos (sed `1\.12`), DMG + notas + appcast no mesmo commit, push
+  em `tomafoco-site` (deploy via GitHub Actions). Tag `v1.13` no repo do app.
+
 ## Como retomar
 
 ```bash
@@ -427,3 +457,164 @@ conclusão de hoje é registrada no histórico ("Concluída em dd/MM/yyyy") e no
   `.fixedSize(vertical)` (altura do conteúdo) e o histórico ocupa a sobra numa `ScrollView` com borda
   (`minHeight 120`, `maxHeight .infinity`) — antes era `maxHeight: 140` e só aparecia com entradas.
   ⚠️ Validar à mão: campos do `Form` sem corte e histórico longo rolando sem empurrar Cancelar/Salvar.
+
+**🗂️ Kanban (FEAT-005 / RF-09.10–12 / T-47, 2026-10-27):** janela própria `Window("kanban")` (tela cheia
+via `.allowsFullScreen()` — liga `.fullScreenPrimary` na `NSWindow`, necessário em app `LSUIElement`),
+aberta por ⌥⌘K (menu Janela), engrenagem do popover e botão na janela Tarefas. Plano completo e desvios
+em `../DOCS - Tomafoco/APP/Features/FEAT-005 Criar um Kanban.md`.
+- Domain: `KanbanBoard` (raias + `doneRetentionDays` 1–90 + `taskScope`; invariantes reparadas no init/
+  decode: 1 Done no fim, ≥1 aberta), `KanbanLane`, `KanbanTaskScope` (`all`/`tags([])` explícito — tags
+  vazias = quadro vazio, nunca "todas"), `TaskDueFilter`, `FocusTask.laneID` (`decodeIfPresent`).
+  **Raia é derivada** (`lane(for:)`): concluída → Done, senão `laneID` válido, senão 1ª raia.
+- Application: `ManageKanbanUseCase.moveTask` reusa `completeTask`/`reopenTask` (sync Lembretes, diária)
+  + histórico "Movida: A → B"; concluída mantém `laneID` (reabrir pela lista volta à raia). Diária na Done
+  volta à 1ª raia. `ManageTasksUseCase.update` virou `internal`; `renameTag`/`deleteTag` reescrevem o
+  escopo via `kanbanBoards` opcional (best-effort, `os.Logger`). `TaskFilter` puro (lista + quadro).
+- Infra: `FileKanbanStore` (`kanban.json` + `.bak`).
+- App: `KanbanViewModel`/`KanbanBoardView` (drag `.draggable(uuidString)` + `.dropDestination`, "Mover
+  para ▸" acessível, colunas 260–360pt); aba **Kanban** nas Configurações (`KanbanSettingsViewModel`/
+  `KanbanSettingsTab`; `SettingsTab` em `@AppStorage("settingsTab")` — "Configurar quadro…" abre já na aba
+  via `SettingsLink` + `simultaneousGesture`). Editor extraído para `TaskEditorViewModel`/`TaskEditorSheet`
+  (lista e quadro); `TaskSortOrder`, `TagChip`, `TaskRowActionRunning` (trava de cliques) compartilhados.
+- **Sincronia entre janelas — regra:** `reload()` = relê + avisa; `refresh()` = só relê. `TaskChangeRelay`
+  chama `refresh()` nos outros, e **só se a tela está visível** (`isPresented`, via `didAppear`/
+  `didDisappear`) — VM de janela fechada não lê disco; relê sozinho ao aparecer. Chamar `reload()` a
+  partir do relay criaria laço entre janelas.
+- **Code review + 9 correções (mesmo dia):** `deleteLane` atômico e contando por `lane(for:)` (tarefas
+  sem `laneID` na 1ª raia); `moveTask` em 1 leitura/1 gravação (`applyCompletion`/`applyReopen`/
+  `syncCompletion` internos no `ManageTasksUseCase`); `handleDrop` recusa durante trava; criar pelo quadro
+  exige tag do escopo; decode tolera raia malformada (`LenientLane`); `makeID` injetado no reparo;
+  `OpenSettingsControl(tab:)` compartilhado (popover + quadro). Lista completa no FEAT-005 ("Correções do
+  code review").
+
+**📝 Nota, link e urgente na tarefa (RF-09.13 / T-48, 2026-10-27):**
+- **Reaproveita `FocusTask.notes` e `sourceURL`** (antes só leitura, vindos do Lembretes) — agora editáveis
+  no formulário; sem migração, dado importado continua aparecendo. Reverte a decisão de 2026-09-29 que tirou
+  "Observação" do formulário: o usuário pediu nota de volta, junto com link. **Não** escreve de volta no
+  lembrete (write-back segue só de conclusão).
+- `FocusTask.isUrgent` (`decodeIfPresent ?? false`); `normalizeNotes` (trim, vazio → `nil`) e
+  `normalizeLink` (trim, vazio → `nil`, sem `://` ganha `https://`, sem host lança
+  `DomainError.invalidLink`). Esquema custom (`notion://`) passa.
+- `ManageTasksUseCase`: novo `TaskEdit` + `editTask(id:_:)` (transação completa). **A forma curta
+  `editTask(id:title:tags:dueDate:priority:repeatsDaily:)` continua e virou edição PARCIAL** (carrega a
+  tarefa e preserva nota/link/urgente) — os ~13 testes que a usam seguem válidos. `setUrgent(id:_:)`.
+- App: `TaskEditorViewModel` (`notes`/`link`/`isUrgent`, `linkURL` para o botão "Abrir"; `invalidLink` vira
+  feedback no sheet, que cresceu para 560×760); `TaskEditorSheet` com Toggle Urgente, campo Link + abrir e
+  `TextField(axis: .vertical)` para a nota. `UrgentBadge` (em `TagChip.swift`), `FocusTask.showsUrgent`
+  (só aberta) e `linkURL` em `TaskSortOrder.swift`. **`TaskSortOrder.areInIncreasingOrder` põe urgente
+  no topo em qualquer critério** (lista e raias abertas; Done ordena por conclusão). Linha: barra vermelha
+  à esquerda + fundo `danger 8%` + selo; cartão: borda 2pt + fundo `danger 10%` + selo + nota (3 linhas).
+  Menus de contexto (lista e cartão): Toggle Urgente + "Abrir link".
+- Gotcha: `.textContentType(.URL)` é macOS 14+ — não usar (deployment 13).
+- `make test` **393 verdes** (Domain 123, Application 213, Infra 57); `xcodebuild` limpo.
+- ⚠️ Validar à mão: editar nota multilinha (Return quebra linha, não salva); link `globo.com` → chip
+  "globo.com" abre o site; link inválido → erro e sheet aberto; Urgente → selo/fundo na lista e no
+  cartão, sobe ao topo, some ao concluir; tarefa importada com notas/URL mostra os valores no formulário.
+- `make test` **384 verdes** (Domain 119, Application 208, Infra 57); `xcodebuild` limpo.
+- ⚠️ Validar à mão: arrastar entre raias (histórico), Done conclui/espelha Lembretes e reabre ao tirar;
+  diária na Done; tela cheia + Split View com Tarefas; fechar o Kanban em tela cheia volta ao modo
+  só-barra; app não abre o Kanban sozinho; dias no Done = 1; escopo por tag + nova tarefa no quadro;
+  renomear/apagar tag com escopo; apagar raia com tarefas (confirmação); lista: refactor do formulário de
+  edição sem mudança de comportamento (Return no histórico, Cancelar/Salvar).
+
+**🌳 Subtarefas (FEAT-003 / RF-09.14 / T-49, 2026-10-27):** subtarefa **é uma `FocusTask` com
+`parentID`**, um nível só. Plano, decisões e histórico em
+`../DOCS - Tomafoco/APP/Features/FEAT-003 Possibilitar a criação de subtarefas.md`.
+- **Decisões do usuário (não rediscutir):** subtarefa é tarefa completa (tags, prioridade, data, foco,
+  histórico…) com pai; autorrelacionamento de **um nível** (filha de filha é recusada); lista
+  **aninhada** (linha completa indentada); entra no **timer** e nos **relatórios com soma no pai**;
+  **cartão próprio** no Kanban (chip "↳ Pai", move sozinha, herda escopo por tag do pai); **cascata**:
+  concluir pai fecha filhas abertas, reabrir não reabre, fechar todas não fecha o pai, apagar pai
+  apaga filhas (lista confirma).
+- ⚠️ **A 1ª versão do dia (checklist embutido `FocusTask.subtasks: [Subtask]`) foi removida inteira**
+  antes de commitar — não procurar `Subtask`, `emptySubtaskTitle`, `renameSubtask`, `moveSubtask`.
+- Domain: `FocusTask.parentID` (`decodeIfPresent`) + `isSubtask`; **`TaskTree`** (puro):
+  `topLevel`/`children`/`parent`/`progress`/`displayTitle` ("Pai › Filha")/`grouped`;
+  `DomainError.parentTaskNotFound`/`subtaskNestingNotAllowed`; `KanbanBoard.columns` deixa a filha
+  herdar o escopo do pai.
+- Application: `addSubtask(parentID:title:tags:)` (herda `laneID` do pai; tags no catálogo).
+  **Unicidade de título é por irmãs ativas** (`hasActiveSibling`: topo×topo, filhas do mesmo pai) —
+  `addTask`, `validateNewTasks` e `editTask` mudaram para isso. **`applyCompletionCascade(id:in:)`**
+  (sem I/O) usado por `completeTask` e por `ManageKanbanUseCase.moveTask` (que agora carrega
+  `allTasks` e grava com `replaceAll` — segue 1 leitura/1 gravação, teste `gravaTarefasUmaVezSo`).
+  `deleteTask` em cascata. `TaskFilter.matchesTree`/`matchesCard`. `ReportBuilder.taskTotals` soma a
+  filha no pai (cria a linha do pai mesmo sem foco direto).
+- App: `TaskEditorViewModel` lê `allTasks()` no init para `subtasks`/`parentTitle`; `toggleSubtask`
+  é async (`completeTask`/`reopenTask`, `busySubtaskIDs`); `openSubtask` → `onOpenTask` (a janela
+  troca o `editor` — `.sheet(item:)` fecha um e abre o outro). `TaskEditorField` = `history`/`newSubtask`;
+  Salvar perde `.defaultAction` com qualquer um focado. Lista: `displayedTasks` só de topo
+  (`matchesTree`), `children(of:)`, `isExpanded` abre sozinho quando filtro casa filha, `row(_:depth:)`,
+  `pendingDeletion` + `confirmationDialog`. Kanban: `matchesCard`, chip/badge, menu "Adicionar
+  subtarefa…" só no pai (abre o formulário do pai — a criação é lá). Timer: `availableTasks =
+  TaskTree.grouped(...)`, `displayTitle(of:)` no seletor e no anel.
+- Gotcha: `.strikethrough` como modificador de `View` é macOS 13.3+ — em `Text` ok, no `TextField`
+  não usar (deployment 13.0).
+- **Sheet reorganizado em header / body / footer (mesmo dia):** header fixo (título + "↳ Pai"),
+  **body é a única `ScrollView`** (`draftForm` com `fixedSize` vertical + subtarefas + histórico, sem
+  `ScrollView` nas seções), footer fixo com erro + Cancelar/Salvar. Substitui a nota "Formulário de
+  edição maior" da FEAT-004. Sheet 560×760. Função interna chama `scrollBody` — `body(focused:)`
+  colide com `var body` da `View`.
+- `make test` **419 verdes** (Domain 130, Application 232, Infra 57); `xcodebuild` limpo.
+- ⚠️ Validar à mão: criar filha por Return 3× e pelo menu; lápis troca para o editor da filha (sem
+  seção de subtarefas); linha aninhada conclui/edita/apaga; concluir pai → filhas feitas, reabrir não
+  desfaz; apagar pai → diálogo; cartão da filha move sozinho, pai → Done leva as filhas, escopo por
+  tag só no pai mantém a filha; seletor "Pai › Filha" e relatório somando; busca pela filha abre o
+  pai; `tasks.json` antigo abre sem `.bak`.
+
+**🎯 Seletor do foco: ícone na subtarefa + escopo por tag (RF-09.15 / T-50, 2026-10-27, mesmo dia):**
+- Pedido: no menu do seletor a filha só tinha o título → agora ícone `arrow.turn.down.right` + título
+  próprio (ela já vem logo abaixo do pai); botão do seletor e anel seguem "Pai › Filha"
+  (`TimerViewModel.menuTitle(of:)` vs `displayTitle(of:)`). Para ter ícone **e** marca de seleção, os
+  itens do `Menu` viraram **`Toggle`** (checkmark nativo do NSMenu) em vez de `Button`+`Label("checkmark")`.
+- **`KanbanTaskScope` → `TaskScope`** (Domain, arquivo renomeado; docs antigos da FEAT-005 citam o nome
+  velho). Ganhou `includes(_:in:)` (filha herda escopo do pai) — `KanbanBoard.columns` e o timer usam.
+- `PomodoroConfiguration.focusTaskScope: TaskScope` (`decodeIfPresent`, default `.all`, independente do
+  escopo do quadro). `ManageTasksUseCase(settings:)` opcional: `renameTag`/`deleteTag` → `updateScopes`
+  (quadro + foco). `AppContainer` passa `settings` ao use case e `manageTasks` ao `SettingsViewModel`.
+- `SettingsViewModel`: `focusTaskScope`/`knownTags`/`isPresented`/`reloadFocusScope()` (o
+  `TaskChangeRelay` ganhou `focusSettings`), `setFocusScopeByTag`/`setFocusTag` → `save()` +
+  `onFocusScopeChanged` (→ `timer.reloadAvailableTasks()`). `SettingsView.focusScopeSection` ("Tarefas no
+  foco", aba Pomodoro, cópia da seção do Kanban). `TimerViewModel.reloadAvailableTasks` filtra pelo
+  escopo mas **mantém a tarefa da sessão corrente** (seletor do pausado); `activeSnapshot` resolve
+  "Pai › Filha" com o pai fora do escopo.
+- `make test` **424 verdes** (Domain 133, Application 234, Infra 57); `xcodebuild` limpo.
+- ⚠️ Validar à mão: menu do seletor mostra ↳ na filha e checkmark no item marcado (ocioso e pausado;
+  modo único e múltiplo); "Sem tarefa" limpa; Configurações › Pomodoro › "Tarefas no foco": marcar tag
+  filtra o seletor na hora, sem tag → aviso e seletor vazio, renomear/apagar tag na lista reflete nas
+  caixas com a aba aberta; filha sem tag entra pelo pai; pausar com tarefa fora do escopo mantém ela no
+  seletor; config antiga abre em "Todas".
+
+**🔍 Code review do dia + 10 correções (2026-10-27, noite):** revisão de tudo que estava não
+commitado (FEAT-005, T-48, FEAT-003, T-50). `make test` **437 verdes** (Domain 138, Application 242,
+Infra 57); `xcodebuild` limpo. Lista também no FEAT-003 ("Histórico de decisões").
+- 🔴 **Link importado corrompido ao salvar:** `editTask` renormalizava `sourceURL` mesmo sem mudar —
+  `mailto:x` virava `https://mailto:x`, `file://` (sem host) impedia salvar qualquer campo. Agora
+  `applyEdit` só normaliza/valida quando `edit.link != current.sourceURL`; `TaskEditorViewModel.linkURL`
+  segue a mesma regra. Forma curta e completa de `editTask` passaram a **1 leitura/1 gravação**
+  (`applyEdit(_:at:in:)` privado; `update(id:)` não é mais usado na edição).
+- 🔴 **Filha sumia do Kanban ao buscar pelo nome:** herança de escopo era avaliada sobre a lista já
+  filtrada pela barra. `KanbanBoard.columns(for:among:now:calendar:)` procura o pai em `among`
+  (lista cheia); a sobrecarga antiga delega com `among: tasks`. Aviso "saiu do quadro" usa
+  `includes(_:in:)`.
+- 🔴 **`SettingsViewModel.save()` clobberava o escopo do foco:** montava a config do zero com a cópia
+  em memória (só relida com a aba visível), desfazendo o que `renameTag`/`deleteTag` gravaram. Agora
+  `save()` carrega a config gravada e sobrescreve só os campos da VM; `focusTaskScope` é gravado
+  apenas por `applyFocusScope`. **Regra: campo da config que outra camada também escreve não entra
+  no `save()` genérico.**
+- **Invariante "subtarefa ativa ⇒ pai ativo"** (decisão 6 da FEAT-003): `addSubtask` em pai concluído
+  e `reopenTask` de filha reabrem o pai (`applyReopenCascade`, 1 gravação; espelha os dois no
+  Lembretes, `.failed` se qualquer um falhar). `ManageKanbanUseCase.moveTask` saindo da Done idem.
+- **Relatório dobrava tempo:** roll-up da filha no pai era por total; pai + filha na mesma sessão
+  multi-tarefa dava 2× ao pai. Agora por registro (`keys` ganha o pai uma vez por sessão).
+- **Editor: falha na subtarefa pendente deixava janelas stale:** `save()` grava rascunho → histórico →
+  subtarefa, com `onChanged()` em `defer` quando algo gravou e mensagem específica ("Rascunho salvo.
+  Já existe uma subtarefa…").
+- **Lista O(n²):** `activeChildren`/`completedChildren` (`[UUID: [FocusTask]]`) montados no `refresh()`;
+  `displayedTasks`, `children(of:)`, `isExpanded`, `subtaskProgress` leem do índice.
+- **Duplicação das abas de escopo:** `TaskScope` ganhou `isByTag`, `contains`, `selectableTags(knownTags:)`,
+  `settingTag(_:selected:)`, `switchingByTag` (Domain, testados); `SettingsViewModel` e
+  `KanbanSettingsViewModel` viraram wrappers de 1 linha.
+- ⚠️ Validar à mão: tarefa do Lembretes com `mailto:` — editar só o título mantém o link; buscar
+  pelo nome da filha no Kanban mantém o cartão; renomear tag com Configurações fechadas e depois
+  mexer num toggle da aba Sites não zera "Tarefas no foco"; arrastar filha da Done para "A fazer"
+  reabre o pai; relatório com pai + filha na mesma sessão.
