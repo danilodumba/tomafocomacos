@@ -365,6 +365,15 @@ esmaecido (`NSMenu` não renderiza chip). `xcodebuild` limpo; nenhum teste afeta
 já passavam o closure → `beginEditing`). VM guarda `parent: FocusTask?`; `parentTitle` computado.
 Rascunho não gravado ao trocar (igual pai → filha). Só App/, `xcodebuild` limpo.
 
+**🚀 Release 1.14 publicada (2026-10-27)** — `MARKETING_VERSION 1.14` / `CURRENT_PROJECT_VERSION 15`.
+Conteúdo: arrastar tarefa para virar subtarefa (+ menu "Tornar subtarefa de ▸"), chip de subtarefas
+visível, tags no seletor do foco e filha sem "Pai › Filha", "↳ Pai" do editor abre o pai.
+- `make release`: notarização **Accepted** (app e DMG), staple ok, `spctl` → `Notarized Developer ID`,
+  universal (`x86_64 arm64`), DMG 5,2 MB. Appcast `sparkle:version 15`, sem `hardwareRequirements`.
+- Dois commits (`feat:` + `release:`), tag `v1.14`. Site: bump nos 4 arquivos (sed `1\.13`), DMG + notas +
+  appcast no mesmo commit, push em `tomafoco-site`. Verificado ao vivo após ~60s: `/`, DMG, `app.js` **200**,
+  appcast com versão 15, SHA-256 do DMG servido = local; notas `.html` **301** (normal).
+
 ## Como retomar
 
 ```bash
