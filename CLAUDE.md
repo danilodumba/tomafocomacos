@@ -385,6 +385,17 @@ leitura no formulário, botão "Tarefas" no Kanban.
   appcast **200** (versão 16), SHA-256 do DMG servido = local; notas `.html` **301** (normal).
 - ⚠️ Validação manual da 1.15 ainda pendente (itens listados nas três entradas acima).
 
+**🚀 Release 1.16 publicada (2026-10-27)** — `MARKETING_VERSION 1.16` / `CURRENT_PROJECT_VERSION 17`.
+Conteúdo: metadados do cartão do Kanban um por linha (pai/subtarefas, vencimento, link, e "Diária" +
+histórico juntos na última) e remoção do aviso "nova cópia criada na primeira raia" ao concluir diária
+pelo quadro (o clone já é visível). Só `App/`, sem mudança de testes.
+- `make release`: notarização **Accepted** (app e DMG), staple ok, `spctl` → `Notarized Developer ID`,
+  universal (`x86_64 arm64`), DMG 5,2 MB. Appcast `sparkle:version 17`, sem `hardwareRequirements`.
+- Commits `feat:` + `fix:` + `release:`, tag `v1.16`. Site: bump nos 4 arquivos (sed `1\.15`), DMG + notas +
+  appcast no mesmo commit, push em `tomafoco-site`.
+- ⚠️ Validação manual da 1.15 e da 1.16 ainda pendente (cartão com tudo preenchido → 4 linhas na ordem;
+  diária na Done sem aviso).
+
 ## Como retomar
 
 ```bash
