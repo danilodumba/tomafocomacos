@@ -147,11 +147,9 @@ final class KanbanViewModel: ObservableObject, TaskRowActionRunning {
         runRowAction(task.id) {
             let outcome = try await self.useCase.moveTask(id: task.id, toLane: lane.id)
             self.reload()
-            // Diária (FEAT-004): o cartão vai para a Done e um clone aparece na 1ª raia — sem
-            // aviso, o cartão novo pareceria um bug.
-            if lane.isDone && task.repeatsDaily {
-                self.feedback = "\"\(task.title)\" concluída — nova cópia criada na primeira raia, com vencimento amanhã."
-            }
+            // Diária (FEAT-004): o cartão vai para a Done e um clone aparece na 1ª raia. O aviso
+            // que existia aqui foi removido a pedido do usuário (2026-10-27) — o clone na 1ª raia
+            // já é visível por si.
             if outcome == .failed {
                 self.feedback = "Tarefa movida aqui, mas não foi possível refletir no Lembretes"
                     + " (lembrete apagado ou acesso negado em Ajustes › Privacidade › Lembretes)."
