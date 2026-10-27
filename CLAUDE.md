@@ -375,6 +375,16 @@ visível, tags no seletor do foco e filha sem "Pai › Filha", "↳ Pai" do edit
   appcast no mesmo commit, push em `tomafoco-site`. Verificado ao vivo após ~60s: `/`, DMG, `app.js` **200**,
   appcast com versão 15, SHA-256 do DMG servido = local; notas `.html` **301** (normal).
 
+**🚀 Release 1.15 publicada (2026-10-27)** — `MARKETING_VERSION 1.15` / `CURRENT_PROJECT_VERSION 16`.
+Conteúdo: diária fecha e clona para amanhã (revisão da FEAT-004), datas de cadastro/encerramento só
+leitura no formulário, botão "Tarefas" no Kanban.
+- `make release`: notarização **Accepted** (app e DMG), staple ok, `spctl` → `Notarized Developer ID`,
+  universal (`x86_64 arm64`), DMG 5,2 MB. Appcast `sparkle:version 16`, sem `hardwareRequirements`.
+- Dois commits (`feat:` + `release:`), tag `v1.15`. Site: bump nos 4 arquivos (sed `1\.14`), DMG + notas +
+  appcast no mesmo commit, push em `tomafoco-site`. Verificado ao vivo após ~75s: `/`, DMG, `app.js`,
+  appcast **200** (versão 16), SHA-256 do DMG servido = local; notas `.html` **301** (normal).
+- ⚠️ Validação manual da 1.15 ainda pendente (itens listados nas três entradas acima).
+
 ## Como retomar
 
 ```bash
