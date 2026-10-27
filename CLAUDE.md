@@ -350,20 +350,21 @@ Conteúdo: Kanban (FEAT-005), subtarefas (FEAT-003), nota/link/urgente (T-48), e
   `expandedTaskIDs`. Menu de contexto "Tornar subtarefa de ▸" (`possibleParents(for:)`: topo ativas
   menos ela e o pai atual; vazio se já é pai) como alternativa acessível.
 - `make test` **450 verdes** (Domain 138, Application 255, Infra 57); `xcodebuild` limpo.
-- ⚠️ Validar à mão: item 8 da validação manual na FEAT-003 (arrastar topo → filha; pai com filhas
-  volta + aviso; soltar sobre filha avisa; filha troca de pai; menu de contexto).
+- ✅ Validado à mão pelo usuário em 2026-10-27 (release 1.14): arrastar topo → filha, pai com filhas
+  volta + aviso, soltar sobre filha avisa, filha troca de pai, menu de contexto.
 
 **🏷️ Seletor do foco: tags nos itens e filha sem "Pai › Filha" (2026-10-27, pós-1.13):** reverte
 parte do T-50. `TimerViewModel.displayTitle(of:)`/`menuTitle(of:)` **removidos**; botão do seletor e
 anel (`resolveTaskTitle`) usam só `task.title` — a filha segue com ícone ↳ no menu. `TaskTree.displayTitle`
 continua existindo para os Relatórios. `MainView.menuItemText(_:)`: `Text(título) + Text("  tag1 · tag2")`
 esmaecido (`NSMenu` não renderiza chip). `xcodebuild` limpo; nenhum teste afetado (só App/).
-⚠️ Validar à mão: menu com tags em cinza, filha só com o título, anel sem "Pai › ".
+✅ Validado à mão pelo usuário em 2026-10-27 (release 1.14).
 
 **↩️ Editor da subtarefa → pai (2026-10-27, pós-1.13):** "↳ Pai" no header do `TaskEditorSheet`
 é botão (cyan + chevron) → `TaskEditorViewModel.openParent()` → `onOpenTask(parent)` (lista e Kanban
 já passavam o closure → `beginEditing`). VM guarda `parent: FocusTask?`; `parentTitle` computado.
-Rascunho não gravado ao trocar (igual pai → filha). Só App/, `xcodebuild` limpo.
+Rascunho não gravado ao trocar (igual pai → filha). Só App/, `xcodebuild` limpo. ✅ Validado à mão
+pelo usuário em 2026-10-27 (release 1.14).
 
 **🚀 Release 1.14 publicada (2026-10-27)** — `MARKETING_VERSION 1.14` / `CURRENT_PROJECT_VERSION 15`.
 Conteúdo: arrastar tarefa para virar subtarefa (+ menu "Tornar subtarefa de ▸"), chip de subtarefas
