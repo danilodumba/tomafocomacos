@@ -22,6 +22,9 @@ public struct PomodoroConfiguration: Equatable, Codable, Sendable {
     public var blockAppsWhileRunning: Bool
     /// Mantém o bloqueio de sites ligado enquanto o Tomafoco estiver aberto, não só no foco (FEAT-002).
     public var blockSitesWhileRunning: Bool
+    /// Quais tarefas aparecem no seletor do foco (RF-09.15): todas ou só as com tag marcada —
+    /// mesmo `TaskScope` do Kanban, mas independente dele.
+    public var focusTaskScope: TaskScope
 
     /// A chave persistida continua sendo `autoStartNextFocus`: renomear quebraria a
     /// decodificação das configurações já salvas, e o store cai silenciosamente no padrão
@@ -32,6 +35,7 @@ public struct PomodoroConfiguration: Equatable, Codable, Sendable {
         case forceTerminateApps, blockedRedirectURL, syncReminderCompletion
         case allowMultipleTasksInFocus
         case blockAppsWhileRunning, blockSitesWhileRunning
+        case focusTaskScope
     }
 
     public init(
@@ -45,7 +49,8 @@ public struct PomodoroConfiguration: Equatable, Codable, Sendable {
         syncReminderCompletion: Bool = true,
         allowMultipleTasksInFocus: Bool = false,
         blockAppsWhileRunning: Bool = false,
-        blockSitesWhileRunning: Bool = false
+        blockSitesWhileRunning: Bool = false,
+        focusTaskScope: TaskScope = .all
     ) {
         self.focusDuration = focusDuration
         self.shortBreakDuration = shortBreakDuration
@@ -58,6 +63,7 @@ public struct PomodoroConfiguration: Equatable, Codable, Sendable {
         self.allowMultipleTasksInFocus = allowMultipleTasksInFocus
         self.blockAppsWhileRunning = blockAppsWhileRunning
         self.blockSitesWhileRunning = blockSitesWhileRunning
+        self.focusTaskScope = focusTaskScope
     }
 
     // Decode tolerante a chaves ausentes: `syncReminderCompletion` (e qualquer campo futuro)
@@ -77,6 +83,7 @@ public struct PomodoroConfiguration: Equatable, Codable, Sendable {
         allowMultipleTasksInFocus = try c.decodeIfPresent(Bool.self, forKey: .allowMultipleTasksInFocus) ?? d.allowMultipleTasksInFocus
         blockAppsWhileRunning = try c.decodeIfPresent(Bool.self, forKey: .blockAppsWhileRunning) ?? d.blockAppsWhileRunning
         blockSitesWhileRunning = try c.decodeIfPresent(Bool.self, forKey: .blockSitesWhileRunning) ?? d.blockSitesWhileRunning
+        focusTaskScope = try c.decodeIfPresent(TaskScope.self, forKey: .focusTaskScope) ?? d.focusTaskScope
     }
 
     /// Duração de uma dada fase segundo esta configuração.

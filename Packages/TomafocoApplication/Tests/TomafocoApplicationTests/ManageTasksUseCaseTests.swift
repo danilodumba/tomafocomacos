@@ -87,15 +87,100 @@ final class ManageTasksUseCaseTests: XCTestCase {
         XCTAssertNil(stored.priority)
     }
 
-    /// "Observação" saiu do formulário: notas importadas do Lembretes sobrevivem a salvar.
-    func test_editTask_preservaNotasImportadas() throws {
+    /// A forma curta do `editTask` é parcial: nota, link e urgente importados/gravados sobrevivem.
+    func test_editTask_formaCurta_preservaNotaLinkEUrgente() throws {
         var all = try repo.loadTasks()
         let task = FocusTask(id: UUID(), title: "Conta", source: .manual,
-                             createdAt: Date(timeIntervalSince1970: 0), notes: "conta de luz")
+                             createdAt: Date(timeIntervalSince1970: 0), notes: "conta de luz",
+                             sourceURL: "https://conta.com", isUrgent: true)
         all.append(task)
         try repo.saveTasks(all)
         try sut.editTask(id: task.id, title: "Conta paga", tags: [], dueDate: nil, priority: .none)
-        XCTAssertEqual(try repo.loadTasks().first?.notes, "conta de luz")
+        let stored = try XCTUnwrap(try repo.loadTasks().first)
+        XCTAssertEqual(stored.notes, "conta de luz")
+        XCTAssertEqual(stored.sourceURL, "https://conta.com")
+        XCTAssertTrue(stored.isUrgent)
+    }
+
+    // MARK: nota, link e urgente (RF-09.13)
+
+    func test_editTask_completo_gravaNotaLinkEUrgente() throws {
+        let task = try sut.addTask(title: "Conta")
+        try sut.editTask(id: task.id, TaskEdit(
+            title: "Conta", notes: "  pagar até dia 10 ", link: " globo.com/esportes ", isUrgent: true))
+        let stored = try XCTUnwrap(try repo.loadTasks().first)
+        XCTAssertEqual(stored.notes, "pagar até dia 10")
+        XCTAssertEqual(stored.sourceURL, "https://globo.com/esportes")
+        XCTAssertTrue(stored.isUrgent)
+    }
+
+    func test_editTask_completo_notaELinkEmBrancoViramNil_eUrgenteDesliga() throws {
+        let task = try sut.addTask(title: "Conta")
+        try sut.editTask(id: task.id, TaskEdit(title: "Conta", notes: "x", link: "a.com", isUrgent: true))
+        try sut.editTask(id: task.id, TaskEdit(title: "Conta", notes: "   ", link: "", isUrgent: false))
+        let stored = try XCTUnwrap(try repo.loadTasks().first)
+        XCTAssertNil(stored.notes)
+        XCTAssertNil(stored.sourceURL)
+        XCTAssertFalse(stored.isUrgent)
+    }
+
+    func test_editTask_linkComEsquema_ficaComoEsta() throws {
+        let task = try sut.addTask(title: "Conta")
+        try sut.editTask(id: task.id, TaskEdit(title: "Conta", link: "http://intranet.local/x?y=1"))
+        XCTAssertEqual(try repo.loadTasks().first?.sourceURL, "http://intranet.local/x?y=1")
+    }
+
+    /// Link que já estava gravado (ex.: `mailto:` ou `file://` vindos do Lembretes) não passa
+    /// pela normalização quando não mudou — senão `mailto:x` viraria `https://mailto:x` e
+    /// `file://` (sem host) impediria salvar qualquer outro campo.
+    func test_editTask_linkInalterado_naoRenormalizaNemValida() throws {
+        for raw in ["mailto:joao@x.com", "file:///Users/me/doc.pdf", "tel:+5511999999999"] {
+            let task = FocusTask(id: UUID(), title: "Importada \(raw)", source: .reminders,
+                                 createdAt: now, sourceURL: raw)
+            try repo.saveTasks(try repo.loadTasks() + [task])
+
+            try sut.editTask(id: task.id, TaskEdit(title: "Mudou \(raw)", link: raw))
+            XCTAssertEqual(try stored(task.id).sourceURL, raw)
+            XCTAssertEqual(try stored(task.id).title, "Mudou \(raw)")
+
+            try sut.editTask(id: task.id, title: "Curta \(raw)", tags: [], dueDate: nil, priority: .none)
+            XCTAssertEqual(try stored(task.id).sourceURL, raw)
+        }
+    }
+
+    func test_editTask_linkAlterado_continuaValidando() throws {
+        let task = FocusTask(id: UUID(), title: "Importada", source: .reminders, createdAt: now,
+                             sourceURL: "mailto:joao@x.com")
+        try repo.saveTasks([task])
+        XCTAssertThrowsError(try sut.editTask(id: task.id, TaskEdit(title: "Importada", link: "isso não é link")))
+        try sut.editTask(id: task.id, TaskEdit(title: "Importada", link: "globo.com"))
+        XCTAssertEqual(try stored(task.id).sourceURL, "https://globo.com")
+    }
+
+    func test_editTask_gravaUmaVezSo() throws {
+        let task = try sut.addTask(title: "Conta")
+        let before = repo.saveCallCount
+        try sut.editTask(id: task.id, TaskEdit(title: "Conta paga", link: "a.com"))
+        XCTAssertEqual(repo.saveCallCount - before, 1)
+        try sut.editTask(id: task.id, title: "Conta quitada", tags: [], dueDate: nil, priority: .none)
+        XCTAssertEqual(repo.saveCallCount - before, 2)
+    }
+
+    func test_editTask_linkInvalido_lancaENaoGrava() throws {
+        let task = try sut.addTask(title: "Conta")
+        XCTAssertThrowsError(try sut.editTask(id: task.id, TaskEdit(title: "Mudou", link: "isso não é link"))) {
+            XCTAssertEqual($0 as? DomainError, .invalidLink("isso não é link"))
+        }
+        XCTAssertEqual(try repo.loadTasks().first?.title, "Conta")
+    }
+
+    func test_setUrgent_ligaEDesliga() throws {
+        let task = try sut.addTask(title: "Conta")
+        try sut.setUrgent(id: task.id, true)
+        XCTAssertTrue(try XCTUnwrap(repo.loadTasks().first).isUrgent)
+        try sut.setUrgent(id: task.id, false)
+        XCTAssertFalse(try XCTUnwrap(repo.loadTasks().first).isUrgent)
+        XCTAssertNoThrow(try sut.setUrgent(id: UUID(), true))
     }
 
     func test_editTask_tituloVazio_lanca() throws {
@@ -212,6 +297,246 @@ final class ManageTasksUseCaseTests: XCTestCase {
         XCTAssertEqual(try repo.loadTasks().first?.history.map(\.text), ["liguei"])
     }
 
+    // MARK: subtarefas (FEAT-003)
+
+    private func stored(_ id: UUID) throws -> FocusTask {
+        try XCTUnwrap(repo.tasks.first { $0.id == id })
+    }
+
+    func test_addSubtask_criaTarefaCompletaComPaiETrimaUsandoNowEMakeID() throws {
+        let childID = UUID(uuidString: "00000000-0000-0000-0000-0000000000EE")!
+        var ids = [UUID(uuidString: "00000000-0000-0000-0000-0000000000AA")!, childID]
+        let sut = ManageTasksUseCase(
+            tasks: repo, importer: importer, now: { self.now },
+            makeID: { ids.isEmpty ? UUID() : ids.removeFirst() })
+        let parent = try sut.addTask(title: "Apresentação")
+        try sut.setTags(id: parent.id, tags: ["trabalho"])
+
+        let child = try sut.addSubtask(parentID: parent.id, title: "  Esboço  ", tags: ["slides"])
+
+        XCTAssertEqual(child.id, childID)
+        XCTAssertEqual(child.parentID, parent.id)
+        XCTAssertEqual(child.title, "Esboço")
+        XCTAssertEqual(child.createdAt, now)
+        XCTAssertEqual(child.source, .manual)
+        XCTAssertEqual(child.tags, ["slides"])
+        XCTAssertTrue(child.isSubtask)
+        XCTAssertEqual(try stored(child.id).parentID, parent.id)
+        // Tag da subtarefa entra no catálogo como qualquer outra.
+        XCTAssertEqual(try sut.allTags(), ["slides", "trabalho"])
+    }
+
+    /// Nasce na raia do pai (Kanban): criar pelo formulário não pode jogar a filha na 1ª raia
+    /// enquanto o pai está em "Em andamento".
+    func test_addSubtask_herdaRaiaDoPai() throws {
+        let parent = try sut.addTask(title: "Apresentação")
+        let lane = UUID()
+        try sut.update(id: parent.id) { $0.laneID = lane }
+
+        let child = try sut.addSubtask(parentID: parent.id, title: "Esboço")
+
+        XCTAssertEqual(child.laneID, lane)
+    }
+
+    func test_addSubtask_paiInexistente_lanca() {
+        XCTAssertThrowsError(try sut.addSubtask(parentID: UUID(), title: "x")) { error in
+            XCTAssertEqual(error as? DomainError, .parentTaskNotFound)
+        }
+        XCTAssertEqual(repo.tasks, [])
+    }
+
+    /// Um nível só: subtarefa de subtarefa é recusada.
+    func test_addSubtask_deSubtarefa_lanca() throws {
+        let parent = try sut.addTask(title: "Apresentação")
+        let child = try sut.addSubtask(parentID: parent.id, title: "Esboço")
+        XCTAssertThrowsError(try sut.addSubtask(parentID: child.id, title: "Neta")) { error in
+            XCTAssertEqual(error as? DomainError, .subtaskNestingNotAllowed)
+        }
+        XCTAssertEqual(repo.tasks.count, 2)
+    }
+
+    func test_addSubtask_tituloEmBranco_lanca() throws {
+        let parent = try sut.addTask(title: "Apresentação")
+        XCTAssertThrowsError(try sut.addSubtask(parentID: parent.id, title: " \n ")) { error in
+            XCTAssertEqual(error as? DomainError, .emptyTaskTitle)
+        }
+        XCTAssertEqual(repo.tasks.count, 1)
+    }
+
+    /// Unicidade por irmãos ativos: repete sob outro pai e repete título de tarefa de topo;
+    /// não repete sob o mesmo pai (salvo se a irmã já estiver concluída).
+    func test_addSubtask_duplicataSoEntreIrmasAtivas() async throws {
+        let p1 = try sut.addTask(title: "P1")
+        let p2 = try sut.addTask(title: "P2")
+        let revisar = try sut.addSubtask(parentID: p1.id, title: "Revisar")
+        XCTAssertNoThrow(try sut.addSubtask(parentID: p2.id, title: "revisar"))
+        XCTAssertNoThrow(try sut.addSubtask(parentID: p1.id, title: "P2"))
+        XCTAssertThrowsError(try sut.addSubtask(parentID: p1.id, title: " REVISAR ")) { error in
+            XCTAssertEqual(error as? DomainError, .duplicateEntry("REVISAR"))
+        }
+        try await sut.completeTask(id: revisar.id)
+        XCTAssertNoThrow(try sut.addSubtask(parentID: p1.id, title: "Revisar"))
+    }
+
+    /// `addTask`/lote: tarefa de topo pode repetir o título de uma subtarefa ativa.
+    func test_addTaskEValidateNewTasks_ignoramSubtarefasNaDuplicata() throws {
+        let parent = try sut.addTask(title: "Apresentação")
+        try sut.addSubtask(parentID: parent.id, title: "Revisar")
+        XCTAssertNoThrow(try sut.addTask(title: "Revisar"))
+        XCTAssertEqual(try sut.validateNewTasks([NewTaskDraft(title: "Revisar")]).keys.sorted(), [0])
+        try sut.addSubtask(parentID: parent.id, title: "Ensaiar")
+        XCTAssertEqual(try sut.validateNewTasks([NewTaskDraft(title: "Ensaiar")]), [:])
+    }
+
+    /// `editTask`: duplicata contra irmãs, não contra a lista inteira; `parentID` é preservado.
+    func test_editTask_duplicataEntreIrmasEPreservaPai() throws {
+        let parent = try sut.addTask(title: "Apresentação")
+        let a = try sut.addSubtask(parentID: parent.id, title: "A")
+        try sut.addSubtask(parentID: parent.id, title: "B")
+
+        XCTAssertNoThrow(try sut.editTask(id: a.id, title: "Apresentação", tags: [], dueDate: nil, priority: .none))
+        XCTAssertThrowsError(try sut.editTask(id: a.id, title: "b", tags: [], dueDate: nil, priority: .none)) { error in
+            XCTAssertEqual(error as? DomainError, .duplicateEntry("b"))
+        }
+        try sut.editTask(id: a.id, TaskEdit(title: "A2", isUrgent: true))
+        XCTAssertEqual(try stored(a.id).parentID, parent.id)
+        XCTAssertEqual(try stored(a.id).title, "A2")
+    }
+
+    /// Concluir o pai fecha as filhas abertas com a MESMA data; as já concluídas mantêm a sua.
+    func test_completeTask_cascataFechaFilhasAbertasEPreservaDataDasFeitas() async throws {
+        let parent = try sut.addTask(title: "Apresentação")
+        let feita = try sut.addSubtask(parentID: parent.id, title: "feita")
+        let aberta = try sut.addSubtask(parentID: parent.id, title: "aberta")
+        let earlier = now.addingTimeInterval(-3_600)
+        let earlierSut = ManageTasksUseCase(tasks: repo, importer: importer, now: { earlier })
+        try await earlierSut.completeTask(id: feita.id)
+        let saves = repo.saveCallCount
+
+        try await sut.completeTask(id: parent.id)
+
+        XCTAssertEqual(try stored(parent.id).completedAt, now)
+        XCTAssertEqual(try stored(feita.id).completedAt, earlier)
+        XCTAssertEqual(try stored(aberta.id).completedAt, now)
+        XCTAssertEqual(repo.saveCallCount - saves, 1, "cascata numa gravação só")
+    }
+
+    /// Fechar todas as filhas NÃO conclui o pai; concluir a filha não mexe no pai nem nas irmãs.
+    func test_completeTask_filha_naoTocaPaiNemIrmas() async throws {
+        let parent = try sut.addTask(title: "Apresentação")
+        let a = try sut.addSubtask(parentID: parent.id, title: "A")
+        let b = try sut.addSubtask(parentID: parent.id, title: "B")
+
+        try await sut.completeTask(id: a.id)
+        try await sut.completeTask(id: b.id)
+
+        XCTAssertNil(try stored(parent.id).completedAt)
+    }
+
+    /// Invariante "subtarefa ativa ⇒ pai ativo": filha ativa sob pai concluído ficaria invisível
+    /// na lista (só aparece aninhada). Criar filha num pai concluído reabre o pai, numa gravação só.
+    func test_addSubtask_paiConcluido_reabreOPai() async throws {
+        let parent = try sut.addTask(title: "Apresentação")
+        try await sut.completeTask(id: parent.id)
+        let before = repo.saveCallCount
+
+        let child = try sut.addSubtask(parentID: parent.id, title: "Nova")
+
+        XCTAssertNil(try stored(parent.id).completedAt)
+        XCTAssertNil(try stored(child.id).completedAt)
+        XCTAssertEqual(repo.saveCallCount - before, 1)
+    }
+
+    func test_reopenTask_filha_reabreOPaiConcluido_eEspelhaOsDois() async throws {
+        let sut = ManageTasksUseCase(tasks: repo, importer: importer, now: { self.now },
+                                     shouldSyncReminderCompletion: { true })
+        let parent = FocusTask(id: UUID(), title: "Pai", source: .reminders, reminderID: "r-pai", createdAt: now)
+        try repo.saveTasks([parent])
+        let child = try sut.addSubtask(parentID: parent.id, title: "Filha")
+        try await sut.completeTask(id: parent.id)
+        XCTAssertEqual(try stored(child.id).completedAt, now)
+        let writesBefore = importer.completionWriteBacks.count
+        let before = repo.saveCallCount
+
+        let outcome = try await sut.reopenTask(id: child.id)
+
+        XCTAssertNil(try stored(child.id).completedAt)
+        XCTAssertNil(try stored(parent.id).completedAt, "filha ativa exige pai ativo")
+        XCTAssertEqual(repo.saveCallCount - before, 1)
+        XCTAssertEqual(outcome, .synced)
+        let writes = importer.completionWriteBacks.dropFirst(writesBefore)
+        XCTAssertEqual(writes.map(\.reminderID), ["r-pai"], "só o pai veio do Lembretes")
+        XCTAssertEqual(writes.map(\.completed), [false])
+    }
+
+    func test_reopenTask_filha_comPaiAberto_naoTocaOPai() async throws {
+        let parent = try sut.addTask(title: "Pai")
+        let child = try sut.addSubtask(parentID: parent.id, title: "Filha")
+        try await sut.completeTask(id: child.id)
+        try sut.update(id: parent.id) { $0.laneID = UUID() }
+        let parentBefore = try stored(parent.id)
+
+        try await sut.reopenTask(id: child.id)
+
+        XCTAssertEqual(try stored(parent.id), parentBefore)
+    }
+
+    func test_reopenTask_naoReabreFilhas() async throws {
+        let parent = try sut.addTask(title: "Apresentação")
+        let child = try sut.addSubtask(parentID: parent.id, title: "aberta")
+        try await sut.completeTask(id: parent.id)
+
+        try await sut.reopenTask(id: parent.id)
+
+        XCTAssertNil(try stored(parent.id).completedAt)
+        XCTAssertEqual(try stored(child.id).completedAt, now)
+    }
+
+    /// Pai diário nunca fecha (`completedAt` fica `nil`), então não há cascata.
+    func test_completeTask_paiDiario_naoTocaFilhas() async throws {
+        let parent = try sut.addTask(title: "Treino")
+        try sut.setRepeatsDaily(id: parent.id, true)
+        let child = try sut.addSubtask(parentID: parent.id, title: "alongar")
+
+        try await sut.completeTask(id: parent.id)
+
+        XCTAssertNil(try stored(child.id).completedAt)
+        XCTAssertEqual(try stored(parent.id).completionLog, [now])
+    }
+
+    /// Filha diária na cascata registra o dia (regra própria) em vez de fechar.
+    func test_completeTask_cascataRespeitaFilhaDiaria() async throws {
+        let parent = try sut.addTask(title: "Apresentação")
+        let child = try sut.addSubtask(parentID: parent.id, title: "revisar notas")
+        try sut.setRepeatsDaily(id: child.id, true)
+
+        try await sut.completeTask(id: parent.id)
+
+        XCTAssertNil(try stored(child.id).completedAt)
+        XCTAssertEqual(try stored(child.id).completionLog, [now])
+    }
+
+    func test_completeTask_idInexistente_naoGrava() async throws {
+        try sut.addTask(title: "Intacta")
+        let saves = repo.saveCallCount
+        let outcome = try await sut.completeTask(id: UUID())
+        XCTAssertEqual(outcome, .notApplicable)
+        XCTAssertEqual(repo.saveCallCount, saves)
+    }
+
+    func test_deleteTask_cascataApagaFilhas_eFilhaSozinhaNaoApagaPai() throws {
+        let parent = try sut.addTask(title: "Apresentação")
+        let a = try sut.addSubtask(parentID: parent.id, title: "A")
+        try sut.addSubtask(parentID: parent.id, title: "B")
+        let outra = try sut.addTask(title: "Outra")
+
+        try sut.deleteTask(id: a.id)
+        XCTAssertEqual(repo.tasks.map(\.title), ["Apresentação", "B", "Outra"])
+
+        try sut.deleteTask(id: parent.id)
+        XCTAssertEqual(repo.tasks.map(\.id), [outra.id])
+    }
+
     // MARK: cadastro de tags (RF-09.5 / item 1)
 
     func test_createTag_apareceEmAllTags_mesmoSemTarefa() throws {
@@ -234,6 +559,30 @@ final class ManageTasksUseCaseTests: XCTestCase {
         try sut.deleteTag("temp")
         XCTAssertEqual(try repo.loadTasks().first?.tags, ["keep"])
         XCTAssertFalse(try sut.allTags().contains("temp"))
+    }
+
+    // RF-09.15 — escopo por tag do seletor do foco acompanha rename/delete, como o do Kanban.
+    func test_renameEDeleteTag_atualizamEscopoDoFoco() throws {
+        let settings = InMemorySettingsRepository(
+            configuration: PomodoroConfiguration(focusTaskScope: .tags(["Trabalho", "Casa"])))
+        let sut = ManageTasksUseCase(tasks: repo, importer: importer, now: { self.now }, settings: settings)
+        try sut.addTask(title: "A", tags: ["Trabalho", "Casa"])
+
+        try sut.renameTag(from: "trabalho", to: "Job")
+        XCTAssertEqual(settings.configuration.focusTaskScope, .tags(["Job", "Casa"]))
+
+        try sut.deleteTag("Casa")
+        try sut.deleteTag("Job")
+        XCTAssertEqual(settings.configuration.focusTaskScope, .tags([]))
+    }
+
+    func test_renameTag_escopoDoFocoEmTodas_naoRegravaConfig() throws {
+        let settings = InMemorySettingsRepository(configuration: PomodoroConfiguration(focusDuration: 50 * 60))
+        let sut = ManageTasksUseCase(tasks: repo, importer: importer, now: { self.now }, settings: settings)
+        try sut.addTask(title: "A", tags: ["x"])
+        try sut.renameTag(from: "x", to: "y")
+        XCTAssertEqual(settings.configuration.focusTaskScope, .all)
+        XCTAssertEqual(settings.configuration.focusDuration, 50 * 60, "o resto da config fica intacto")
     }
 
     func test_addTask_tituloVazio_lanca() {

@@ -30,8 +30,12 @@ final class TimerViewModel: ObservableObject {
     /// Tarefas vinculadas à sessão corrente (running/paused). Espelha `session.taskIDs` e é a
     /// seleção do picker exibido quando o foco está pausado (RF-09.1 — trocar tarefa no meio).
     @Published private(set) var currentSessionTaskIDs: Set<UUID> = []
-    /// Tarefas disponíveis no seletor — recarregadas sempre que o timer fica ocioso.
+    /// Tarefas disponíveis no seletor — recarregadas sempre que o timer fica ocioso. Já passam
+    /// pelo escopo por tag das Configurações (RF-09.15).
     @Published private(set) var availableTasks: [FocusTask] = []
+    /// Todas as ativas da última recarga, antes do escopo: resolve "Pai › Filha" mesmo quando o
+    /// pai ficou fora do seletor.
+    private var activeSnapshot: [FocusTask] = []
     /// Título(s) da(s) tarefa(s) da sessão corrente — visível no anel durante toda a sessão,
     /// para o usuário nunca perder de vista no que deveria estar focando.
     @Published private(set) var currentTaskTitle: String?
@@ -237,8 +241,11 @@ final class TimerViewModel: ObservableObject {
 
         // Fora do cache: procura nas ativas já carregadas e, em último caso, no disco
         // (uma vez por conjunto — o cache segura os ticks seguintes).
-        let all = availableTasks + ((try? manageTasks.allTasks()) ?? [])
-        let titles = taskIDs.compactMap { id in all.first { $0.id == id }?.title }
+        let all = activeSnapshot + ((try? manageTasks.allTasks()) ?? [])
+        // Subtarefa (FEAT-003) aparece como "Pai › Filha" no anel.
+        let titles = taskIDs.compactMap { id in
+            all.first { $0.id == id }.map { TaskTree.displayTitle(of: $0, in: all) }
+        }
         guard !titles.isEmpty else { return nil }
         let title = joinedTitle(titles)
         resolvedTaskTitle = (key, title)
@@ -254,9 +261,31 @@ final class TimerViewModel: ObservableObject {
     /// Recarrega o seletor de tarefas. Chamado ao ficar ocioso e pela janela de tarefas
     /// após qualquer mudança (criar/concluir/importar) — seleção morta é limpa.
     func reloadAvailableTasks() {
-        availableTasks = (try? manageTasks.activeTasks()) ?? []
+        let active = (try? manageTasks.activeTasks()) ?? []
+        activeSnapshot = active
+        // Escopo por tag (RF-09.15): filha herda o do pai. A tarefa da sessão corrente fica
+        // visível mesmo fora do escopo — senão o seletor do pausado não mostraria o que está em foco.
+        let scope = settings.loadConfiguration().focusTaskScope
+        let keep = currentSessionTaskIDs
+        let inScope = active.filter { scope.includes($0, in: active) || keep.contains($0.id) }
+        // Subtarefas entram no seletor (FEAT-003), agrupadas logo abaixo do pai.
+        availableTasks = TaskTree.grouped(inScope)
         let live = Set(availableTasks.map(\.id))
         selectedTaskIDs.formIntersection(live)
+    }
+
+    /// Rótulo fora do contexto do pai (botão do seletor, resumo): subtarefa vira "Pai › Filha".
+    func displayTitle(of task: FocusTask) -> String {
+        TaskTree.displayTitle(of: task, in: activeSnapshot)
+    }
+
+    /// Rótulo dentro do menu: a subtarefa já está logo abaixo do pai, então só o título dela
+    /// (o ícone ↳ diferencia). Se o pai não está no menu (fora do escopo), volta a "Pai › Filha".
+    func menuTitle(of task: FocusTask) -> String {
+        guard let parentID = task.parentID, availableTasks.contains(where: { $0.id == parentID }) else {
+            return displayTitle(of: task)
+        }
+        return task.title
     }
 
     /// Fração decorrida da fase — 0 no início, 1 no fim.

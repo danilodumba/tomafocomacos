@@ -1,4 +1,5 @@
 import Foundation
+import os
 import TomafocoDomain
 
 /// Resultado da importação do Lembretes (RF-09.3).
@@ -32,6 +33,33 @@ public enum ReminderSyncOutcome: Equatable, Sendable {
 /// CRUD de tarefas de foco + importação do Lembretes (RF-09).
 /// Persistência falível é engolida com log? Não — aqui os erros de disco sobem para a UI
 /// tratar (diferente do coordinator, salvar tarefa é a ação principal, não efeito colateral).
+/// Rascunho do formulário de edição (RF-09.6 + RF-09.13) — tudo que o usuário pode mudar de
+/// uma vez. Valores crus: quem normaliza (trim, tags, link) é o use case.
+public struct TaskEdit: Equatable, Sendable {
+    public var title: String
+    public var tags: [String]
+    public var dueDate: Date?
+    public var priority: TaskPriority
+    public var repeatsDaily: Bool
+    public var notes: String?
+    public var link: String?
+    public var isUrgent: Bool
+
+    public init(
+        title: String, tags: [String] = [], dueDate: Date? = nil, priority: TaskPriority = .none,
+        repeatsDaily: Bool = false, notes: String? = nil, link: String? = nil, isUrgent: Bool = false
+    ) {
+        self.title = title
+        self.tags = tags
+        self.dueDate = dueDate
+        self.priority = priority
+        self.repeatsDaily = repeatsDaily
+        self.notes = notes
+        self.link = link
+        self.isUrgent = isUrgent
+    }
+}
+
 public final class ManageTasksUseCase {
     private let tasks: TaskRepository
     private let importer: TaskImporting
@@ -43,6 +71,13 @@ public final class ManageTasksUseCase {
     private let tagCatalog: TagCatalog
     /// Define o que é "amanhã" para a tarefa diária (FEAT-004). Injetado: testes fixam o fuso.
     private let calendar: Calendar
+    /// Quadro Kanban (FEAT-005), só para manter o escopo por tag em dia quando uma tag é
+    /// renomeada/apagada. Opcional: sem quadro (testes antigos) as operações de tag seguem iguais.
+    private let kanbanBoards: KanbanBoardRepository?
+    /// Configuração do app (RF-09.15), só para manter o escopo por tag do seletor do foco em dia
+    /// quando uma tag é renomeada/apagada. Opcional pelo mesmo motivo do quadro.
+    private let settings: SettingsRepository?
+    private static let logger = Logger(subsystem: "com.dsdumba.tomafoco", category: "ManageTasksUseCase")
 
     // `now` sem default de propósito: `Date()` é proibido na Application (testabilidade) —
     // o Composition Root injeta o relógio real.
@@ -53,7 +88,9 @@ public final class ManageTasksUseCase {
         makeID: @escaping () -> UUID = { UUID() },
         shouldSyncReminderCompletion: @escaping () -> Bool = { false },
         tagCatalog: TagCatalog = EphemeralTagCatalog(),
-        calendar: Calendar = .current
+        calendar: Calendar = .current,
+        kanbanBoards: KanbanBoardRepository? = nil,
+        settings: SettingsRepository? = nil
     ) {
         self.tasks = tasks
         self.importer = importer
@@ -62,6 +99,8 @@ public final class ManageTasksUseCase {
         self.shouldSyncReminderCompletion = shouldSyncReminderCompletion
         self.tagCatalog = tagCatalog
         self.calendar = calendar
+        self.kanbanBoards = kanbanBoards
+        self.settings = settings
     }
 
     public func allTasks() throws -> [FocusTask] { try tasks.loadTasks() }
@@ -73,7 +112,8 @@ public final class ManageTasksUseCase {
             .sorted { $0.createdAt > $1.createdAt }
     }
 
-    /// Cria tarefa manual. Lança `emptyTaskTitle` ou `duplicateEntry` (título repetido entre ativas).
+    /// Cria tarefa manual de topo. Lança `emptyTaskTitle` ou `duplicateEntry` (título repetido
+    /// entre as ativas **de topo** — subtarefa pode repetir título de uma tarefa de topo).
     /// `tags` é normalizado (`FocusTask.normalizeTags`) — vazias/duplicatas somem.
     @discardableResult
     public func addTask(title: String, tags: [String] = []) throws -> FocusTask {
@@ -81,10 +121,9 @@ public final class ManageTasksUseCase {
         guard !trimmed.isEmpty else { throw DomainError.emptyTaskTitle }
 
         var all = try tasks.loadTasks()
-        let duplicated = all.contains {
-            !$0.isCompleted && $0.title.compare(trimmed, options: [.caseInsensitive]) == .orderedSame
+        guard !Self.hasActiveSibling(titled: trimmed, parentID: nil, excluding: nil, in: all) else {
+            throw DomainError.duplicateEntry(trimmed)
         }
-        guard !duplicated else { throw DomainError.duplicateEntry(trimmed) }
 
         let task = FocusTask(id: makeID(), title: trimmed, source: .manual, createdAt: now(), tags: tags)
         all.append(task)
@@ -92,13 +131,57 @@ public final class ManageTasksUseCase {
         return task
     }
 
+    // MARK: - Subtarefas (FEAT-003 / RF-09.14)
+
+    /// Cria uma subtarefa: tarefa manual completa com `parentID`. Nasce na raia do pai (Kanban).
+    /// Lança `parentTaskNotFound`, `subtaskNestingNotAllowed` (pai já é subtarefa — um nível só),
+    /// `emptyTaskTitle` ou `duplicateEntry` (título repetido entre as subtarefas ATIVAS do mesmo
+    /// pai — sob outro pai, ou como tarefa de topo, pode repetir).
+    ///
+    /// **Invariante: subtarefa ativa ⇒ pai ativo.** Pai concluído é reaberto na mesma gravação —
+    /// a lista só mostra a filha aninhada no pai, então uma filha ativa sob pai concluído ficaria
+    /// invisível com "Mostrar concluídas" desligado. (A reabertura do pai aqui não espelha no
+    /// Lembretes: este método é síncrono; o espelhamento segue só em `completeTask`/`reopenTask`.)
+    @discardableResult
+    public func addSubtask(parentID: UUID, title: String, tags: [String] = []) throws -> FocusTask {
+        let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { throw DomainError.emptyTaskTitle }
+
+        var all = try tasks.loadTasks()
+        guard let parentIdx = all.firstIndex(where: { $0.id == parentID }) else { throw DomainError.parentTaskNotFound }
+        guard !all[parentIdx].isSubtask else { throw DomainError.subtaskNestingNotAllowed }
+        guard !Self.hasActiveSibling(titled: trimmed, parentID: parentID, excluding: nil, in: all) else {
+            throw DomainError.duplicateEntry(trimmed)
+        }
+        if all[parentIdx].isCompleted { applyReopen(to: &all[parentIdx]) }
+
+        let task = FocusTask(
+            id: makeID(), title: trimmed, source: .manual, createdAt: now(), tags: tags,
+            laneID: all[parentIdx].laneID, parentID: parentID)
+        all.append(task)
+        try tasks.saveTasks(all)
+        registerInCatalog(task.tags)
+        return task
+    }
+
+    /// Unicidade de título é por **irmãos ativos**: entre as tarefas de topo (`parentID == nil`)
+    /// ou entre as subtarefas do mesmo pai. `excluding` tira a própria tarefa na edição.
+    private static func hasActiveSibling(
+        titled title: String, parentID: UUID?, excluding id: UUID?, in all: [FocusTask]
+    ) -> Bool {
+        all.contains {
+            $0.id != id && !$0.isCompleted && $0.parentID == parentID
+                && $0.title.compare(title, options: [.caseInsensitive]) == .orderedSame
+        }
+    }
+
     // MARK: - Criação em lote (RF-09.8)
 
     /// Problemas de cada rascunho, por índice no lote: `emptyTaskTitle`, ou `duplicateEntry`
-    /// contra tarefa ATIVA (mesma regra do `addTask`) ou contra uma linha ANTERIOR do próprio
-    /// lote — a primeira ocorrência fica válida, as repetições é que acusam. Vazio = lote ok.
+    /// contra tarefa ATIVA de topo (mesma regra do `addTask`) ou contra uma linha ANTERIOR do
+    /// próprio lote — a primeira ocorrência fica válida, as repetições é que acusam. Vazio = lote ok.
     public func validateNewTasks(_ drafts: [NewTaskDraft]) throws -> [Int: DomainError] {
-        let activeTitles = try tasks.loadTasks().filter { !$0.isCompleted }.map(\.title)
+        let activeTitles = try tasks.loadTasks().filter { !$0.isCompleted && !$0.isSubtask }.map(\.title)
         var seen: [String] = []
         var issues: [Int: DomainError] = [:]
         for (index, draft) in drafts.enumerated() {
@@ -149,8 +232,8 @@ public final class ManageTasksUseCase {
     /// mesmo título — a própria tarefa é excluída da comparação, senão salvar sem mexer no título
     /// acusaria duplicata). Tarefa inexistente é no-op (devolve `nil`).
     ///
-    /// `notes` (vinda da importação do Lembretes) não é editável aqui e fica intacta — o campo
-    /// "Observação" saiu do formulário, substituído pelo histórico (FEAT-001).
+    /// Edição **parcial**: nota, link e urgente (RF-09.13) ficam como estão — forma curta para
+    /// quem só mexe nos campos originais; o formulário usa `editTask(id:_:)` com `TaskEdit`.
     /// `dueDate == nil` limpa o vencimento.
     /// **Não** espelha nada de volta no Lembretes: o write-back é só de conclusão — editar aqui
     /// mantém a tarefa local divergente do lembrete de origem de propósito.
@@ -163,27 +246,57 @@ public final class ManageTasksUseCase {
         priority: TaskPriority,
         repeatsDaily: Bool = false
     ) throws -> FocusTask? {
-        let trimmedTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        var all = try tasks.loadTasks()
+        guard let idx = all.firstIndex(where: { $0.id == id }) else { return nil }
+        let current = all[idx]
+        return try applyEdit(TaskEdit(
+            title: title, tags: tags, dueDate: dueDate, priority: priority, repeatsDaily: repeatsDaily,
+            notes: current.notes, link: current.sourceURL, isUrgent: current.isUrgent), at: idx, in: &all)
+    }
+
+    /// Edição completa numa transação (RF-09.6 + RF-09.13). Nota em branco vira `nil`; link ganha
+    /// `https://` se vier sem esquema e lança `invalidLink` se não for URL. Tarefa inexistente é
+    /// no-op (devolve `nil`).
+    @discardableResult
+    public func editTask(id: UUID, _ edit: TaskEdit) throws -> FocusTask? {
+        var all = try tasks.loadTasks()
+        guard let idx = all.firstIndex(where: { $0.id == id }) else { return nil }
+        return try applyEdit(edit, at: idx, in: &all)
+    }
+
+    /// Valida, muta e grava (uma leitura feita por quem chama, uma gravação aqui).
+    ///
+    /// O link só passa pela normalização/validação quando **mudou**: a tarefa pode ter vindo do
+    /// Lembretes com `mailto:`, `tel:` ou `file://` (sem `://` ou sem host) — reprocessar o valor
+    /// que já estava gravado reescreveria `mailto:x` como `https://mailto:x` ou impediria salvar
+    /// qualquer outro campo até o usuário apagar o link.
+    private func applyEdit(_ edit: TaskEdit, at idx: Int, in all: inout [FocusTask]) throws -> FocusTask {
+        let trimmedTitle = edit.title.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedTitle.isEmpty else { throw DomainError.emptyTaskTitle }
-
-        let all = try tasks.loadTasks()
-        guard all.contains(where: { $0.id == id }) else { return nil }
-        let duplicated = all.contains {
-            $0.id != id && !$0.isCompleted
-                && $0.title.compare(trimmedTitle, options: [.caseInsensitive]) == .orderedSame
+        let current = all[idx]
+        let link = edit.link == current.sourceURL ? current.sourceURL : try FocusTask.normalizeLink(edit.link)
+        // Duplicata entre irmãos ativos (FEAT-003): o `parentID` não muda na edição.
+        guard !Self.hasActiveSibling(titled: trimmedTitle, parentID: current.parentID, excluding: current.id, in: all) else {
+            throw DomainError.duplicateEntry(trimmedTitle)
         }
-        guard !duplicated else { throw DomainError.duplicateEntry(trimmedTitle) }
 
-        let normalizedTags = FocusTask.normalizeTags(tags)
-        let edited = try update(id: id) {
-            $0.title = trimmedTitle
-            $0.tags = normalizedTags
-            $0.dueDate = dueDate
-            $0.priority = priority.rawPriority
-            $0.repeatsDaily = repeatsDaily
-        }
+        let normalizedTags = FocusTask.normalizeTags(edit.tags)
+        all[idx].title = trimmedTitle
+        all[idx].tags = normalizedTags
+        all[idx].dueDate = edit.dueDate
+        all[idx].priority = edit.priority.rawPriority
+        all[idx].repeatsDaily = edit.repeatsDaily
+        all[idx].notes = FocusTask.normalizeNotes(edit.notes)
+        all[idx].sourceURL = link
+        all[idx].isUrgent = edit.isUrgent
+        try tasks.saveTasks(all)
         registerInCatalog(normalizedTags)
-        return edited
+        return all[idx]
+    }
+
+    /// Liga/desliga "Urgente" pelo menu de contexto (RF-09.13). Tarefa inexistente é no-op.
+    public func setUrgent(id: UUID, _ isUrgent: Bool) throws {
+        try update(id: id) { $0.isUrgent = isUrgent }
     }
 
     // MARK: - Histórico (FEAT-001)
@@ -258,6 +371,7 @@ public final class ManageTasksUseCase {
         try tasks.saveTasks(all)
         let catalog = tagCatalog.loadTags().map { $0.caseInsensitiveCompare(from) == .orderedSame ? to : $0 }
         tagCatalog.saveTags(FocusTask.normalizeTags(catalog))
+        updateScopes { $0.renamingTag(from: from, to: to) }
     }
 
     /// Remove uma tag de TODAS as tarefas e do catálogo (RF-09.5). Comparação por caixa.
@@ -270,6 +384,34 @@ public final class ManageTasksUseCase {
         }
         try tasks.saveTasks(all)
         tagCatalog.saveTags(tagCatalog.loadTags().filter { $0.caseInsensitiveCompare(target) != .orderedSame })
+        updateScopes { $0.removingTag(target) }
+    }
+
+    /// Reescreve os escopos por tag — do quadro (FEAT-005) e do seletor do foco (RF-09.15).
+    /// Best-effort: a operação de tag já foi gravada nas tarefas e não é desfeita se um deles
+    /// falhar — só fica no log.
+    private func updateScopes(_ transform: (TaskScope) -> TaskScope) {
+        if let kanbanBoards {
+            do {
+                if var board = try kanbanBoards.loadBoard() {
+                    let scope = transform(board.taskScope)
+                    if scope != board.taskScope {
+                        board.taskScope = scope
+                        try kanbanBoards.saveBoard(board)
+                    }
+                }
+            } catch {
+                Self.logger.error("Falha ao atualizar o escopo do Kanban: \(String(describing: error), privacy: .public)")
+            }
+        }
+        if let settings {
+            var config = settings.loadConfiguration()
+            let scope = transform(config.focusTaskScope)
+            if scope != config.focusTaskScope {
+                config.focusTaskScope = scope
+                settings.save(config)
+            }
+        }
     }
 
     /// Une `newTags` ao catálogo, normalizado e deduplicado por caixa.
@@ -284,30 +426,83 @@ public final class ManageTasksUseCase {
     /// virava "concluí no Tomafoco e no Lembretes não mudou nada, sem explicação").
     @discardableResult
     public func completeTask(id: UUID) async throws -> ReminderSyncOutcome {
-        let completedAt = now()
-        guard let current = try tasks.loadTasks().first(where: { $0.id == id }) else { return .notApplicable }
-        guard current.repeatsDaily else {
-            let task = try update(id: id) { $0.completedAt = completedAt }
-            return await syncReminderCompletion(task, completed: true)
-        }
-        // Diária (FEAT-004): continua ativa. A conclusão de hoje vai pro log (relatório) e pro
-        // histórico (visível na tarefa); o vencimento pula para amanhã. Nada é espelhado no
-        // Lembretes — localmente a tarefa segue aberta, e o lembrete também deve seguir.
-        let entry = TaskHistoryEntry(
-            id: makeID(), createdAt: completedAt,
-            text: "Concluída em \(dailyCompletionFormatter.string(from: completedAt))")
-        try update(id: id) {
-            $0.completionLog.append(completedAt)
-            $0.history.append(entry)
-            $0.dueDate = $0.nextDailyDueDate(now: completedAt, calendar: self.calendar)
-        }
-        return .notApplicable
+        var all = try tasks.loadTasks()
+        guard let task = applyCompletionCascade(id: id, in: &all) else { return .notApplicable }
+        try tasks.saveTasks(all)
+        return await syncCompletion(of: task)
     }
 
+    /// Reabre a tarefa. Subtarefa (FEAT-003) reabre também o pai concluído — invariante
+    /// "subtarefa ativa ⇒ pai ativo" (ver `addSubtask`). O espelhamento no Lembretes cobre os
+    /// dois; se qualquer um falhar, devolve `.failed`.
     @discardableResult
     public func reopenTask(id: UUID) async throws -> ReminderSyncOutcome {
-        let task = try update(id: id) { $0.completedAt = nil }
-        return await syncReminderCompletion(task, completed: false)
+        var all = try tasks.loadTasks()
+        guard let (task, parent) = applyReopenCascade(id: id, in: &all) else { return .notApplicable }
+        try tasks.saveTasks(all)
+        let outcome = await syncCompletion(of: task)
+        guard let parent else { return outcome }
+        let parentOutcome = await syncCompletion(of: parent)
+        if outcome == .failed || parentOutcome == .failed { return .failed }
+        return outcome == .notApplicable ? parentOutcome : outcome
+    }
+
+    /// Reabrir sem I/O: a tarefa e, se ela é subtarefa com pai concluído, o pai. Devolve
+    /// `(tarefa, pai reaberto ou nil)`; `nil` se a tarefa não existe. `internal`: o
+    /// `ManageKanbanUseCase` aplica junto com a troca de raia numa gravação só.
+    func applyReopenCascade(id: UUID, in all: inout [FocusTask]) -> (task: FocusTask, reopenedParent: FocusTask?)? {
+        guard let idx = all.firstIndex(where: { $0.id == id }) else { return nil }
+        applyReopen(to: &all[idx])
+        guard let parentID = all[idx].parentID,
+              let parentIdx = all.firstIndex(where: { $0.id == parentID }),
+              all[parentIdx].isCompleted else { return (all[idx], nil) }
+        applyReopen(to: &all[parentIdx])
+        return (all[idx], all[parentIdx])
+    }
+
+    /// Concluir com **cascata** (FEAT-003), sem I/O: aplica `applyCompletion` à tarefa e, se ela
+    /// fechou de verdade (não é diária), às subtarefas ainda abertas — cada uma pela própria
+    /// regra (uma filha diária registra o dia em vez de fechar). As já concluídas mantêm a data.
+    /// Reabrir não tem cascata. Devolve a tarefa gravada ou `nil` se não existe.
+    /// `internal`: o `ManageKanbanUseCase` aplica junto com a troca de raia numa gravação só.
+    @discardableResult
+    func applyCompletionCascade(id: UUID, in all: inout [FocusTask]) -> FocusTask? {
+        guard let idx = all.firstIndex(where: { $0.id == id }) else { return nil }
+        applyCompletion(to: &all[idx])
+        if all[idx].isCompleted {
+            for child in all.indices where all[child].parentID == id && !all[child].isCompleted {
+                applyCompletion(to: &all[child])
+            }
+        }
+        return all[idx]
+    }
+
+    /// Núcleo de "concluir" UMA tarefa, sem I/O. Diária (FEAT-004): continua ativa; a conclusão
+    /// de hoje vai pro log (relatório) e pro histórico (visível na tarefa); o vencimento pula
+    /// para amanhã.
+    func applyCompletion(to task: inout FocusTask) {
+        let completedAt = now()
+        guard task.repeatsDaily else {
+            task.completedAt = completedAt
+            return
+        }
+        task.completionLog.append(completedAt)
+        task.history.append(TaskHistoryEntry(
+            id: makeID(), createdAt: completedAt,
+            text: "Concluída em \(dailyCompletionFormatter.string(from: completedAt))"))
+        task.dueDate = task.nextDailyDueDate(now: completedAt, calendar: calendar)
+    }
+
+    /// Reabrir não reabre as subtarefas (FEAT-003): o usuário reabre à mão o que quiser refazer.
+    func applyReopen(to task: inout FocusTask) {
+        task.completedAt = nil
+    }
+
+    /// Espelha no Lembretes o estado de conclusão que a tarefa tem AGORA (best-effort). Diária
+    /// nunca fica concluída localmente, então nada é espelhado — o lembrete também segue aberto.
+    func syncCompletion(of task: FocusTask?) async -> ReminderSyncOutcome {
+        guard let task, !task.repeatsDaily else { return .notApplicable }
+        return await syncReminderCompletion(task, completed: task.isCompleted)
     }
 
     /// Data da conclusão diária no texto do histórico — pt-BR fixo, no fuso do `calendar`.
@@ -327,9 +522,11 @@ public final class ManageTasksUseCase {
             ? .synced : .failed
     }
 
+    /// Apaga a tarefa e, em **cascata**, as subtarefas dela (FEAT-003) — subtarefa sem pai não
+    /// faz sentido. A UI pede confirmação quando há filhas. Tarefa inexistente é no-op.
     public func deleteTask(id: UUID) throws {
         var all = try tasks.loadTasks()
-        all.removeAll { $0.id == id }
+        all.removeAll { $0.id == id || $0.parentID == id }
         try tasks.saveTasks(all)
     }
 
@@ -436,8 +633,16 @@ public final class ManageTasksUseCase {
         }
     }
 
+    /// Grava a lista inteira de uma vez (FEAT-005: apagar raia reescreve N tarefas numa só
+    /// gravação). `internal` — só o `ManageKanbanUseCase` usa.
+    func replaceAll(_ all: [FocusTask]) throws {
+        try tasks.saveTasks(all)
+    }
+
+    /// Aplica `mutate` a uma tarefa e grava. Tarefa inexistente é no-op (`nil`).
+    /// `internal`: o `ManageKanbanUseCase` grava raia + histórico por aqui (FEAT-005).
     @discardableResult
-    private func update(id: UUID, _ mutate: (inout FocusTask) -> Void) throws -> FocusTask? {
+    func update(id: UUID, _ mutate: (inout FocusTask) -> Void) throws -> FocusTask? {
         var all = try tasks.loadTasks()
         guard let idx = all.firstIndex(where: { $0.id == id }) else { return nil }
         mutate(&all[idx])

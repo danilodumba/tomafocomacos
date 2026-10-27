@@ -8,15 +8,24 @@ struct SettingsView: View {
     @ObservedObject var blockListViewModel: BlockListViewModel
     @ObservedObject var unlockPasswordViewModel: UnlockPasswordViewModel
     @ObservedObject var updater: UpdaterController
+    let kanbanSettingsViewModel: KanbanSettingsViewModel
+    /// Aba aberta — persistida para outras telas abrirem as Configurações numa aba específica.
+    @AppStorage(SettingsTab.storageKey) private var selectedTab: SettingsTab = .pomodoro
 
     /// Largura da coluna de rótulos — evita que "Ciclos até o intervalo longo" seja truncado.
     private let labelWidth: CGFloat = 210
 
     var body: some View {
-        TabView {
+        TabView(selection: $selectedTab) {
             timerTab.tabItem { Label("Pomodoro", systemImage: "timer") }
+                .tag(SettingsTab.pomodoro)
             sitesTab.tabItem { Label("Sites", systemImage: "network") }
+                .tag(SettingsTab.sites)
             appsTab.tabItem { Label("Apps", systemImage: "app.badge") }
+                .tag(SettingsTab.apps)
+            KanbanSettingsTab(viewModel: kanbanSettingsViewModel)
+                .tabItem { Label("Kanban", systemImage: "rectangle.split.3x1") }
+                .tag(SettingsTab.kanban)
         }
         .tint(Brand.cyan)
         .frame(width: 560, height: 560)
@@ -60,6 +69,8 @@ struct SettingsView: View {
                 }
             }
 
+            focusScopeSection
+
             Section("Atualizações") {
                 toggleRow("Buscar atualizações automaticamente",
                           help: "Checa em segundo plano uma vez por dia. Nada é instalado sem você confirmar.",
@@ -84,9 +95,52 @@ struct SettingsView: View {
         .scrollContentBackground(.hidden)
         .onAppear {
             settingsViewModel.refreshLaunchAtLogin()
+            settingsViewModel.didAppear()
             // O Sparkle mexe em `automaticallyChecksForUpdates` por fora (diálogo de primeira
             // execução, fluxo de instalação) — sem reler, o toggle mostraria valor velho.
             updater.refresh()
+        }
+        .onDisappear { settingsViewModel.didDisappear() }
+    }
+
+    /// Quais tarefas entram no seletor do foco (RF-09.15) — espelho de "Tarefas no quadro" do Kanban.
+    private var focusScopeSection: some View {
+        Section("Tarefas no foco") {
+            Picker("", selection: Binding(
+                get: { settingsViewModel.focusScopeIsByTag },
+                set: { settingsViewModel.setFocusScopeByTag($0) }
+            )) {
+                Text("Todas as tarefas").tag(false)
+                Text("Só com as tags marcadas").tag(true)
+            }
+            .pickerStyle(.radioGroup)
+            .labelsHidden()
+
+            if settingsViewModel.focusScopeIsByTag {
+                if settingsViewModel.selectableFocusTags.isEmpty {
+                    Text("Nenhuma tag cadastrada. Crie tags na janela Tarefas.")
+                        .font(.system(size: 11))
+                        .foregroundStyle(Brand.textFaint)
+                } else {
+                    ForEach(settingsViewModel.selectableFocusTags, id: \.self) { tag in
+                        Toggle(tag, isOn: Binding(
+                            get: { settingsViewModel.isFocusTagSelected(tag) },
+                            set: { settingsViewModel.setFocusTag(tag, selected: $0) }
+                        ))
+                        .toggleStyle(.checkbox)
+                    }
+                }
+                if settingsViewModel.focusTaskScope.selectedTags.isEmpty {
+                    Label("Nenhuma tag marcada — o seletor do foco fica vazio.", systemImage: "exclamationmark.triangle")
+                        .font(.system(size: 11))
+                        .foregroundStyle(Brand.danger)
+                } else {
+                    Text("Entra no seletor a tarefa que tiver qualquer uma das tags marcadas. Subtarefa entra junto com o pai.")
+                        .font(.system(size: 11))
+                        .foregroundStyle(Brand.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
         }
     }
 

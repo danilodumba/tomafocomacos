@@ -25,7 +25,7 @@ struct TagSuggestionsMenu: View {
 
     /// Acrescenta a tag ao texto (evitando duplicar), respeitando vírgulas.
     private func append(_ tag: String) {
-        let existing = TasksViewModel.parseTags(text)
+        let existing = TaskEditorViewModel.parseTags(text)
             .map { $0.trimmingCharacters(in: .whitespaces) }
         guard !existing.contains(where: { $0.caseInsensitiveCompare(tag) == .orderedSame }) else { return }
         let trimmed = text.trimmingCharacters(in: .whitespaces)

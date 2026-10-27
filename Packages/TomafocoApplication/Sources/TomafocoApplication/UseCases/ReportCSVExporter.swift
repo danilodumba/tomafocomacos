@@ -50,6 +50,37 @@ public enum ReportCSVExporter {
         return lines.joined(separator: "\r\n")
     }
 
+    /// Uma linha por sessão de foco da tarefa (RF-10.6), mais recente primeiro — a ordem chega
+    /// pronta do `ReportBuilder.taskReport`. Colunas: Tarefa, Início, Fim, Duração (min),
+    /// Resultado, Subtarefa (vazia quando o foco foi direto na tarefa).
+    public static func taskSessionsCSV(
+        report: TaskReport,
+        dateString: (Date) -> String
+    ) -> String {
+        var lines = [row(["Tarefa", "Início", "Fim", "Duração (min)", "Resultado", "Subtarefa"])]
+        for session in report.sessions {
+            lines.append(row([
+                report.title,
+                dateString(session.startedAt),
+                dateString(session.endedAt),
+                String(Int((session.duration / 60).rounded())),
+                outcomeLabel(session.outcome),
+                session.subtaskTitle ?? ""
+            ]))
+        }
+        return lines.joined(separator: "\r\n")
+    }
+
+    /// Rótulo PT-BR do desfecho da sessão.
+    public static func outcomeLabel(_ outcome: SessionRecord.Outcome) -> String {
+        switch outcome {
+        case .completed: return "Concluída"
+        case .cancelled: return "Cancelada"
+        case .recovered: return "Recuperada"
+        case .skipped: return "Pulada"
+        }
+    }
+
     /// Rótulo PT-BR da prioridade, no mesmo vocabulário do Lembretes.
     static func priorityLabel(_ raw: Int?) -> String {
         switch TaskPriority(rawPriority: raw) {

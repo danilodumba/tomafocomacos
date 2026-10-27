@@ -4,8 +4,9 @@ import AppKit
 import TomafocoDomain
 import TomafocoApplication
 
-/// Janela Relatórios (RF-10): resumo, horas por dia, intervalos por dia, horas por tarefa e a
-/// lista de tarefas concluídas (item 3) com busca, filtro por tag e exportação CSV.
+/// Janela Relatórios (RF-10): resumo, horas por dia, intervalos por dia, horas por tarefa, o
+/// relatório de UMA tarefa (RF-10.6: sessões, foco por dia, conclusões, histórico) e a lista de
+/// tarefas concluídas (item 3) com busca, filtro por tag e exportação CSV.
 /// Dois gráficos separados de propósito — nunca eixo Y duplo; cada medida tem seu gráfico.
 struct ReportsView: View {
     @ObservedObject var viewModel: ReportsViewModel
@@ -23,6 +24,7 @@ struct ReportsView: View {
                         dailyFocusChart(report.dailyTotals)
                         dailyBreaksChart(report.dailyTotals)
                         taskTable(report.taskTotals)
+                        taskReportSection
                     }
                 }
 
@@ -50,6 +52,201 @@ struct ReportsView: View {
                 Label("Exportar CSV…", systemImage: "square.and.arrow.up")
             }
             .disabled(viewModel.completedTasks.isEmpty)
+        }
+    }
+
+    // MARK: - Relatório por tarefa (RF-10.6)
+
+    /// Seletor com as tarefas que tiveram foco no período; escolher uma abre o detalhe dela.
+    private var taskReportSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 10) {
+                Text("Relatório por tarefa")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(Brand.textSecondary)
+
+                Menu {
+                    Button("Nenhuma") { viewModel.selectedTaskID = nil }
+                    Divider()
+                    ForEach(viewModel.taskOptions) { option in
+                        Toggle(option.title, isOn: Binding(
+                            get: { viewModel.selectedTaskID == option.id },
+                            set: { viewModel.selectedTaskID = $0 ? option.id : nil }))
+                    }
+                } label: {
+                    Label(viewModel.selectedTaskTitle ?? "Escolher tarefa…", systemImage: "checklist")
+                        .lineLimit(1)
+                }
+                .fixedSize()
+
+                Spacer()
+
+                if viewModel.taskReport != nil {
+                    Button {
+                        save(csv: viewModel.taskSessionsCSV(),
+                             defaultName: viewModel.taskSessionsCSVFileName())
+                    } label: {
+                        Label("Exportar sessões CSV…", systemImage: "square.and.arrow.up")
+                    }
+                    .disabled(viewModel.taskReport?.sessions.isEmpty ?? true)
+                }
+            }
+            .font(.system(size: 12))
+
+            if let taskReport = viewModel.taskReport {
+                taskReportTiles(taskReport)
+                if taskReport.dailyTotals.count > 1 {
+                    taskDailyChart(taskReport.dailyTotals)
+                }
+                taskSessionsList(taskReport.sessions)
+                if !taskReport.completions.isEmpty {
+                    taskCompletionsList(taskReport.completions)
+                }
+                if !taskReport.historyEntries.isEmpty {
+                    taskHistoryList(taskReport.historyEntries)
+                }
+            } else {
+                Text("Escolha uma tarefa para ver as sessões, o foco por dia, as conclusões e o histórico dela no período.")
+                    .font(.system(size: 12))
+                    .foregroundStyle(Brand.textFaint)
+                    .padding(.vertical, 8)
+            }
+        }
+        .padding(12)
+        .background(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .strokeBorder(Brand.surfaceStroke, lineWidth: 1)
+        )
+    }
+
+    private func taskReportTiles(_ report: TaskReport) -> some View {
+        let tiles: [(String, String)] = [
+            ("Foco total", ReportsViewModel.formatDuration(report.focusTotal)),
+            ("Sessões", "\(report.sessionCount)"),
+            ("Média/sessão", ReportsViewModel.formatDuration(report.averageSessionDuration)),
+            ("Dias com foco", "\(report.dailyTotals.count)"),
+            ("Concluída", "\(report.completions.count)×")
+        ]
+        return LazyVGrid(columns: [GridItem(.adaptive(minimum: 110), spacing: 10)], spacing: 10) {
+            ForEach(tiles, id: \.0) { title, value in
+                statTile(title: title, value: value)
+            }
+        }
+    }
+
+    private func taskDailyChart(_ days: [FocusReport.DailyTotal]) -> some View {
+        chartCard("Foco por dia nesta tarefa") {
+            Chart(days, id: \.day) { day in
+                BarMark(
+                    x: .value("Dia", day.day, unit: .day),
+                    y: .value("Minutos", day.focusTime / 60)
+                )
+                .foregroundStyle(Brand.cyan)
+                .cornerRadius(3)
+            }
+            .chartYAxis {
+                AxisMarks { value in
+                    AxisGridLine().foregroundStyle(Brand.surfaceStroke)
+                    AxisValueLabel {
+                        if let minutes = value.as(Double.self) {
+                            Text("\(minutes, specifier: "%.0f")min")
+                                .foregroundStyle(Brand.textFaint)
+                        }
+                    }
+                }
+            }
+            .chartXAxis { dayAxis }
+        }
+    }
+
+    private func taskSessionsList(_ sessions: [TaskReport.Session]) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Sessões de foco")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(Brand.textSecondary)
+            if sessions.isEmpty {
+                Text("Nenhuma sessão de foco nesta tarefa no período.")
+                    .font(.system(size: 12))
+                    .foregroundStyle(Brand.textFaint)
+                    .padding(.vertical, 4)
+            } else {
+                ForEach(sessions) { session in
+                    sessionRow(session)
+                }
+            }
+        }
+    }
+
+    private func sessionRow(_ session: TaskReport.Session) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: outcomeSymbol(session.outcome))
+                .foregroundStyle(session.outcome == .completed ? Brand.cyan : Brand.textFaint)
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 6) {
+                    Text(session.startedAt.formatted(date: .abbreviated, time: .shortened))
+                    Text("→")
+                    Text(session.endedAt.formatted(date: .omitted, time: .shortened))
+                }
+                .foregroundStyle(Brand.textPrimary)
+                HStack(spacing: 6) {
+                    Text(ReportCSVExporter.outcomeLabel(session.outcome))
+                    if let subtask = session.subtaskTitle {
+                        Text("·")
+                        Label(subtask, systemImage: "arrow.turn.down.right")
+                    }
+                }
+                .font(.system(size: 10))
+                .foregroundStyle(Brand.textFaint)
+            }
+            Spacer()
+            Text(ReportsViewModel.formatDuration(session.duration))
+                .font(.system(size: 12, weight: .semibold, design: .rounded))
+                .foregroundStyle(Brand.textPrimary)
+                .frame(minWidth: 64, alignment: .trailing)
+        }
+        .font(.system(size: 12))
+        .padding(.vertical, 5)
+        .padding(.horizontal, 10)
+        .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Brand.surface))
+    }
+
+    private func outcomeSymbol(_ outcome: SessionRecord.Outcome) -> String {
+        switch outcome {
+        case .completed: return "checkmark.circle.fill"
+        case .cancelled: return "xmark.circle"
+        case .recovered: return "arrow.counterclockwise.circle"
+        case .skipped: return "forward.circle"
+        }
+    }
+
+    private func taskCompletionsList(_ completions: [Date]) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Conclusões")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(Brand.textSecondary)
+            ForEach(completions, id: \.self) { date in
+                HStack(spacing: 8) {
+                    Image(systemName: "checkmark.circle.fill").foregroundStyle(Brand.cyan)
+                    Text(date.formatted(date: .abbreviated, time: .shortened))
+                        .foregroundStyle(Brand.textPrimary)
+                    Spacer()
+                }
+                .font(.system(size: 12))
+                .padding(.vertical, 5)
+                .padding(.horizontal, 10)
+                .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Brand.surface))
+            }
+        }
+    }
+
+    private func taskHistoryList(_ entries: [FocusReport.HistoryItem]) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Histórico")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(Brand.textSecondary)
+            ForEach(entries) { entry in
+                historyRow(entry)
+            }
         }
     }
 
@@ -252,27 +449,32 @@ struct ReportsView: View {
         ]
         return LazyVGrid(columns: [GridItem(.adaptive(minimum: 110), spacing: 10)], spacing: 10) {
             ForEach(tiles, id: \.0) { title, value in
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(title.uppercased())
-                        .font(.system(size: 9, weight: .semibold))
-                        .tracking(1.1)
-                        .foregroundStyle(Brand.textFaint)
-                    Text(value)
-                        .font(.system(size: 17, weight: .semibold, design: .rounded))
-                        .foregroundStyle(Brand.textPrimary)
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(10)
-                .background(
-                    RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .fill(Brand.surface)
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                                .strokeBorder(Brand.surfaceStroke, lineWidth: 1)
-                        )
-                )
+                statTile(title: title, value: value)
             }
         }
+    }
+
+    /// Stat tile compartilhado entre o resumo do período e o relatório por tarefa.
+    private func statTile(title: String, value: String) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title.uppercased())
+                .font(.system(size: 9, weight: .semibold))
+                .tracking(1.1)
+                .foregroundStyle(Brand.textFaint)
+            Text(value)
+                .font(.system(size: 17, weight: .semibold, design: .rounded))
+                .foregroundStyle(Brand.textPrimary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(10)
+        .background(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(Brand.surface)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .strokeBorder(Brand.surfaceStroke, lineWidth: 1)
+                )
+        )
     }
 
     // MARK: - Gráficos (uma série cada — o título nomeia; sem legenda)

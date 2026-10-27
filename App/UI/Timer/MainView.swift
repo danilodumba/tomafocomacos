@@ -135,18 +135,24 @@ struct MainView: View {
     /// Seletor compacto de tarefa(s). Uma única com o multi-tarefa desligado; várias (checkmarks)
     /// quando ligado (RF-09.4). Ocioso escolhe a(s) do próximo foco (RF-09); pausado troca a(s)
     /// da sessão corrente (RF-09.1). `toggle` alterna uma tarefa; `clear` esvazia a seleção.
+    /// Itens são `Toggle` (checkmark nativo do menu) para liberar o slot de imagem: a subtarefa
+    /// (FEAT-003) leva o ícone ↳ e só o próprio título, já que vem logo abaixo do pai.
     private func taskSelector(
         selected: Set<UUID>, accessibility: String,
         toggle: @escaping (UUID) -> Void, clear: @escaping () -> Void
     ) -> some View {
         Menu {
-            Button { clear() } label: {
-                Label("Sem tarefa", systemImage: selected.isEmpty ? "checkmark" : "")
+            Toggle(isOn: Binding(get: { selected.isEmpty }, set: { if $0 { clear() } })) {
+                Text("Sem tarefa")
             }
             Divider()
             ForEach(viewModel.availableTasks) { task in
-                Button { toggle(task.id) } label: {
-                    Label(task.title, systemImage: selected.contains(task.id) ? "checkmark" : "")
+                Toggle(isOn: Binding(get: { selected.contains(task.id) }, set: { _ in toggle(task.id) })) {
+                    if task.isSubtask {
+                        Label(viewModel.menuTitle(of: task), systemImage: "arrow.turn.down.right")
+                    } else {
+                        Text(task.title)
+                    }
                 }
             }
         } label: {
@@ -184,8 +190,8 @@ struct MainView: View {
     private func selectionSummary(_ selected: Set<UUID>) -> String {
         guard !selected.isEmpty else { return "Sem tarefa" }
         if selected.count == 1, let id = selected.first,
-           let title = viewModel.availableTasks.first(where: { $0.id == id })?.title {
-            return title
+           let task = viewModel.availableTasks.first(where: { $0.id == id }) {
+            return viewModel.displayTitle(of: task)
         }
         return "\(selected.count) tarefas"
     }

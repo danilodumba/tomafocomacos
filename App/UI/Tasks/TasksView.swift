@@ -6,6 +6,7 @@ import TomafocoDomain
 /// Traz busca, ordenação, filtros, prioridade e destaque de atraso (itens 4–7).
 struct TasksView: View {
     @ObservedObject var viewModel: TasksViewModel
+    @Environment(\.openWindow) private var openWindow
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -23,6 +24,13 @@ struct TasksView: View {
                 }
                 ForEach(viewModel.displayedTasks) { task in
                     row(task)
+                    // FEAT-003: subtarefas aninhadas logo abaixo do pai — linhas completas
+                    // (concluir, prioridade, editar, apagar), só indentadas.
+                    if viewModel.isExpanded(task) {
+                        ForEach(viewModel.children(of: task)) { child in
+                            row(child, depth: 1)
+                        }
+                    }
                 }
             }
             .scrollContentBackground(.hidden)
@@ -36,9 +44,28 @@ struct TasksView: View {
         .sheet(item: $viewModel.bulkAdd) { bulk in
             BulkAddTasksView(viewModel: bulk)
         }
-        .sheet(item: $viewModel.editingTask) { _ in
-            FocusHost { historyFocused in editSheet(historyFocused: historyFocused) }
+        .sheet(item: $viewModel.editor) { editor in
+            TaskEditorSheet(viewModel: editor)
         }
+        // FEAT-003: apagar o pai leva as subtarefas junto — confirmar antes.
+        .confirmationDialog(
+            deletionTitle,
+            isPresented: Binding(
+                get: { viewModel.pendingDeletion != nil },
+                set: { if !$0 { viewModel.pendingDeletion = nil } }),
+            titleVisibility: .visible
+        ) {
+            Button("Apagar tudo", role: .destructive) { viewModel.confirmPendingDeletion() }
+            Button("Cancelar", role: .cancel) { viewModel.pendingDeletion = nil }
+        } message: {
+            Text("As subtarefas são apagadas junto com a tarefa. Isso não pode ser desfeito.")
+        }
+    }
+
+    private var deletionTitle: String {
+        guard let task = viewModel.pendingDeletion else { return "" }
+        let count = viewModel.subtaskProgress(of: task).total
+        return "Apagar \"\(task.title)\" e \(count) subtarefa\(count == 1 ? "" : "s")?"
     }
 
     private var emptyMessage: String {
@@ -101,7 +128,7 @@ struct TasksView: View {
             .background(RoundedRectangle(cornerRadius: 8).fill(Brand.surface))
 
             Picker("Ordenar", selection: $viewModel.sortOrder) {
-                ForEach(TasksViewModel.SortOrder.allCases) { order in
+                ForEach(TaskSortOrder.allCases) { order in
                     Text(order.label).tag(order)
                 }
             }
@@ -134,6 +161,15 @@ struct TasksView: View {
             }
             .fixedSize()
 
+            Picker("Vencimento", selection: $viewModel.dueFilter) {
+                ForEach(TaskDueFilter.allCases, id: \.self) { filter in
+                    Text(filter.displayName).tag(filter)
+                }
+            }
+            .pickerStyle(.menu)
+            .labelsHidden()
+            .fixedSize()
+
             Toggle("Mostrar concluídas", isOn: $viewModel.showsCompleted)
                 .toggleStyle(.checkbox)
 
@@ -144,6 +180,15 @@ struct TasksView: View {
             } label: {
                 Label("Tags…", systemImage: "tag.circle")
             }
+
+            // FEAT-005: o quadro mora em janela própria (tela cheia / Split View).
+            Button {
+                openWindow(id: "kanban")
+                NSApp.activate(ignoringOtherApps: true)
+            } label: {
+                Label("Kanban", systemImage: "rectangle.split.3x1")
+            }
+            .help("Abrir o quadro Kanban (⌥⌘K)")
         }
         .font(.system(size: 12))
     }
@@ -220,16 +265,31 @@ struct TasksView: View {
         return reimport ? "arrow.clockwise.circle" : "plus.circle"
     }
 
-    // MARK: - Chips e prioridade
+    // MARK: - Subtarefas (FEAT-003)
 
-    private func tagChip(_ tag: String) -> some View {
-        Text(tag)
-            .font(.system(size: 10, weight: .medium))
-            .foregroundStyle(Brand.cyan)
-            .padding(.horizontal, 7)
-            .padding(.vertical, 2)
-            .background(Brand.cyan.opacity(0.14), in: Capsule())
+    /// Badge `checklist 2/5` + chevron: clicar abre/fecha as subtarefas embaixo da linha.
+    /// Cyan quando tudo está feito.
+    private func subtaskBadge(_ task: FocusTask) -> some View {
+        let progress = viewModel.subtaskProgress(of: task)
+        let expanded = viewModel.isExpanded(task)
+        let allDone = progress.done == progress.total
+        return Button {
+            viewModel.toggleExpanded(task.id)
+        } label: {
+            HStack(spacing: 2) {
+                Label("\(progress.done)/\(progress.total)", systemImage: "checklist")
+                Image(systemName: expanded ? "chevron.down" : "chevron.right")
+                    .font(.system(size: 8, weight: .semibold))
+            }
+            .font(.system(size: 10))
+            .foregroundStyle(allDone ? Brand.cyan : Brand.textFaint)
+        }
+        .buttonStyle(.plain)
+        .help(expanded ? "Ocultar subtarefas" : "Mostrar subtarefas")
+        .accessibilityLabel("\(progress.done) de \(progress.total) subtarefas · \(expanded ? "ocultar" : "mostrar")")
     }
+
+    // MARK: - Prioridade
 
     /// Menu de prioridade estilo Lembretes: nenhuma / baixa / média / alta (item 4).
     private func priorityControl(_ task: FocusTask) -> some View {
@@ -255,157 +315,6 @@ struct TasksView: View {
         .accessibilityLabel("Prioridade: \(current.displayName)")
     }
 
-    // MARK: - Formulário de edição (RF-09.6)
-
-    /// Edita título, prioridade, tags e data/hora de vencimento de uma vez (+ histórico, gravado na hora).
-    /// Nada é gravado até "Salvar" — erro de validação mantém o sheet aberto.
-    /// `historyFocused`: com o campo de histórico focado, "Salvar" perde o `.defaultAction` —
-    /// senão o Return vira key equivalent da janela (roda ANTES do `onSubmit` do campo), salva e
-    /// fecha o sheet sem acrescentar a entrada.
-    private func editSheet(historyFocused: FocusState<Bool>.Binding) -> some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Text("Editar tarefa")
-                .font(.system(size: 14, weight: .semibold))
-
-            Form {
-                TextField("Título", text: $viewModel.editTitle)
-                    .onSubmit { viewModel.saveEdit() }
-
-                Picker("Prioridade", selection: $viewModel.editPriority) {
-                    ForEach(TaskPriority.displayOrder, id: \.self) { p in
-                        Text(p.displayName).tag(p)
-                    }
-                }
-                .pickerStyle(.segmented)
-
-                HStack(spacing: 4) {
-                    TextField("Tags (vírgula)", text: $viewModel.editTags)
-                    TagSuggestionsMenu(knownTags: viewModel.knownTags, text: $viewModel.editTags)
-                }
-
-                VStack(alignment: .leading, spacing: 4) {
-                    Toggle("Vencimento", isOn: $viewModel.editHasDueDate)
-                    DatePicker(
-                        "", selection: $viewModel.editDueDate,
-                        displayedComponents: [.date, .hourAndMinute]
-                    )
-                    .labelsHidden()
-                    .disabled(!viewModel.editHasDueDate)
-                    .opacity(viewModel.editHasDueDate ? 1 : 0.4)
-                }
-
-                // FEAT-004: concluída num dia, volta a ficar ativa no dia seguinte.
-                Toggle("Repetir diariamente", isOn: $viewModel.editRepeatsDaily)
-            }
-            .formStyle(.grouped)
-            // Altura do conteúdo: sem isso o `Form` (que rola sozinho) disputa espaço com o
-            // histórico e um dos dois fica espremido.
-            .fixedSize(horizontal: false, vertical: true)
-
-            // Fora do `Form` de propósito: em `.grouped`, linha com `Button` vira alvo de clique
-            // inteira — o clique no campo "Nova entrada" ia para o botão e o campo nunca focava.
-            historySection(focused: historyFocused)
-                .padding(.horizontal, 4)
-                .frame(maxHeight: .infinity, alignment: .top)
-
-            if let error = viewModel.editFeedback {
-                Text(error)
-                    .font(.system(size: 12))
-                    .foregroundStyle(Brand.danger)
-            }
-
-            HStack {
-                Spacer()
-                Button("Cancelar") { viewModel.cancelEditing() }
-                    .keyboardShortcut(.cancelAction)
-                Button("Salvar") { viewModel.saveEdit() }
-                    .keyboardShortcut(historyFocused.wrappedValue ? nil : .defaultAction)
-            }
-        }
-        .padding(16)
-        // Sheet maior que o conteúdo do formulário: a sobra vai toda para o histórico, que rola.
-        .frame(width: 560, height: 680)
-    }
-
-    // MARK: - Histórico da tarefa (FEAT-001)
-
-    /// Entradas datadas da tarefa. Ao contrário do resto do formulário, adicionar/apagar aqui
-    /// **grava na hora** — histórico é log, não rascunho. A legenda avisa o usuário.
-    /// `ScrollView` + `VStack` em vez de `List` (altura previsível dentro do sheet).
-    private func historySection(focused: FocusState<Bool>.Binding) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 4) {
-                Text("Histórico")
-                    .font(.system(size: 11))
-                    .foregroundStyle(Brand.textSecondary)
-                Text("· gravado na hora")
-                    .font(.system(size: 10))
-                    .foregroundStyle(Brand.textFaint)
-            }
-
-            HStack(spacing: 6) {
-                TextField("Nova entrada", text: $viewModel.newHistoryText)
-                    .textFieldStyle(.roundedBorder)
-                    .focused(focused)
-                    .onSubmit { viewModel.addHistoryEntry() }
-                Button("Adicionar") { viewModel.addHistoryEntry() }
-                    .disabled(viewModel.newHistoryText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-            }
-
-            // Área de rolagem ocupa todo o espaço que sobra no sheet — lista longa (ex.: conclusões
-            // diárias da FEAT-004) rola aqui dentro em vez de empurrar os botões para fora.
-            ScrollView {
-                if viewModel.editingHistory.isEmpty {
-                    Text("Sem entradas ainda.")
-                        .font(.system(size: 11))
-                        .foregroundStyle(Brand.textFaint)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.vertical, 4)
-                } else {
-                    VStack(alignment: .leading, spacing: 4) {
-                        ForEach(viewModel.editingHistory) { entry in
-                            historyRow(entry)
-                        }
-                    }
-                }
-            }
-            .frame(minHeight: 120, maxHeight: .infinity)
-            .padding(6)
-            .background(
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .strokeBorder(Brand.surfaceStroke, lineWidth: 1)
-            )
-        }
-    }
-
-    private func historyRow(_ entry: TaskHistoryEntry) -> some View {
-        HStack(alignment: .top, spacing: 8) {
-            Text(entry.createdAt.formatted(date: .abbreviated, time: .shortened))
-                .font(.system(size: 10))
-                .foregroundStyle(Brand.textFaint)
-                .frame(width: 110, alignment: .leading)
-
-            Text(entry.text)
-                .font(.system(size: 11))
-                .foregroundStyle(Brand.textPrimary)
-                .fixedSize(horizontal: false, vertical: true)
-
-            Spacer()
-
-            Button(role: .destructive) {
-                viewModel.deleteHistoryEntry(entry)
-            } label: {
-                Image(systemName: "trash")
-            }
-            .buttonStyle(.plain)
-            .foregroundStyle(Brand.textFaint)
-            .accessibilityLabel("Apagar entrada do histórico")
-        }
-        .padding(.vertical, 3)
-        .padding(.horizontal, 8)
-        .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(Brand.surface))
-    }
-
     private func feedbackRow(_ text: String) -> some View {
         HStack(spacing: 8) {
             Text(text)
@@ -418,9 +327,25 @@ struct TasksView: View {
         }
     }
 
-    private func row(_ task: FocusTask) -> some View {
-        let overdue = viewModel.isOverdue(task)
+    /// `depth == 1` é subtarefa (FEAT-003): mesma linha, indentada e com a seta de "filha de".
+    private func row(_ task: FocusTask, depth: Int = 0) -> some View {
+        let overdue = task.isOverdue
+        let urgent = task.showsUrgent
         return HStack(spacing: 10) {
+            // RF-09.13: barra vermelha à esquerda — o destaque mais forte da linha.
+            if urgent {
+                RoundedRectangle(cornerRadius: 2)
+                    .fill(Brand.danger)
+                    .frame(width: 4)
+                    .padding(.vertical, 2)
+            }
+            if depth > 0 {
+                Image(systemName: "arrow.turn.down.right")
+                    .font(.system(size: 10))
+                    .foregroundStyle(Brand.textFaint)
+                    .padding(.leading, CGFloat(depth) * 22)
+                    .accessibilityHidden(true)
+            }
             busySwap(task) {
                 Button {
                     viewModel.setCompleted(task, !task.isCompleted)
@@ -437,15 +362,19 @@ struct TasksView: View {
 
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 6) {
+                    if urgent {
+                        UrgentBadge()
+                    }
                     if overdue {
                         Image(systemName: "exclamationmark.triangle.fill")
                             .font(.system(size: 10))
                             .foregroundStyle(Brand.danger)
                     }
                     Text(task.title)
+                        .fontWeight(urgent ? .semibold : .regular)
                         .strikethrough(task.isCompleted)
                         .foregroundStyle(task.isCompleted ? Brand.textFaint
-                                         : (overdue ? Brand.danger : Brand.textPrimary))
+                                         : (overdue || urgent ? Brand.danger : Brand.textPrimary))
                 }
                 HStack(spacing: 6) {
                     if task.source == .reminders {
@@ -466,12 +395,13 @@ struct TasksView: View {
                             .font(.system(size: 10))
                             .foregroundStyle(overdue ? Brand.danger : Brand.textFaint)
                     }
-                    if let urlString = task.sourceURL, let url = URL(string: urlString) {
+                    if let url = task.linkURL {
                         Link(destination: url) {
-                            Label("Link", systemImage: "link")
+                            Label(url.host ?? "Link", systemImage: "link")
                                 .font(.system(size: 10))
                         }
                         .foregroundStyle(Brand.cyan)
+                        .help(url.absoluteString)
                     }
                     if !task.history.isEmpty {
                         Label("\(task.history.count)", systemImage: "clock.arrow.circlepath")
@@ -479,8 +409,11 @@ struct TasksView: View {
                             .foregroundStyle(Brand.textFaint)
                             .help("\(task.history.count) entrada(s) no histórico")
                     }
+                    if depth == 0, viewModel.subtaskProgress(of: task).total > 0 {
+                        subtaskBadge(task)
+                    }
                     ForEach(task.tags, id: \.self) { tag in
-                        tagChip(tag)
+                        TagChip(tag: tag)
                     }
                 }
                 if let notes = task.notes?.trimmingCharacters(in: .whitespacesAndNewlines), !notes.isEmpty {
@@ -516,13 +449,28 @@ struct TasksView: View {
             }
         }
         .padding(.vertical, 2)
+        .padding(.horizontal, urgent ? 6 : 0)
+        .background(
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .fill(urgent ? Brand.danger.opacity(0.08) : Color.clear)
+        )
         .contentShape(Rectangle())
         .onTapGesture(count: 2) { viewModel.beginEditing(task) }
         .contextMenu {
             Button("Editar…") { viewModel.beginEditing(task) }
+            if depth == 0 {
+                // A criação fica no formulário do pai (campo "Nova subtarefa").
+                Button("Adicionar subtarefa…") { viewModel.beginEditing(task) }
+            }
+            Toggle("Urgente", isOn: Binding(
+                get: { task.isUrgent },
+                set: { viewModel.setUrgent(task, $0) }))
             Toggle("Repetir diariamente", isOn: Binding(
                 get: { task.repeatsDaily },
                 set: { viewModel.setRepeatsDaily(task, $0) }))
+            if let url = task.linkURL {
+                Link("Abrir link", destination: url)
+            }
             Button("Apagar", role: .destructive) { viewModel.delete(task) }
                 .disabled(viewModel.isMutatingTask)
         }
@@ -540,13 +488,4 @@ struct TasksView: View {
             content()
         }
     }
-}
-
-/// Dono do `@FocusState` do formulário de edição. Precisa morar DENTRO do sheet: `@FocusState`
-/// declarado na view que apresenta não atravessa a fronteira do sheet de forma confiável.
-private struct FocusHost<Content: View>: View {
-    @FocusState private var focused: Bool
-    let content: (FocusState<Bool>.Binding) -> Content
-
-    var body: some View { content($focused) }
 }

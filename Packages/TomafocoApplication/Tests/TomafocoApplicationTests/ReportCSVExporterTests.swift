@@ -62,6 +62,25 @@ final class ReportCSVExporterTests: XCTestCase {
                        "Tarefa,Data,Descrição")
     }
 
+    // MARK: sessões por tarefa (RF-10.6)
+
+    func test_sessoesCSV_cabecalhoEUmaLinhaPorSessao() {
+        let report = TaskReport(
+            taskID: UUID(), title: "Pai › Filha", focusTotal: 35 * 60,
+            sessions: [
+                TaskReport.Session(id: UUID(), startedAt: day, endedAt: day, duration: 25 * 60,
+                                   outcome: .completed, subtaskTitle: nil),
+                TaskReport.Session(id: UUID(), startedAt: day, endedAt: day, duration: 10 * 60,
+                                   outcome: .cancelled, subtaskTitle: "Slides, v2")
+            ],
+            dailyTotals: [], completions: [], historyEntries: [])
+        let csv = ReportCSVExporter.taskSessionsCSV(report: report, dateString: fixedDate)
+        let lines = csv.components(separatedBy: "\r\n")
+        XCTAssertEqual(lines.first, "Tarefa,Início,Fim,Duração (min),Resultado,Subtarefa")
+        XCTAssertEqual(lines[1], "Pai › Filha,2026-07-20 09:00,2026-07-20 09:00,25,Concluída,")
+        XCTAssertEqual(lines[2], "Pai › Filha,2026-07-20 09:00,2026-07-20 09:00,10,Cancelada,\"Slides, v2\"")
+    }
+
     private func emptySummary() -> FocusReport.Summary {
         FocusReport.Summary(focusTotal: 0, breakTotal: 0, completedFocusCount: 0,
                             cancelledFocusCount: 0, skippedFocusCount: 0,

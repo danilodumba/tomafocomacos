@@ -11,8 +11,9 @@ struct OverflowMenu: View {
     var body: some View {
         Menu {
             Button("Tarefas…") { open("tasks") }
+            Button("Kanban…") { open("kanban") }
             Button("Relatórios…") { open("reports") }
-            settingsButton
+            OpenSettingsControl { Text("Configurações…") }
             Divider()
             Button("Buscar atualizações…") { updater.checkForUpdates() }
                 .disabled(!updater.canCheckForUpdates)
@@ -36,16 +37,5 @@ struct OverflowMenu: View {
     private func open(_ id: String) {
         openWindow(id: id)
         NSApp.activate(ignoringOtherApps: true)
-    }
-
-    /// `SettingsLink` só existe no macOS 14+; no 13 usamos o seletor padrão.
-    @ViewBuilder private var settingsButton: some View {
-        if #available(macOS 14, *) {
-            SettingsLink { Text("Configurações…") }
-        } else {
-            Button("Configurações…") {
-                NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
-            }
-        }
     }
 }

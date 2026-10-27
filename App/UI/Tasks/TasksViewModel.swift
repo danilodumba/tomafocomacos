@@ -5,21 +5,7 @@ import TomafocoApplication
 
 /// ViewModel da aba Tarefas (RF-09): CRUD manual + importação do Lembretes.
 @MainActor
-final class TasksViewModel: ObservableObject {
-
-    /// Critério de ordenação da lista de ativas (item 5).
-    enum SortOrder: String, CaseIterable, Identifiable {
-        case createdAt, dueDate, dueTime, priority
-        var id: String { rawValue }
-        var label: String {
-            switch self {
-            case .createdAt: return "Criação"
-            case .dueDate: return "Data"
-            case .dueTime: return "Hora"
-            case .priority: return "Prioridade"
-            }
-        }
-    }
+final class TasksViewModel: ObservableObject, TaskRowActionRunning {
 
     @Published private(set) var activeTasks: [FocusTask] = []
     @Published private(set) var completedTasks: [FocusTask] = []
@@ -28,32 +14,14 @@ final class TasksViewModel: ObservableObject {
     @Published var newTitle = ""
     /// Tags da nova tarefa, digitadas separadas por vírgula.
     @Published var newTags = ""
-    /// Tarefa aberta no formulário de edição (RF-09.6) + rascunho dos campos. Enquanto o sheet
-    /// está aberto nada é gravado: só `saveEdit()` toca o repositório.
-    @Published var editingTask: FocusTask?
-    @Published var editTitle = ""
-    /// Tags do rascunho, separadas por vírgula (mesmo formato do campo de criação).
-    @Published var editTags = ""
-    /// Vencimento é opcional: o toggle liga/desliga o `DatePicker` e desligado grava `nil`.
-    @Published var editHasDueDate = false
-    @Published var editDueDate = Date()
-    @Published var editPriority: TaskPriority = .none
-    /// "Repetir diariamente" (FEAT-004): concluída num dia, volta ativa no seguinte.
-    @Published var editRepeatsDaily = false
-    /// Erro do formulário — separado de `feedback` porque o sheet cobre a lista.
-    @Published var editFeedback: String?
-    /// Histórico da tarefa aberta no formulário (FEAT-001), mais recente primeiro.
-    /// Diferente dos outros campos do sheet, o histórico **não** é rascunho: acrescentar/apagar
-    /// grava na hora (é log). "Cancelar" não desfaz entrada já adicionada.
-    @Published private(set) var editingHistory: [TaskHistoryEntry] = []
-    /// Texto da entrada de histórico em digitação.
-    @Published var newHistoryText = ""
+    /// Formulário de edição aberto (RF-09.6) — `nil` = fechado. Compartilhado com o Kanban.
+    @Published var editor: TaskEditorViewModel?
 
     // Ordenação + filtros da lista de ativas (itens 5 e 7).
     /// Persistida: a última ordenação escolhida volta na próxima abertura da janela/app.
     /// Filtros e busca NÃO são persistidos de propósito — recorte é da sessão; ordenação e
     /// exibição de concluídas são preferência.
-    @Published var sortOrder: SortOrder = .createdAt {
+    @Published var sortOrder: TaskSortOrder = .createdAt {
         didSet { defaults.set(sortOrder.rawValue, forKey: Self.sortOrderKey) }
     }
     /// Persistida: mostrar/ocultar concluídas é preferência de exibição, como a ordenação.
@@ -64,13 +32,11 @@ final class TasksViewModel: ObservableObject {
     @Published var searchText = ""
     @Published var tagFilter: String?
     @Published var priorityFilter: TaskPriority?
-    /// Tarefas com concluir/reabrir/apagar em andamento — a linha mostra loading no lugar do botão.
-    @Published private(set) var busyTaskIDs: Set<UUID> = []
-    /// Trava global das ações de linha (concluir/apagar) enquanto uma está em andamento e por
-    /// `actionCooldown` depois. Sem ela, cliques repetidos acertavam a linha que sobe para o
-    /// lugar da que sumiu e concluíam/apagavam tarefas sem querer.
-    var isMutatingTask: Bool { !busyTaskIDs.isEmpty }
-    private static let actionCooldown: Duration = .milliseconds(400)
+    /// Recorte por vencimento (FEAT-005): hoje / próximos 7 dias / atrasadas.
+    @Published var dueFilter: TaskDueFilter = .all
+    /// Tarefas com concluir/reabrir/apagar em andamento — a linha mostra loading no lugar do botão
+    /// (trava em `TaskRowActionRunning`).
+    @Published var busyTaskIDs: Set<UUID> = []
 
     /// Sheet de criação em lote (RF-09.8) — `nil` = fechado.
     @Published var bulkAdd: BulkAddTasksViewModel?
@@ -78,6 +44,8 @@ final class TasksViewModel: ObservableObject {
     @Published var showsTagManager = false
     /// Mensagem de resultado/erro exibida sob a toolbar (some na próxima ação).
     @Published var feedback: String?
+    /// Linhas com o checklist aberto (FEAT-003). Só memória — recorte de sessão, não preferência.
+    @Published var expandedTaskIDs: Set<UUID> = []
     /// Acesso ao Lembretes negado — a UI mostra o atalho para os Ajustes de Privacidade.
     @Published private(set) var accessDenied = false
     @Published private(set) var isImporting = false
@@ -108,7 +76,7 @@ final class TasksViewModel: ObservableObject {
     private static let showsCompletedKey = "tasksShowsCompleted"
 
     private let useCase: ManageTasksUseCase
-    /// Avisa o timer que a lista mudou (o seletor de tarefa precisa recarregar).
+    /// Avisa que as tarefas mudaram por aqui — o seletor do timer e o Kanban recarregam.
     private let onTasksChanged: () -> Void
 
     init(useCase: ManageTasksUseCase, defaults: UserDefaults = .standard,
@@ -116,101 +84,77 @@ final class TasksViewModel: ObservableObject {
         self.useCase = useCase
         self.defaults = defaults
         self.onTasksChanged = onTasksChanged
-        sortOrder = Self.storedSortOrder(in: defaults)
+        sortOrder = TaskSortOrder.stored(in: defaults, key: Self.sortOrderKey)
         showsCompleted = defaults.bool(forKey: Self.showsCompletedKey)
-        reload()
+        refresh()
     }
 
+    /// Relê e avisa as outras telas (timer, Kanban) — usado depois de toda mudança feita aqui.
     func reload() {
+        refresh()
+        onTasksChanged()
+    }
+
+    /// Só relê. É o que as outras janelas chamam quando a mudança veio delas — chamar `reload()`
+    /// ali avisaria de volta e as janelas ficariam se avisando em laço.
+    func refresh() {
         let all = (try? useCase.allTasks()) ?? []
         activeTasks = all.filter { !$0.isCompleted }
         completedTasks = all.filter(\.isCompleted).sorted { ($0.completedAt ?? .distantPast) > ($1.completedAt ?? .distantPast) }
+        // Índice pai → filhas montado UMA vez por leitura: `displayedTasks`, `isExpanded` e o
+        // badge consultam por linha a cada render — varrer `allTasks` em cada uma era O(n²).
+        activeChildren = Dictionary(grouping: activeTasks.filter(\.isSubtask), by: { $0.parentID! })
+        completedChildren = Dictionary(grouping: completedTasks.filter(\.isSubtask), by: { $0.parentID! })
         importedReminderIDs = Set(activeTasks.compactMap(\.reminderID))
         reimportableReminderIDs = Set(completedTasks.compactMap(\.reminderID))
             .subtracting(importedReminderIDs)
         knownTags = (try? useCase.allTags()) ?? []
-        onTasksChanged()
+        // Tarefa apagada em outra janela fecha o formulário em vez de editar algo que não existe.
+        if let editor, !(activeTasks + completedTasks).contains(where: { $0.id == editor.task.id }) {
+            self.editor = nil
+        }
     }
 
-    /// Lista para exibição: ativas buscadas/filtradas/ordenadas (itens 5 e 7) e, com
+    /// Lista para exibição — só as tarefas **de topo** (FEAT-003: as subtarefas aparecem
+    /// aninhadas, via `children(of:)`): ativas buscadas/filtradas/ordenadas (itens 5 e 7) e, com
     /// `showsCompleted`, as concluídas em bloco no fim — na ordem de conclusão do `reload()`,
-    /// não no `sortComparator` (vencimento/prioridade/atraso não dizem nada de tarefa finalizada).
+    /// não na `sortOrder` (vencimento/prioridade/atraso não dizem nada de tarefa finalizada).
     var displayedTasks: [FocusTask] {
-        var result = applyFilters(activeTasks).sorted(by: sortComparator)
+        var result = applyFilters(TaskTree.topLevel(activeTasks)).sorted(by: sortOrder.areInIncreasingOrder)
         if showsCompleted {
-            result += applyFilters(completedTasks) // já vêm por completedAt desc do reload()
+            result += applyFilters(TaskTree.topLevel(completedTasks)) // já vêm por completedAt desc do reload()
         }
         return result
     }
 
-    /// Busca por título + filtros de tag/prioridade — valem para ativas e concluídas.
+    private var filter: TaskFilter {
+        TaskFilter(searchText: searchText, tag: tagFilter, priority: priorityFilter, due: dueFilter)
+    }
+
+    /// Busca, tag, prioridade e vencimento — a tarefa de topo entra se ela OU alguma subtarefa
+    /// casa (achar a tarefa pelo passo). Vale para ativas e concluídas.
     private func applyFilters(_ tasks: [FocusTask]) -> [FocusTask] {
-        var tasks = tasks
-        let query = searchText.trimmingCharacters(in: .whitespaces)
-        if !query.isEmpty {
-            tasks = tasks.filter { $0.title.localizedCaseInsensitiveContains(query) }
-        }
-        if let tag = tagFilter {
-            tasks = tasks.filter { $0.tags.contains { $0.caseInsensitiveCompare(tag) == .orderedSame } }
-        }
-        if let priority = priorityFilter {
-            tasks = tasks.filter { TaskPriority(rawPriority: $0.priority) == priority }
-        }
-        return tasks
-    }
-
-    /// Ordenação salva; `rawValue` desconhecido (versão antiga/futura) volta ao padrão.
-    private static func storedSortOrder(in defaults: UserDefaults) -> SortOrder {
-        guard let raw = defaults.string(forKey: sortOrderKey) else { return .createdAt }
-        return SortOrder(rawValue: raw) ?? .createdAt
-    }
-
-    /// Comparador conforme `sortOrder`. Empates caem para o mais recente primeiro.
-    private func sortComparator(_ a: FocusTask, _ b: FocusTask) -> Bool {
-        switch sortOrder {
-        case .createdAt:
-            return a.createdAt > b.createdAt
-        case .dueDate:
-            return byOptionalDate(a.dueDate, b.dueDate, a, b)
-        case .dueTime:
-            return byOptionalDate(timeOfDay(a.dueDate), timeOfDay(b.dueDate), a, b)
-        case .priority:
-            // Prioridade menor = mais urgente; sem prioridade vai para o fim.
-            let pa = a.priority ?? Int.max
-            let pb = b.priority ?? Int.max
-            if pa != pb { return pa < pb }
-            return a.createdAt > b.createdAt
+        let filter = self.filter
+        let now = Date()
+        return tasks.filter {
+            filter.matchesTree($0, children: allChildren(of: $0.id), now: now, calendar: .current)
         }
     }
 
-    /// Ordena por data opcional (nil por último); empate → mais recente primeiro.
-    private func byOptionalDate(_ da: Date?, _ db: Date?, _ a: FocusTask, _ b: FocusTask) -> Bool {
-        switch (da, db) {
-        case let (x?, y?): return x != y ? x < y : a.createdAt > b.createdAt
-        case (nil, _?): return false
-        case (_?, nil): return true
-        case (nil, nil): return a.createdAt > b.createdAt
-        }
-    }
+    private var allTasks: [FocusTask] { activeTasks + completedTasks }
 
-    /// Segundos desde a meia-noite de uma data — base para ordenar por "hora" do vencimento.
-    private func timeOfDay(_ date: Date?) -> Date? {
-        guard let date else { return nil }
-        let c = Calendar.current.dateComponents([.hour, .minute, .second], from: date)
-        let seconds = (c.hour ?? 0) * 3600 + (c.minute ?? 0) * 60 + (c.second ?? 0)
-        return Date(timeIntervalSinceReferenceDate: TimeInterval(seconds))
-    }
+    /// Índices pai → filhas (FEAT-003), reconstruídos no `refresh()`. Só subtarefas entram.
+    private var activeChildren: [UUID: [FocusTask]] = [:]
+    private var completedChildren: [UUID: [FocusTask]] = [:]
 
-    /// Tarefa vencida: tem data de vencimento no passado e não está concluída (item 6).
-    func isOverdue(_ task: FocusTask) -> Bool {
-        guard !task.isCompleted, let due = task.dueDate else { return false }
-        return due < Date()
+    private func allChildren(of parentID: UUID) -> [FocusTask] {
+        (activeChildren[parentID] ?? []) + (completedChildren[parentID] ?? [])
     }
 
     func addTask() {
         feedback = nil
         do {
-            try useCase.addTask(title: newTitle, tags: Self.parseTags(newTags))
+            try useCase.addTask(title: newTitle, tags: TaskEditorViewModel.parseTags(newTags))
             newTitle = ""
             newTags = ""
             reload()
@@ -241,7 +185,7 @@ final class TasksViewModel: ObservableObject {
     }
 
     func setCompleted(_ task: FocusTask, _ completed: Bool) {
-        runRowAction(task) {
+        runRowAction(task.id) {
             let outcome = completed
                 ? try await self.useCase.completeTask(id: task.id)
                 : try await self.useCase.reopenTask(id: task.id)
@@ -261,131 +205,54 @@ final class TasksViewModel: ObservableObject {
         }
     }
 
-    /// Executa uma ação de linha (concluir/reabrir/apagar) com loading na linha e trava global:
-    /// clique enquanto outra ação roda — ou logo depois, dentro do `actionCooldown` — é ignorado.
-    private func runRowAction(
-        _ task: FocusTask,
-        _ action: @escaping () async throws -> Void,
-        onError: @escaping (Error) -> String
-    ) {
-        guard !isMutatingTask else { return }
-        feedback = nil
-        busyTaskIDs.insert(task.id)
-        Task {
-            do {
-                try await action()
-            } catch {
-                feedback = onError(error)
-            }
-            try? await Task.sleep(for: Self.actionCooldown)
-            busyTaskIDs.remove(task.id)
+    // MARK: - Subtarefas na lista (FEAT-003)
+
+    func toggleExpanded(_ taskID: UUID) {
+        if expandedTaskIDs.contains(taskID) {
+            expandedTaskIDs.remove(taskID)
+        } else {
+            expandedTaskIDs.insert(taskID)
         }
+    }
+
+    /// Aberta pelo chevron ou, com filtro ativo, quando alguma subtarefa casa — senão a busca
+    /// "acha" a tarefa pela subtarefa e o usuário não vê qual.
+    func isExpanded(_ task: FocusTask) -> Bool {
+        if expandedTaskIDs.contains(task.id) { return true }
+        guard hasActiveFilters else { return false }
+        let filter = self.filter
+        return children(of: task).contains { filter.matches($0, now: Date(), calendar: .current) }
+    }
+
+    private var hasActiveFilters: Bool {
+        !searchText.trimmingCharacters(in: .whitespaces).isEmpty
+            || tagFilter != nil || priorityFilter != nil || dueFilter != .all
+    }
+
+    /// Subtarefas da linha: abertas na `sortOrder`, concluídas no fim por data de conclusão.
+    /// Sempre todas (sem recorte por filtro/`showsCompleted`): é o checklist do pai — o `2/5`
+    /// só faz sentido vendo as feitas.
+    func children(of task: FocusTask) -> [FocusTask] {
+        (activeChildren[task.id] ?? []).sorted(by: sortOrder.areInIncreasingOrder)
+            + (completedChildren[task.id] ?? []) // já vêm por completedAt desc do refresh()
+    }
+
+    func subtaskProgress(of task: FocusTask) -> (done: Int, total: Int) {
+        let done = completedChildren[task.id]?.count ?? 0
+        return (done, done + (activeChildren[task.id]?.count ?? 0))
     }
 
     // MARK: - Edição completa (RF-09.6)
 
-    /// Abre o formulário com os valores atuais da tarefa.
+    /// Abre o formulário com os valores atuais da tarefa. Clicar numa subtarefa dentro do
+    /// formulário do pai troca o editor pelo dela (`onOpenTask`).
     func beginEditing(_ task: FocusTask) {
         feedback = nil
-        editFeedback = nil
-        editTitle = task.title
-        editTags = task.tags.joined(separator: ", ")
-        editHasDueDate = task.dueDate != nil
-        editDueDate = task.dueDate ?? Self.defaultDueDate()
-        editPriority = TaskPriority(rawPriority: task.priority)
-        editRepeatsDaily = task.repeatsDaily
-        editingHistory = Self.sortedHistory(task)
-        newHistoryText = ""
-        editingTask = task
-    }
-
-    func cancelEditing() {
-        editingTask = nil
-        editFeedback = nil
-        newHistoryText = ""
-    }
-
-    /// Grava o rascunho. Erro de validação mantém o sheet aberto com a mensagem.
-    func saveEdit() {
-        guard let task = editingTask else { return }
-        editFeedback = nil
-        do {
-            try useCase.editTask(
-                id: task.id,
-                title: editTitle,
-                tags: Self.parseTags(editTags),
-                dueDate: editHasDueDate ? editDueDate : nil,
-                priority: editPriority,
-                repeatsDaily: editRepeatsDaily
-            )
-            // Texto digitado no histórico sem clicar "Adicionar" entra junto ao salvar — não
-            // descartar em silêncio o que o usuário escreveu.
-            if !newHistoryText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                try useCase.addHistoryEntry(taskID: task.id, text: newHistoryText)
-            }
-            editingTask = nil
-            newHistoryText = ""
-            reload()
-        } catch DomainError.emptyTaskTitle {
-            editFeedback = "Informe um título para a tarefa."
-        } catch DomainError.duplicateEntry(let title) {
-            editFeedback = "Já existe uma tarefa ativa chamada \"\(title)\"."
-        } catch {
-            editFeedback = "Não foi possível salvar: \(error.localizedDescription)"
-        }
-    }
-
-    // MARK: - Histórico da tarefa (FEAT-001)
-
-    /// Acrescenta a entrada digitada. **Grava na hora**, fora do rascunho do formulário —
-    /// histórico é log, e o botão "Cancelar" não desfaz o que já foi registrado.
-    func addHistoryEntry() {
-        guard let task = editingTask else { return }
-        editFeedback = nil
-        do {
-            guard let updated = try useCase.addHistoryEntry(taskID: task.id, text: newHistoryText) else { return }
-            editingHistory = Self.sortedHistory(updated)
-            newHistoryText = ""
-            reload()
-        } catch DomainError.emptyHistoryEntry {
-            editFeedback = "Escreva algo antes de adicionar ao histórico."
-        } catch {
-            editFeedback = "Não foi possível salvar a entrada: \(error.localizedDescription)"
-        }
-    }
-
-    /// Apaga UMA entrada (não há edição — é log).
-    func deleteHistoryEntry(_ entry: TaskHistoryEntry) {
-        guard let task = editingTask else { return }
-        editFeedback = nil
-        do {
-            guard let updated = try useCase.deleteHistoryEntry(taskID: task.id, entryID: entry.id) else { return }
-            editingHistory = Self.sortedHistory(updated)
-            reload()
-        } catch {
-            editFeedback = "Não foi possível apagar a entrada: \(error.localizedDescription)"
-        }
-    }
-
-    /// Ordem de exibição: mais recente primeiro (o Domain guarda na ordem de inclusão).
-    private static func sortedHistory(_ task: FocusTask) -> [TaskHistoryEntry] {
-        task.history.sorted { $0.createdAt > $1.createdAt }
-    }
-
-    /// Sugestão ao ligar o vencimento numa tarefa que não tinha: hoje na próxima hora cheia
-    /// (data crua com segundos do "agora" viraria um horário estranho no picker).
-    static func defaultDueDate() -> Date {
-        let calendar = Calendar.current
-        let next = calendar.date(byAdding: .hour, value: 1, to: Date()) ?? Date()
-        var parts = calendar.dateComponents([.year, .month, .day, .hour], from: next)
-        parts.minute = 0
-        parts.second = 0
-        return calendar.date(from: parts) ?? next
-    }
-
-    /// Divide o texto do campo em tags cruas (por vírgula) — a normalização final é do Domain.
-    static func parseTags(_ text: String) -> [String] {
-        text.split(separator: ",").map(String.init)
+        editor = TaskEditorViewModel(
+            task: task, knownTags: knownTags, useCase: useCase,
+            onChanged: { [weak self] in self?.reload() },
+            onClose: { [weak self] in self?.editor = nil },
+            onOpenTask: { [weak self] other in self?.beginEditing(other) })
     }
 
     // MARK: - Prioridade (item 4)
@@ -397,6 +264,17 @@ final class TasksViewModel: ObservableObject {
             reload()
         } catch {
             feedback = "Não foi possível definir a prioridade: \(error.localizedDescription)"
+        }
+    }
+
+    /// Liga/desliga "Urgente" pelo menu de contexto da linha (RF-09.13).
+    func setUrgent(_ task: FocusTask, _ isUrgent: Bool) {
+        feedback = nil
+        do {
+            try useCase.setUrgent(id: task.id, isUrgent)
+            reload()
+        } catch {
+            feedback = "Não foi possível alterar a urgência: \(error.localizedDescription)"
         }
     }
 
@@ -448,8 +326,27 @@ final class TasksViewModel: ObservableObject {
         }
     }
 
+    /// Pai com subtarefas pede confirmação (apagar é em cascata — FEAT-003); o resto apaga direto.
     func delete(_ task: FocusTask) {
-        runRowAction(task) {
+        guard !isMutatingTask else { return }
+        if subtaskProgress(of: task).total > 0 {
+            pendingDeletion = task
+        } else {
+            performDelete(task)
+        }
+    }
+
+    /// Tarefa esperando o diálogo "Apagar com as subtarefas?" — `nil` = diálogo fechado.
+    @Published var pendingDeletion: FocusTask?
+
+    func confirmPendingDeletion() {
+        guard let task = pendingDeletion else { return }
+        pendingDeletion = nil
+        performDelete(task)
+    }
+
+    private func performDelete(_ task: FocusTask) {
+        runRowAction(task.id) {
             try self.useCase.deleteTask(id: task.id)
             self.reload()
         } onError: { error in

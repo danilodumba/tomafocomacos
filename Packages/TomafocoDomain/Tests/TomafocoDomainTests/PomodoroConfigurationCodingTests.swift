@@ -99,4 +99,21 @@ final class PomodoroConfigurationCodingTests: XCTestCase {
         let data = try JSONEncoder().encode(original)
         XCTAssertEqual(try JSONDecoder().decode(PomodoroConfiguration.self, from: data), original)
     }
+
+    // RF-09.15 — config gravada antes de existir o escopo do seletor do foco.
+    func test_configAntigaSemEscopoDoFoco_decodificaComoTodas() throws {
+        let json = """
+        {"focusDuration":1200,"shortBreakDuration":300,"longBreakDuration":900,
+         "cyclesBeforeLongBreak":4,"autoStartNextFocus":false,"forceTerminateApps":true}
+        """
+        let config = try JSONDecoder().decode(PomodoroConfiguration.self, from: Data(json.utf8))
+        XCTAssertEqual(config.focusTaskScope, .all)
+        XCTAssertEqual(config.focusDuration, 1200)
+    }
+
+    func test_escopoDoFocoPorTag_sobreviveAoRoundTrip() throws {
+        let original = PomodoroConfiguration(focusTaskScope: .tags(["Trabalho", "Estudo"]))
+        let data = try JSONEncoder().encode(original)
+        XCTAssertEqual(try JSONDecoder().decode(PomodoroConfiguration.self, from: data), original)
+    }
 }

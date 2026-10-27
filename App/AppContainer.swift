@@ -27,6 +27,9 @@ final class AppContainer: ObservableObject {
     /// mudança de flag ou de lista.
     let persistentBlocking: PersistentBlockingController
     let tasksViewModel: TasksViewModel
+    /// Janela Kanban + aba Kanban das Configurações (FEAT-005).
+    let kanbanViewModel: KanbanViewModel
+    let kanbanSettingsViewModel: KanbanSettingsViewModel
     let reportsViewModel: ReportsViewModel
     /// Atualização automática (ADR-9). Criado aqui — e não sob demanda numa View — porque o
     /// Sparkle precisa subir junto com o app para agendar a checagem periódica.
@@ -45,6 +48,7 @@ final class AppContainer: ObservableObject {
         recover: RecoverFromCrashUseCase,
         manageBlockList: ManageBlockListUseCase,
         manageTasks: ManageTasksUseCase,
+        manageKanban: ManageKanbanUseCase,
         settings: SettingsRepository,
         sessions: SessionRepository,
         tasks: TaskRepository,
@@ -59,21 +63,31 @@ final class AppContainer: ObservableObject {
         self.recover = recover
         self.manageBlockList = manageBlockList
         self.notificationAdapter = notificationAdapter
-        self.timerViewModel = TimerViewModel(
-            coordinator: coordinator, settings: settings, manageTasks: manageTasks)
+        let timer = TimerViewModel(coordinator: coordinator, settings: settings, manageTasks: manageTasks)
+        self.timerViewModel = timer
         let refreshBlocking = { Task { await persistentBlocking.refresh() } }
         self.settingsViewModel = SettingsViewModel(
             settings: settings, loginItem: SMAppServiceLoginItem(),
-            authorizer: authorizer, onBlockingSettingsChanged: { _ = refreshBlocking() })
+            authorizer: authorizer, manageTasks: manageTasks,
+            onBlockingSettingsChanged: { _ = refreshBlocking() },
+            // Escopo do seletor do foco (RF-09.15) mudou: o timer refiltra na hora.
+            onFocusScopeChanged: { timer.reloadAvailableTasks() })
         self.blockListViewModel = BlockListViewModel(
             useCase: manageBlockList, appPicker: appPicker,
             onListChanged: { _ = refreshBlocking() })
         self.unlockPasswordViewModel = UnlockPasswordViewModel(store: passwordStore, authorizer: authorizer)
-        // Mudança na lista de tarefas precisa refletir no seletor do timer na hora.
-        let timerViewModel = self.timerViewModel
-        self.tasksViewModel = TasksViewModel(useCase: manageTasks) {
-            timerViewModel.reloadAvailableTasks()
+        // Mudança de tarefa numa janela reflete na outra (lista ↔ Kanban, que podem estar lado
+        // a lado) e no seletor do timer. Cada VM se relê sozinho; o relay só avisa os demais com
+        // `refresh()` — que não avisa de volta, senão as janelas ficariam se avisando em laço.
+        let relay = TaskChangeRelay(timer: self.timerViewModel)
+        self.tasksViewModel = TasksViewModel(useCase: manageTasks) { relay.tasksChanged(from: .list) }
+        self.kanbanViewModel = KanbanViewModel(useCase: manageKanban, manageTasks: manageTasks) {
+            relay.tasksChanged(from: .board)
         }
+        self.kanbanSettingsViewModel = KanbanSettingsViewModel(
+            useCase: manageKanban, manageTasks: manageTasks) { relay.tasksChanged(from: .settings) }
+        relay.connect(list: tasksViewModel, board: kanbanViewModel,
+                      boardSettings: kanbanSettingsViewModel, focusSettings: settingsViewModel)
         self.reportsViewModel = ReportsViewModel(sessions: sessions, tasks: tasks)
         self.breakOverlay = BreakOverlayPresenter(viewModel: self.timerViewModel)
         self.activationPolicy.start()
@@ -135,16 +149,21 @@ final class AppContainer: ObservableObject {
 
         // Tarefas + importação do Lembretes (RF-09).
         let taskStore = FileTaskStore()
+        let kanbanStore = FileKanbanStore()
         let manageTasks = ManageTasksUseCase(
             tasks: taskStore, importer: EventKitReminderImporter(), now: { clock.now },
             shouldSyncReminderCompletion: { settings.loadConfiguration().syncReminderCompletion },
-            tagCatalog: UserDefaultsTagCatalog(), calendar: .autoupdatingCurrent)
+            tagCatalog: UserDefaultsTagCatalog(), calendar: .autoupdatingCurrent,
+            kanbanBoards: kanbanStore, settings: settings)
+        // Quadro Kanban (FEAT-005): raias + config em `kanban.json`, ao lado do `tasks.json`.
+        let manageKanban = ManageKanbanUseCase(boards: kanbanStore, tasks: manageTasks, now: { clock.now })
 
         notificationAdapter.requestAuthorization()
 
         let container = AppContainer(
             coordinator: coordinator, recover: recover, manageBlockList: manageBlockList,
-            manageTasks: manageTasks, settings: settings, sessions: sessions, tasks: taskStore,
+            manageTasks: manageTasks, manageKanban: manageKanban,
+            settings: settings, sessions: sessions, tasks: taskStore,
             appPicker: appPicker, persistentBlocking: persistentBlocking,
             authorizer: authorizer, passwordStore: passwordStore,
             notificationAdapter: notificationAdapter

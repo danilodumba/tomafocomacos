@@ -54,7 +54,7 @@ final class BulkAddTasksViewModel: ObservableObject, Identifiable {
     /// ajustados — voltar para corrigir o texto não pode jogar fora o que foi editado.
     func goToGrid() {
         var previous = rows
-        let dueDate = TasksViewModel.defaultDueDate()
+        let dueDate = TaskEditorViewModel.defaultDueDate()
         rows = BulkTaskText.parseTitles(rawText).map { title in
             if let idx = previous.firstIndex(where: { $0.title == title }) {
                 return previous.remove(at: idx)
@@ -95,7 +95,7 @@ final class BulkAddTasksViewModel: ObservableObject, Identifiable {
         rows.map {
             NewTaskDraft(
                 title: $0.title,
-                tags: TasksViewModel.parseTags($0.tags),
+                tags: TaskEditorViewModel.parseTags($0.tags),
                 dueDate: $0.hasDueDate ? $0.dueDate : nil,
                 priority: $0.priority
             )

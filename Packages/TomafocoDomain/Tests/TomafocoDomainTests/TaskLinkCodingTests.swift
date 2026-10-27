@@ -124,6 +124,33 @@ final class TaskLinkCodingTests: XCTestCase {
         XCTAssertEqual(task.history, [])
     }
 
+    // MARK: - Subtarefas (FEAT-003)
+
+    /// `tasks.json` anterior à FEAT-003 não tem `parentID` — tem que abrir como tarefa de topo,
+    /// sem lançar (decode que lança apagaria a lista do usuário).
+    func test_focusTaskAntigaSemPai_decodificaComoTopo() throws {
+        let json = """
+        {"id":"00000000-0000-0000-0000-0000000000AA","title":"Deploy",
+         "source":"manual","createdAt":"2026-07-20T09:00:00Z"}
+        """
+        let task = try decoder.decode(FocusTask.self, from: Data(json.utf8))
+        XCTAssertNil(task.parentID)
+        XCTAssertFalse(task.isSubtask)
+    }
+
+    func test_focusTaskRoundtripComPai_preserva() throws {
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        let parentID = UUID()
+        let task = FocusTask(
+            id: UUID(), title: "Esboço", source: .manual,
+            createdAt: Date(timeIntervalSince1970: 0), parentID: parentID
+        )
+        let decoded = try decoder.decode(FocusTask.self, from: encoder.encode(task))
+        XCTAssertEqual(decoded.parentID, parentID)
+        XCTAssertTrue(decoded.isSubtask)
+    }
+
     // MARK: - Tarefa diária (FEAT-004)
 
     /// `tasks.json` anterior à FEAT-004 não tem `repeatsDaily`/`completionLog` — tem que abrir
@@ -149,6 +176,61 @@ final class TaskLinkCodingTests: XCTestCase {
         let decoded = try decoder.decode(FocusTask.self, from: encoder.encode(task))
         XCTAssertTrue(decoded.repeatsDaily)
         XCTAssertEqual(decoded.completionLog, log)
+    }
+
+    func test_focusTaskAntigaSemRaia_decodificaComNil() throws {
+        let json = """
+        {"id":"00000000-0000-0000-0000-0000000000AB","title":"Deploy",
+         "source":"manual","createdAt":"2026-07-20T09:00:00Z"}
+        """
+        let task = try decoder.decode(FocusTask.self, from: Data(json.utf8))
+        XCTAssertNil(task.laneID)
+    }
+
+    func test_focusTaskRoundtripComRaia_preserva() throws {
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        let laneID = UUID()
+        let task = FocusTask(
+            id: UUID(), title: "Deploy", source: .manual,
+            createdAt: Date(timeIntervalSince1970: 0), laneID: laneID
+        )
+        let decoded = try decoder.decode(FocusTask.self, from: encoder.encode(task))
+        XCTAssertEqual(decoded.laneID, laneID)
+    }
+
+    func test_focusTaskAntigaSemUrgente_decodificaFalse() throws {
+        let json = """
+        {"id":"00000000-0000-0000-0000-0000000000AB","title":"Deploy",
+         "source":"manual","createdAt":"2026-07-20T09:00:00Z"}
+        """
+        XCTAssertFalse(try decoder.decode(FocusTask.self, from: Data(json.utf8)).isUrgent)
+    }
+
+    func test_focusTaskRoundtripUrgente_preserva() throws {
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        let task = FocusTask(id: UUID(), title: "Deploy", source: .manual,
+                             createdAt: Date(timeIntervalSince1970: 0), isUrgent: true)
+        XCTAssertTrue(try decoder.decode(FocusTask.self, from: encoder.encode(task)).isUrgent)
+    }
+
+    func test_normalizeLink_regras() throws {
+        XCTAssertNil(try FocusTask.normalizeLink(nil))
+        XCTAssertNil(try FocusTask.normalizeLink("   "))
+        XCTAssertEqual(try FocusTask.normalizeLink(" globo.com "), "https://globo.com")
+        XCTAssertEqual(try FocusTask.normalizeLink("http://a.b/c"), "http://a.b/c")
+        XCTAssertEqual(try FocusTask.normalizeLink("notion://page/1"), "notion://page/1")
+        XCTAssertThrowsError(try FocusTask.normalizeLink("não é link")) {
+            XCTAssertEqual($0 as? DomainError, .invalidLink("não é link"))
+        }
+        XCTAssertThrowsError(try FocusTask.normalizeLink("https://"))
+    }
+
+    func test_normalizeNotes_trimEVazioViraNil() {
+        XCTAssertNil(FocusTask.normalizeNotes(nil))
+        XCTAssertNil(FocusTask.normalizeNotes(" \n "))
+        XCTAssertEqual(FocusTask.normalizeNotes("  olá \n"), "olá")
     }
 
     func test_focusTaskRoundtripComHistorico_preserva() throws {

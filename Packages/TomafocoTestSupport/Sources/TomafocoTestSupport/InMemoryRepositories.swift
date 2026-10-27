@@ -24,6 +24,8 @@ public final class InMemoryTaskRepository: TaskRepository {
     public var tasks: [FocusTask]
     public var loadError: Error?
     public var saveError: Error?
+    /// Gravações feitas — os testes conferem que operações compostas gravam uma vez só.
+    public private(set) var saveCallCount = 0
 
     public init(tasks: [FocusTask] = []) { self.tasks = tasks }
 
@@ -34,6 +36,7 @@ public final class InMemoryTaskRepository: TaskRepository {
 
     public func saveTasks(_ tasks: [FocusTask]) throws {
         if let saveError { throw saveError }
+        saveCallCount += 1
         self.tasks = tasks
     }
 }
@@ -91,4 +94,21 @@ public final class InMemorySettingsRepository: SettingsRepository {
     public func save(_ configuration: PomodoroConfiguration) { self.configuration = configuration }
     public func loadBlockList() -> BlockList { blockList }
     public func save(_ blockList: BlockList) { self.blockList = blockList }
+}
+
+/// Quadro Kanban em memória (FEAT-005). `nil` = nunca salvo.
+public final class InMemoryKanbanBoardRepository: KanbanBoardRepository {
+    public var board: KanbanBoard?
+    public var saveError: Error?
+    public private(set) var saveCount = 0
+
+    public init(board: KanbanBoard? = nil) { self.board = board }
+
+    public func loadBoard() throws -> KanbanBoard? { board }
+
+    public func saveBoard(_ board: KanbanBoard) throws {
+        if let saveError { throw saveError }
+        saveCount += 1
+        self.board = board
+    }
 }

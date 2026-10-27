@@ -28,16 +28,23 @@ struct TomafocoApp: App {
             CommandGroup(after: .appInfo) {
                 CheckForUpdatesMenuItem(updater: container.updater)
             }
+            // ⌥⌘K abre o Kanban. Só existe com alguma janela aberta (o app é `.accessory` no
+            // resto do tempo); fora disso o caminho é o menu de engrenagem do popover.
+            CommandGroup(before: .windowList) {
+                OpenKanbanMenuItem()
+            }
         }
 
         reportsWindow
+        kanbanWindow
 
         Settings {
             SettingsView(
                 settingsViewModel: container.settingsViewModel,
                 blockListViewModel: container.blockListViewModel,
                 unlockPasswordViewModel: container.unlockPasswordViewModel,
-                updater: container.updater
+                updater: container.updater,
+                kanbanSettingsViewModel: container.kanbanSettingsViewModel
             )
         }
     }
@@ -50,6 +57,16 @@ struct TomafocoApp: App {
             TasksView(viewModel: container.tasksViewModel)
                 .frame(minWidth: 520, minHeight: 540)
         }
+    }
+
+    /// Kanban em janela própria (FEAT-005) para usar tela cheia e Split View.
+    private var kanbanWindow: some Scene {
+        Window("Kanban", id: "kanban") {
+            KanbanBoardView(viewModel: container.kanbanViewModel)
+                .frame(minWidth: 840, minHeight: 540)
+                .allowsFullScreen()
+        }
+        .defaultSize(width: 1200, height: 760)
     }
 
     private var reportsWindow: some Scene {
@@ -93,5 +110,18 @@ private struct CheckForUpdatesMenuItem: View {
     var body: some View {
         Button("Buscar atualizações…") { updater.checkForUpdates() }
             .disabled(!updater.canCheckForUpdates)
+    }
+}
+
+/// Item "Kanban" (⌥⌘K) do menu Janela. View própria porque `openWindow` vem do ambiente.
+private struct OpenKanbanMenuItem: View {
+    @Environment(\.openWindow) private var openWindow
+
+    var body: some View {
+        Button("Kanban") {
+            openWindow(id: "kanban")
+            NSApp.activate(ignoringOtherApps: true)
+        }
+        .keyboardShortcut("k", modifiers: [.command, .option])
     }
 }

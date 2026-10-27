@@ -98,10 +98,120 @@ public struct FocusReport: Equatable {
     }
 }
 
+/// Relatório de UMA tarefa num período (RF-10.6): sessões de foco uma a uma, foco por dia,
+/// conclusões e histórico. Subtarefas (FEAT-003) entram no relatório do pai — mesma regra de
+/// roll-up das `taskTotals`, mas aqui cada sessão aparece uma vez e diz por qual filha veio.
+public struct TaskReport: Equatable {
+    public struct Session: Equatable, Identifiable {
+        /// `sessionID` do registro — uma sessão multi-tarefa com pai e filha aparece uma vez só.
+        public let id: UUID
+        public let startedAt: Date
+        public let endedAt: Date
+        public let duration: TimeInterval
+        public let outcome: SessionRecord.Outcome
+        /// Título da subtarefa quando a sessão conta no pai por roll-up (`nil` = foco direto).
+        public let subtaskTitle: String?
+
+        public init(
+            id: UUID, startedAt: Date, endedAt: Date, duration: TimeInterval,
+            outcome: SessionRecord.Outcome, subtaskTitle: String?
+        ) {
+            self.id = id
+            self.startedAt = startedAt
+            self.endedAt = endedAt
+            self.duration = duration
+            self.outcome = outcome
+            self.subtaskTitle = subtaskTitle
+        }
+    }
+
+    public let taskID: UUID
+    /// Título resolvido ("Pai › Filha" para subtarefa).
+    public let title: String
+    public let focusTotal: TimeInterval
+    /// Sessões de foco no período, mais recente primeiro.
+    public let sessions: [Session]
+    /// Foco por dia só desta tarefa (`breakTime`/`breakCount` sempre 0 — intervalo não é de tarefa).
+    public let dailyTotals: [FocusReport.DailyTotal]
+    /// Conclusões no período, mais recente primeiro (diária = uma por dia, RF-10.4).
+    public let completions: [Date]
+    /// Entradas de histórico da tarefa no período, mais recente primeiro.
+    public let historyEntries: [FocusReport.HistoryItem]
+
+    public init(
+        taskID: UUID, title: String, focusTotal: TimeInterval, sessions: [Session],
+        dailyTotals: [FocusReport.DailyTotal], completions: [Date],
+        historyEntries: [FocusReport.HistoryItem]
+    ) {
+        self.taskID = taskID
+        self.title = title
+        self.focusTotal = focusTotal
+        self.sessions = sessions
+        self.dailyTotals = dailyTotals
+        self.completions = completions
+        self.historyEntries = historyEntries
+    }
+
+    public var sessionCount: Int { sessions.count }
+    /// Média de duração por sessão; 0 sem sessão.
+    public var averageSessionDuration: TimeInterval {
+        sessions.isEmpty ? 0 : focusTotal / Double(sessions.count)
+    }
+}
+
 /// Agregador PURO de relatórios (RF-10): sem `Date()`, sem I/O — `now` e `calendar` injetados,
 /// testável por tabela. Tempo é sempre de parede (`endedAt − startedAt`), pausas incluídas —
 /// decisão de produto registrada no plano de 2026-07-22.
 public enum ReportBuilder {
+
+    /// Relatório de uma tarefa (RF-10.6). `nil` se a tarefa não existe mais — tarefa apagada não
+    /// tem relatório próprio (ela só sobrevive como "Tarefa removida" nas `taskTotals`).
+    public static func taskReport(
+        taskID: UUID,
+        records: [SessionRecord],
+        tasks: [FocusTask],
+        interval: DateInterval?,
+        calendar: Calendar
+    ) -> TaskReport? {
+        guard let task = tasks.first(where: { $0.id == taskID }) else { return nil }
+        let children = TaskTree.children(of: taskID, in: tasks)
+        let childTitleByID = Dictionary(uniqueKeysWithValues: children.map { ($0.id, $0.title) })
+
+        let focus = records.filter {
+            $0.phase == .focus && (interval?.contains($0.startedAt) ?? true)
+        }
+        var matched: [SessionRecord] = []
+        var sessions: [TaskReport.Session] = []
+        for record in focus {
+            let direct = record.taskIDs.contains(taskID)
+            let viaChild = record.taskIDs.first { childTitleByID[$0] != nil }
+            guard direct || viaChild != nil else { continue }
+            matched.append(record)
+            sessions.append(TaskReport.Session(
+                id: record.sessionID,
+                startedAt: record.startedAt,
+                endedAt: record.endedAt,
+                duration: duration(record),
+                outcome: record.outcome,
+                // Foco direto no pai vence: a sessão é "dele" mesmo que uma filha também esteja.
+                subtaskTitle: direct ? nil : viaChild.flatMap { childTitleByID[$0] }
+            ))
+        }
+
+        let completions = CompletedTaskOccurrence.occurrences(of: [task])
+            .compactMap(\.task.completedAt)
+            .filter { interval?.contains($0) ?? true }
+
+        return TaskReport(
+            taskID: taskID,
+            title: TaskTree.displayTitle(of: task, in: tasks),
+            focusTotal: matched.reduce(0) { $0 + duration($1) },
+            sessions: sessions.sorted { $0.startedAt > $1.startedAt },
+            dailyTotals: dailyTotals(focus: matched, breaks: [], calendar: calendar),
+            completions: completions,
+            historyEntries: historyEntries(tasks: [task], interval: interval)
+        )
+    }
 
     public static func build(
         records: [SessionRecord],
@@ -132,7 +242,7 @@ public enum ReportBuilder {
     }
 
     private static func taskTotals(focus: [SessionRecord], tasks: [FocusTask]) -> [FocusReport.TaskTotal] {
-        let titles = Dictionary(uniqueKeysWithValues: tasks.map { ($0.id, $0.title) })
+        let byID = Dictionary(uniqueKeysWithValues: tasks.map { ($0.id, $0) })
         // Foco multi-tarefa (RF-09.4): uma sessão com N tarefas dá o tempo CHEIO a cada uma
         // (decisão de produto — a soma dos totais pode passar do tempo real de foco). Registro
         // sem tarefa (`taskIDs` vazio) agrupa sob a chave `nil` → "Sem tarefa".
@@ -140,7 +250,16 @@ public enum ReportBuilder {
         var sessionsByTask: [UUID?: Int] = [:]
         for record in focus {
             let dur = duration(record)
-            let keys: [UUID?] = record.taskIDs.isEmpty ? [nil] : record.taskIDs.map { $0 }
+            var keys: [UUID?] = record.taskIDs.isEmpty ? [nil] : record.taskIDs.map { $0 }
+            // Subtarefas (FEAT-003): o tempo da filha também soma no pai — a linha do pai é
+            // "próprio + filhas" e aparece mesmo que o pai nunca tenha sido focado diretamente.
+            // A filha continua com a linha dela, como "Pai › Filha". A soma é **por sessão**: pai
+            // e filha (ou duas filhas) na mesma sessão multi-tarefa contam UMA vez para o pai.
+            for taskID in record.taskIDs {
+                guard let parentID = byID[taskID]?.parentID, byID[parentID] != nil,
+                      !keys.contains(parentID) else { continue }
+                keys.append(parentID)
+            }
             for key in keys {
                 focusTimeByTask[key, default: 0] += dur
                 sessionsByTask[key, default: 0] += 1
@@ -151,7 +270,9 @@ public enum ReportBuilder {
                 FocusReport.TaskTotal(
                     taskID: taskID,
                     // Tarefa apagada depois de usada não pode sumir do relatório — vira "Tarefa removida".
-                    title: taskID.map { titles[$0] ?? "Tarefa removida" } ?? "Sem tarefa",
+                    title: taskID.map { id in
+                        byID[id].map { TaskTree.displayTitle(of: $0, in: tasks) } ?? "Tarefa removida"
+                    } ?? "Sem tarefa",
                     focusTime: focusTime,
                     sessionCount: sessionsByTask[taskID] ?? 0
                 )

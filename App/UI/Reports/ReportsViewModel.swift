@@ -9,6 +9,7 @@ import TomafocoApplication
 final class ReportsViewModel: ObservableObject {
 
     enum Period: String, CaseIterable, Identifiable {
+        case today = "Hoje"
         case week = "7 dias"
         case month = "30 dias"
         case all = "Tudo"
@@ -19,18 +20,34 @@ final class ReportsViewModel: ObservableObject {
         didSet { reload() }
     }
     @Published private(set) var report: FocusReport?
-    /// Todas as tarefas concluídas (fonte para a lista e o CSV), antes de busca/tag.
+    /// Tarefas concluídas NO PERÍODO (fonte para a lista e o CSV), antes de busca/tag.
     /// Uma linha por conclusão — tarefa diária (FEAT-004) aparece uma vez por dia concluído.
     @Published private(set) var completedAll: [CompletedTaskOccurrence] = []
+    /// Tarefas com foco no período, na ordem das `taskTotals` — opções do relatório por tarefa.
+    @Published private(set) var taskOptions: [TaskOption] = []
+    /// Tarefa escolhida para o relatório por tarefa (RF-10.6); `nil` = seção recolhida.
+    @Published var selectedTaskID: UUID? {
+        didSet { rebuildTaskReport() }
+    }
+    @Published private(set) var taskReport: TaskReport?
     /// Todas as tags conhecidas — alimenta o filtro por tag.
     @Published private(set) var knownTags: [String] = []
     /// Busca por título e filtro por tag da lista de concluídas (item 3).
     @Published var searchText = ""
     @Published var tagFilter: String?
 
+    struct TaskOption: Identifiable, Equatable {
+        let id: UUID
+        let title: String
+    }
+
     private let sessions: SessionRepository
     private let tasks: TaskRepository
     private let calendar = Calendar.current
+    /// Último snapshot lido — o relatório por tarefa é recalculado a partir dele ao trocar a
+    /// seleção, sem reler o disco.
+    private var loadedRecords: [SessionRecord] = []
+    private var loadedTasks: [FocusTask] = []
 
     init(sessions: SessionRepository, tasks: TaskRepository) {
         self.sessions = sessions
@@ -40,10 +57,28 @@ final class ReportsViewModel: ObservableObject {
     func reload() {
         let records = (try? sessions.loadHistory()) ?? []
         let allTasks = (try? tasks.loadTasks()) ?? []
-        report = ReportBuilder.build(
+        let interval = interval(for: period)
+        loadedRecords = records
+        loadedTasks = allTasks
+        let built = ReportBuilder.build(
             records: records, tasks: allTasks,
-            interval: interval(for: period), now: Date(), calendar: calendar)
-        completedAll = CompletedTaskOccurrence.occurrences(of: allTasks)
+            interval: interval, now: Date(), calendar: calendar)
+        report = built
+        // Conclusões recortadas pelo mesmo período do resto — "Hoje" tem que mostrar só o que
+        // foi concluído hoje.
+        completedAll = CompletedTaskOccurrence.occurrences(of: allTasks).filter { occurrence in
+            occurrence.task.completedAt.map { interval?.contains($0) ?? true } ?? false
+        }
+        let existing = Set(allTasks.map(\.id))
+        taskOptions = built.taskTotals.compactMap { total in
+            total.taskID.flatMap { existing.contains($0) ? TaskOption(id: $0, title: total.title) : nil }
+        }
+        // Seleção que saiu do período (ou foi apagada) é limpa — o menu não a mostraria mais.
+        if let selected = selectedTaskID, !taskOptions.contains(where: { $0.id == selected }) {
+            selectedTaskID = nil
+        } else {
+            rebuildTaskReport()
+        }
         knownTags = allTasks.flatMap(\.tags).reduce(into: [String]()) { acc, tag in
             if !acc.contains(where: { $0.caseInsensitiveCompare(tag) == .orderedSame }) { acc.append(tag) }
         }.sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
@@ -60,6 +95,17 @@ final class ReportsViewModel: ObservableObject {
             list = list.filter { $0.task.tags.contains { $0.caseInsensitiveCompare(tag) == .orderedSame } }
         }
         return list
+    }
+
+    private func rebuildTaskReport() {
+        taskReport = selectedTaskID.flatMap {
+            ReportBuilder.taskReport(taskID: $0, records: loadedRecords, tasks: loadedTasks,
+                                     interval: interval(for: period), calendar: calendar)
+        }
+    }
+
+    var selectedTaskTitle: String? {
+        selectedTaskID.flatMap { id in taskOptions.first { $0.id == id }?.title }
     }
 
     /// Entradas de histórico do período (FEAT-001) — recorte só por período; busca e filtro de
@@ -81,7 +127,25 @@ final class ReportsViewModel: ObservableObject {
             dateString: { Self.csvDateFormatter.string(from: $0) })
     }
 
-    /// Formatador dos CSVs — um só para os dois exports.
+    /// CSV das sessões da tarefa selecionada (RF-10.6); vazio sem seleção.
+    func taskSessionsCSV() -> String {
+        guard let taskReport else { return "" }
+        return ReportCSVExporter.taskSessionsCSV(
+            report: taskReport,
+            dateString: { Self.csvDateFormatter.string(from: $0) })
+    }
+
+    /// Nome de arquivo sugerido para o CSV da tarefa: "tomafoco-tarefa-<título>.csv".
+    func taskSessionsCSVFileName() -> String {
+        let raw = taskReport?.title ?? "tarefa"
+        let slug = raw.lowercased()
+            .components(separatedBy: CharacterSet.alphanumerics.inverted)
+            .filter { !$0.isEmpty }
+            .joined(separator: "-")
+        return "tomafoco-tarefa-\(slug.isEmpty ? "sessoes" : slug).csv"
+    }
+
+    /// Formatador dos CSVs — um só para todos os exports.
     private static let csvDateFormatter: DateFormatter = {
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "pt_BR")
@@ -98,11 +162,13 @@ final class ReportsViewModel: ObservableObject {
     private func interval(for period: Period) -> DateInterval? {
         let days: Int
         switch period {
+        case .today: days = 1
         case .week: days = 7
         case .month: days = 30
         case .all: return nil
         }
-        // Do início de (hoje − N + 1) até agora: "7 dias" = hoje + 6 anteriores completos.
+        // Do início de (hoje − N + 1) até agora: "7 dias" = hoje + 6 anteriores completos;
+        // "Hoje" = do início de hoje até agora.
         let startOfToday = calendar.startOfDay(for: Date())
         guard let start = calendar.date(byAdding: .day, value: -(days - 1), to: startOfToday) else {
             return nil

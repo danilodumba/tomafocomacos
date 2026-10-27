@@ -56,6 +56,46 @@ final class ReportBuilderTests: XCTestCase {
         XCTAssertEqual(report.taskTotals[0].sessionCount, 2)
     }
 
+    /// FEAT-003: o tempo da subtarefa soma no pai (linha do pai = próprio + filhas, mesmo sem
+    /// foco direto) e a filha mantém a linha dela como "Pai › Filha".
+    func test_taskTotals_subtarefaSomaNoPai() {
+        var child = task(taskB, "Slides")
+        child.parentID = taskA
+        let report = build([
+            record(day: 0, minutes: 25, taskID: taskA),
+            record(day: 0, minutes: 25, taskID: taskB),
+            record(day: 1, minutes: 10, taskID: taskB)
+        ], tasks: [task(taskA, "Apresentação"), child])
+
+        XCTAssertEqual(report.taskTotals.map(\.title), ["Apresentação", "Apresentação › Slides"])
+        XCTAssertEqual(report.taskTotals[0].focusTime, 60 * 60)
+        XCTAssertEqual(report.taskTotals[0].sessionCount, 3)
+        XCTAssertEqual(report.taskTotals[1].focusTime, 35 * 60)
+        XCTAssertEqual(report.taskTotals[1].sessionCount, 2)
+
+        let onlyChild = build([record(day: 0, minutes: 25, taskID: taskB)],
+                              tasks: [task(taskA, "Apresentação"), child])
+        XCTAssertEqual(onlyChild.taskTotals.map(\.title), ["Apresentação", "Apresentação › Slides"])
+    }
+
+    /// Sessão multi-tarefa (RF-09.4) com pai E filha selecionados: o pai conta UMA vez — somar o
+    /// total da filha por cima dobraria o tempo da mesma sessão. Duas filhas na mesma sessão
+    /// também dão uma só sessão ao pai.
+    func test_taskTotals_paiEFilhaNaMesmaSessao_naoDobra() {
+        let taskC = UUID()
+        var child = task(taskB, "Slides"); child.parentID = taskA
+        var other = task(taskC, "Roteiro"); other.parentID = taskA
+        let report = build([
+            record(day: 0, minutes: 25, taskIDs: [taskA, taskB]),
+            record(day: 1, minutes: 10, taskIDs: [taskB, taskC])
+        ], tasks: [task(taskA, "Apresentação"), child, other])
+
+        let parent = report.taskTotals.first { $0.taskID == taskA }!
+        XCTAssertEqual(parent.focusTime, 35 * 60)
+        XCTAssertEqual(parent.sessionCount, 2)
+        XCTAssertEqual(report.taskTotals.first { $0.taskID == taskB }?.focusTime, 35 * 60)
+    }
+
     func test_taskTotals_historicoSemTarefa_viraSemTarefa() {
         let report = build([record(day: 0, minutes: 25)])
         XCTAssertEqual(report.taskTotals, [
@@ -218,6 +258,72 @@ final class ReportBuilderTests: XCTestCase {
         let report = build([], tasks: [task(taskA, "Alpha"), task(taskB, "Beta", historyDays: [1])])
         XCTAssertEqual(report.historyEntries.count, 1)
         XCTAssertEqual(report.historyEntries.first?.taskTitle, "Beta")
+    }
+
+    // MARK: relatório por tarefa (RF-10.6)
+
+    private func taskReport(
+        _ id: UUID, _ records: [SessionRecord], tasks: [FocusTask], interval: DateInterval? = nil
+    ) -> TaskReport? {
+        ReportBuilder.taskReport(taskID: id, records: records, tasks: tasks,
+                                 interval: interval, calendar: calendar)
+    }
+
+    func test_taskReport_soSessoesDeFocoDaTarefa_maisRecentePrimeiro() {
+        let report = taskReport(taskA, [
+            record(day: 0, minutes: 25, taskID: taskA),
+            record(day: 0, hour: 11, minutes: 5, phase: .shortBreak, taskID: taskA),
+            record(day: 1, minutes: 10, outcome: .cancelled, taskID: taskA),
+            record(day: 1, hour: 12, minutes: 25, taskID: taskB),
+            record(day: 2, minutes: 25)
+        ], tasks: [task(taskA, "Estudo"), task(taskB, "Trabalho")])
+
+        XCTAssertEqual(report?.title, "Estudo")
+        XCTAssertEqual(report?.sessions.map(\.duration), [10 * 60, 25 * 60])
+        XCTAssertEqual(report?.sessions.map(\.outcome), [.cancelled, .completed])
+        XCTAssertEqual(report?.focusTotal, 35 * 60)
+        XCTAssertEqual(report?.sessionCount, 2)
+        XCTAssertEqual(report?.averageSessionDuration, 17.5 * 60)
+        XCTAssertEqual(report?.dailyTotals.map(\.focusTime), [25 * 60, 10 * 60])
+        XCTAssertEqual(report?.dailyTotals.map(\.breakCount), [0, 0])
+    }
+
+    /// FEAT-003: sessão da filha entra no relatório do pai marcada com o título dela; pai e filha
+    /// na mesma sessão multi-tarefa é UMA sessão, como foco direto.
+    func test_taskReport_subtarefaEntraNoPai_semDobrar() {
+        var child = task(taskB, "Slides"); child.parentID = taskA
+        let report = taskReport(taskA, [
+            record(day: 0, minutes: 25, taskID: taskB),
+            record(day: 1, minutes: 10, taskIDs: [taskA, taskB])
+        ], tasks: [task(taskA, "Apresentação"), child])
+
+        XCTAssertEqual(report?.sessions.count, 2)
+        XCTAssertEqual(report?.sessions.map(\.subtaskTitle), [nil, "Slides"])
+        XCTAssertEqual(report?.focusTotal, 35 * 60)
+
+        let childReport = taskReport(taskB, [record(day: 0, minutes: 25, taskID: taskB)],
+                                     tasks: [task(taskA, "Apresentação"), child])
+        XCTAssertEqual(childReport?.title, "Apresentação › Slides")
+        XCTAssertEqual(childReport?.sessions.map(\.subtaskTitle), [nil])
+    }
+
+    func test_taskReport_recortaSessoesConclusoesEHistoricoPeloIntervalo() {
+        let day1 = DateInterval(start: day0.addingTimeInterval(86_400), duration: 86_400)
+        var daily = task(taskA, "Diária", historyDays: [0, 1])
+        daily.repeatsDaily = true
+        daily.completionLog = [day0.addingTimeInterval(40_000), day0.addingTimeInterval(86_400 + 40_000)]
+        let report = taskReport(taskA, [
+            record(day: 0, minutes: 25, taskID: taskA),
+            record(day: 1, minutes: 25, taskID: taskA)
+        ], tasks: [daily], interval: day1)
+
+        XCTAssertEqual(report?.sessions.count, 1)
+        XCTAssertEqual(report?.completions, [day0.addingTimeInterval(86_400 + 40_000)])
+        XCTAssertEqual(report?.historyEntries.map(\.text), ["entrada d1"])
+    }
+
+    func test_taskReport_tarefaInexistente_nil() {
+        XCTAssertNil(taskReport(taskA, [record(day: 0, minutes: 25, taskID: taskA)], tasks: []))
     }
 
     func test_vazio_tudoZerado() {

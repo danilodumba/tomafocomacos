@@ -16,6 +16,13 @@ public protocol TaskRepository: AnyObject {
     func saveTasks(_ tasks: [FocusTask]) throws
 }
 
+/// Persistência do quadro Kanban (FEAT-005): raias + configuração do quadro.
+/// `nil` = nunca salvo (o use case cria o quadro padrão).
+public protocol KanbanBoardRepository: AnyObject {
+    func loadBoard() throws -> KanbanBoard?
+    func saveBoard(_ board: KanbanBoard) throws
+}
+
 /// Catálogo de tags "cadastradas" (RF-09.5) — inclusive tags criadas na tela de gestão que
 /// ainda não estão em nenhuma tarefa. Best-effort (UserDefaults): não lança. As tags em uso pelas
 /// tarefas continuam sendo a fonte primária; o catálogo só guarda as órfãs e as renomeações.
