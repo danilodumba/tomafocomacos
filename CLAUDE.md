@@ -452,6 +452,18 @@ Conteúdo: FEAT-006 inteira (projetos, relatório de projetos em PDF, banco Swif
   PDF", DMG + notas + appcast no mesmo commit, push em `tomafoco-site`.
 - ⚠️ Validação manual da FEAT-006 **não** foi feita antes da release (pedido do usuário) — fazer na 1ª abertura.
 
+**🚀 Release 1.18 publicada (2026-10-29)** — `MARKETING_VERSION 1.18` / `CURRENT_PROJECT_VERSION 19`.
+Conteúdo: na raia Done do Kanban o filtro de data julga o cartão concluído **só pela data de conclusão**
+(`TaskDueFilter.matchesCompletion`, usado por `TaskFilter.matchesCard` quando `isCompleted`; "Hoje" =
+concluída hoje, "Próximos 7 dias" = mesma janela do vencimento → na prática hoje, "Atrasadas" nunca casa;
+colunas abertas e a lista seguem pelo vencimento) + cartão concluído mostra a data de conclusão (cyan,
+`checkmark.circle`) abaixo do vencimento.
+- `make test` **535 verdes** (Domain 154, Application 290, Infra 91). Notarização **Accepted**, `spctl` →
+  `Notarized Developer ID`, DMG 5,8 MB, appcast `sparkle:version 19`, `minimumSystemVersion 14.0`.
+- Commits `feat:` + `release:`, tag `v1.18`. Site: sed `1\.17` nos 4 arquivos, DMG + notas + appcast no mesmo
+  commit. Verificado ao vivo: `/`, DMG, appcast, `app.js` **200**; SHA-256 do DMG servido = local; notas **301**.
+- Em aberto (pergunta ao usuário): "Próximos 7 dias" na Done mostrar concluídas dos **últimos** 7 dias.
+
 ## Como retomar
 
 ```bash
