@@ -441,6 +441,17 @@ salvar e imprimir. **Para conferir o PDF sem rodar o app:** pacote SPM executáv
 dependendo de Domain/Application + cópia de `ProjectReportPDF`/`ProjectReportsViewModel`/
 `ReportsViewModel`/`ReportPeriod`/`ProjectStyle`/`Brand`, renderiza e exporta PNG pelo `PDFPage.thumbnail`.
 
+**🚀 Release 1.17 publicada (2026-10-29)** — `MARKETING_VERSION 1.17` / `CURRENT_PROJECT_VERSION 18`.
+Conteúdo: FEAT-006 inteira (projetos, relatório de projetos em PDF, banco SwiftData, correções de data).
+- **Primeira versão que exige macOS 14** — appcast com `minimumSystemVersion 14.0` (Ventura não recebe).
+  **Primeiro lançamento migra os dados** do usuário (JSON → `Tomafoco.store`); voltar de versão não é suportado.
+- `make release`: notarização **Accepted**, staple ok, `spctl` → `Notarized Developer ID`, universal
+  (`x86_64 arm64`), DMG 6,0 MB. Appcast `sparkle:version 18`, sem `hardwareRequirements`.
+- Commits `feat:` + `release:` na branch `feat/feat-006-projetos`, merge fast-forward na `main`, tag `v1.17`.
+  Site: bump nos 4 arquivos (sed `1\.16`), macOS 13 → 14 (3 lugares), card "Projetos com relatório em
+  PDF", DMG + notas + appcast no mesmo commit, push em `tomafoco-site`.
+- ⚠️ Validação manual da FEAT-006 **não** foi feita antes da release (pedido do usuário) — fazer na 1ª abertura.
+
 ## Como retomar
 
 ```bash
