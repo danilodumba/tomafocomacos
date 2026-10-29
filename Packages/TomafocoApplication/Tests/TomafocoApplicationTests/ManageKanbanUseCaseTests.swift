@@ -5,6 +5,7 @@ import TomafocoTestSupport
 
 /// Quadro Kanban (FEAT-005): movimentação (com conclusão/reabertura e histórico), raias e
 /// configuração do quadro.
+@MainActor
 final class ManageKanbanUseCaseTests: XCTestCase {
 
     private var taskRepo: InMemoryTaskRepository!

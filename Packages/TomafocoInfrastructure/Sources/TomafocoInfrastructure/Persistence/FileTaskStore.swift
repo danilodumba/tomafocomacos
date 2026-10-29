@@ -48,6 +48,21 @@ public final class FileTaskStore: TaskRepository {
         try data.write(to: tasksURL, options: .atomic)
     }
 
+    // Arquivo é sempre lido/gravado inteiro — a granularidade só existe no banco (FEAT-006).
+    // Este store hoje só serve ao importador JSON → SwiftData e aos testes.
+
+    public func task(id: UUID) throws -> FocusTask? {
+        try loadTasks().first { $0.id == id }
+    }
+
+    public func upsert(_ changed: [FocusTask]) throws {
+        var all = try loadTasks()
+        for task in changed {
+            if let idx = all.firstIndex(where: { $0.id == task.id }) { all[idx] = task } else { all.append(task) }
+        }
+        try saveTasks(all)
+    }
+
     private static func defaultDirectory(_ fm: FileManager) -> URL {
         let support = fm.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
             ?? fm.temporaryDirectory

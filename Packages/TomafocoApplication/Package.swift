@@ -5,7 +5,7 @@ import PackageDescription
 // Depende SOMENTE de TomafocoDomain. Nenhum import de AppKit/SwiftUI.
 let package = Package(
     name: "TomafocoApplication",
-    platforms: [.macOS(.v13)],
+    platforms: [.macOS(.v14)],
     products: [
         .library(name: "TomafocoApplication", targets: ["TomafocoApplication"])
     ],

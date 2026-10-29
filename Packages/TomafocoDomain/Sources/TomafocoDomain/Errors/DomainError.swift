@@ -26,4 +26,10 @@ public enum DomainError: Error, Equatable {
     case cannotDeleteDoneLane
     /// O quadro precisa de pelo menos uma raia aberta além da Done (FEAT-005).
     case cannotDeleteLastOpenLane
+    /// Título de projeto vazio após trim (FEAT-006).
+    case emptyProjectTitle
+    /// Já existe projeto com esse título, sem distinção de caixa (FEAT-006) — valor para a UI.
+    case duplicateProject(String)
+    /// Projeto inexistente (apagado em outra janela enquanto o formulário estava aberto).
+    case projectNotFound
 }

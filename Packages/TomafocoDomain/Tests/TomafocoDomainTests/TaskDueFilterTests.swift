@@ -40,8 +40,29 @@ final class TaskDueFilterTests: XCTestCase {
     func test_today_diaInteiro_inclusiveJaVencidaHoje() {
         XCTAssertTrue(matches(.today, task(due: date(27, 0, 0))))
         XCTAssertTrue(matches(.today, task(due: date(27, 23, 59))))
-        XCTAssertFalse(matches(.today, task(due: date(26, 23, 59))))
         XCTAssertFalse(matches(.today, task(due: date(28, 0, 0))))
+    }
+
+    /// FEAT-006, problema 1: "Hoje" é a lista do que tem de ser feito hoje — inclui as abertas
+    /// atrasadas de dias anteriores.
+    func test_today_incluiAtrasadasAbertasDeDiasAnteriores() {
+        XCTAssertTrue(matches(.today, task(due: date(26, 23, 59))))
+        XCTAssertTrue(matches(.today, task(due: date(1, 9))))
+    }
+
+    /// Concluída de ontem não está "pendente hoje".
+    func test_today_naoIncluiConcluidaDeDiaAnterior() {
+        XCTAssertFalse(matches(.today, task(due: date(26, 23, 59), completed: true)))
+        // Concluída que vence hoje continua aparecendo (comportamento anterior).
+        XCTAssertTrue(matches(.today, task(due: date(27, 18), completed: true)))
+    }
+
+    /// H4: vencimento gravado em UTC (00:00Z = 21:00 do dia anterior em São Paulo) é avaliado no
+    /// fuso do calendário — é "hoje" à noite, não amanhã, e não está atrasado de manhã.
+    func test_fuso_vencimentoUTCMeiaNoite_eHojeANoiteNoFusoLocal() {
+        let utcMidnight = ISO8601DateFormatter().date(from: "2026-10-28T00:00:00Z")! // 27/10 21:00 -03
+        XCTAssertTrue(matches(.today, task(due: utcMidnight)))
+        XCTAssertFalse(matches(.overdue, task(due: utcMidnight)))
     }
 
     func test_next7Days_deHojeAteFimDoSetimoDia() {
@@ -50,9 +71,16 @@ final class TaskDueFilterTests: XCTestCase {
         XCTAssertTrue(calendar.date(byAdding: .day, value: 7, to: date(27, 23, 59)).map {
             matches(.next7Days, task(due: $0))
         } ?? false)
-        XCTAssertFalse(matches(.next7Days, task(due: date(26, 23))))
         let eighthDay = calendar.date(byAdding: .day, value: 8, to: calendar.startOfDay(for: now))!
         XCTAssertFalse(matches(.next7Days, task(due: eighthDay)))
+    }
+
+    /// "Próximos 7 dias" contém "Hoje": as abertas atrasadas entram; concluída de ontem não.
+    func test_next7Days_incluiAtrasadasAbertas_comoHoje() {
+        XCTAssertTrue(matches(.next7Days, task(due: date(26, 23))))
+        XCTAssertTrue(matches(.next7Days, task(due: date(1, 9))))
+        XCTAssertFalse(matches(.next7Days, task(due: date(26, 23), completed: true)))
+        XCTAssertTrue(matches(.next7Days, task(due: date(27, 18), completed: true)))
     }
 
     func test_overdue_abertaComVencimentoPassado() {

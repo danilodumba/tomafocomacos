@@ -73,10 +73,11 @@ extension TaskDueFilter {
 }
 
 extension FocusTask {
-    /// Vencida: tem data de vencimento no passado e não está concluída (item 6).
-    var isOverdue: Bool {
+    /// Vencida: tem data de vencimento no passado e não está concluída (item 6). `now` vem do
+    /// relógio da tela (`MinuteClock`) — o mesmo que o filtro por vencimento usa.
+    func isOverdue(now: Date) -> Bool {
         guard !isCompleted, let dueDate else { return false }
-        return dueDate < Date()
+        return dueDate < now
     }
 
     /// Destaque de urgente só enquanto aberta — concluída não grita mais (RF-09.13).

@@ -3,6 +3,7 @@ import TomafocoDomain
 import TomafocoTestSupport
 @testable import TomafocoApplication
 
+@MainActor
 final class ManageBlockListUseCaseTests: XCTestCase {
 
     private func makeSUT(blockList: BlockList = .init())

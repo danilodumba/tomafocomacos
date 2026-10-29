@@ -6,7 +6,7 @@ import PackageDescription
 // Se este pacote passar a importar algo do macOS, a fronteira da Clean Architecture foi violada.
 let package = Package(
     name: "TomafocoDomain",
-    platforms: [.macOS(.v13)],
+    platforms: [.macOS(.v14)],
     products: [
         .library(name: "TomafocoDomain", targets: ["TomafocoDomain"])
     ],

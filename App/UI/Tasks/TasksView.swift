@@ -19,12 +19,14 @@ struct TasksView: View {
                 feedbackRow(feedback)
             }
 
+            // Uma avaliação por render (filtro + ordenação) — antes eram duas (FEAT-006).
+            let displayed = viewModel.displayedTasks
             List {
-                if viewModel.displayedTasks.isEmpty {
+                if displayed.isEmpty {
                     Text(emptyMessage)
                         .foregroundStyle(Brand.textFaint)
                 }
-                ForEach(viewModel.displayedTasks) { task in
+                ForEach(displayed) { task in
                     row(task)
                     // FEAT-003: subtarefas aninhadas logo abaixo do pai — linhas completas
                     // (concluir, prioridade, editar, apagar), só indentadas.
@@ -38,13 +40,17 @@ struct TasksView: View {
             .scrollContentBackground(.hidden)
         }
         .padding(16)
-        .onAppear { viewModel.reload() }
+        .onAppear { viewModel.didAppear() }
+        .onDisappear { viewModel.didDisappear() }
         .sheet(isPresented: $viewModel.showsImportSheet) { importSheet }
         .sheet(isPresented: $viewModel.showsTagManager) {
             TagManagerView(viewModel: viewModel)
         }
         .sheet(item: $viewModel.bulkAdd) { bulk in
             BulkAddTasksView(viewModel: bulk)
+        }
+        .sheet(item: $viewModel.projectsSheet) { projects in
+            ProjectsSheet(viewModel: projects)
         }
         .sheet(item: $viewModel.editor) { editor in
             TaskEditorSheet(viewModel: editor)
@@ -78,9 +84,15 @@ struct TasksView: View {
         return "Nenhuma tarefa ativa. Crie acima ou importe do Lembretes."
     }
 
+    /// Com projeto filtrado, a tarefa nasce nele (FEAT-006) — o campo avisa.
+    private var newTaskPlaceholder: String {
+        guard let project = viewModel.newTaskProject else { return "Nova tarefa" }
+        return "Nova tarefa em \(project.title)"
+    }
+
     private var addRow: some View {
         HStack(spacing: 10) {
-            TextField("Nova tarefa", text: $viewModel.newTitle)
+            TextField(newTaskPlaceholder, text: $viewModel.newTitle)
                 .textFieldStyle(.roundedBorder)
                 .onSubmit { viewModel.addTask() }
 
@@ -163,6 +175,8 @@ struct TasksView: View {
             }
             .fixedSize()
 
+            ProjectFilterMenu(projects: viewModel.projects, filter: $viewModel.projectFilter)
+
             Picker("Vencimento", selection: $viewModel.dueFilter) {
                 ForEach(TaskDueFilter.allCases, id: \.self) { filter in
                     Text(filter.displayName).tag(filter)
@@ -176,6 +190,12 @@ struct TasksView: View {
                 .toggleStyle(.checkbox)
 
             Spacer()
+
+            Button {
+                viewModel.openProjects()
+            } label: {
+                Label("Projetos…", systemImage: "folder")
+            }
 
             Button {
                 viewModel.showsTagManager = true
@@ -354,16 +374,15 @@ struct TasksView: View {
 
     /// `depth == 1` é subtarefa (FEAT-003): mesma linha, indentada e com a seta de "filha de".
     private func row(_ task: FocusTask, depth: Int = 0) -> some View {
-        let overdue = task.isOverdue
+        let overdue = task.isOverdue(now: viewModel.now)
         let urgent = task.showsUrgent
         let targeted = targetedTaskID == task.id
+        let project = viewModel.project(of: task)
         return HStack(spacing: 10) {
-            // RF-09.13: barra vermelha à esquerda — o destaque mais forte da linha.
-            if urgent {
-                RoundedRectangle(cornerRadius: 2)
-                    .fill(Brand.danger)
-                    .frame(width: 4)
-                    .padding(.vertical, 2)
+            // FEAT-006: faixa com a cor do projeto. Urgente perdeu a faixa vermelha (decisão 10)
+            // — segue com selo, título vermelho/negrito e fundo.
+            if let project {
+                ProjectStripe(project: project)
             }
             if depth > 0 {
                 Image(systemName: "arrow.turn.down.right")
@@ -388,6 +407,11 @@ struct TasksView: View {
 
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 6) {
+                    // Projeto primeiro, depois urgente — mesmo selo do cartão do Kanban (FEAT-006).
+                    // Subtarefa não repete: herda o projeto do pai, que está logo acima.
+                    if let project, depth == 0 {
+                        ProjectBadge(project: project)
+                    }
                     if urgent {
                         UrgentBadge()
                     }

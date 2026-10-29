@@ -1,4 +1,5 @@
 import Foundation
+import os
 import SwiftUI
 import TomafocoDomain
 import TomafocoApplication
@@ -31,6 +32,8 @@ final class AppContainer: ObservableObject {
     let kanbanViewModel: KanbanViewModel
     let kanbanSettingsViewModel: KanbanSettingsViewModel
     let reportsViewModel: ReportsViewModel
+    /// Relatórios › Projetos (FEAT-006 / RF-10.7).
+    let projectReportsViewModel: ProjectReportsViewModel
     /// Atualização automática (ADR-9). Criado aqui — e não sob demanda numa View — porque o
     /// Sparkle precisa subir junto com o app para agendar a checagem periódica.
     let updater = UpdaterController()
@@ -49,6 +52,7 @@ final class AppContainer: ObservableObject {
         manageBlockList: ManageBlockListUseCase,
         manageTasks: ManageTasksUseCase,
         manageKanban: ManageKanbanUseCase,
+        manageProjects: ManageProjectsUseCase,
         settings: SettingsRepository,
         sessions: SessionRepository,
         tasks: TaskRepository,
@@ -80,8 +84,12 @@ final class AppContainer: ObservableObject {
         // a lado) e no seletor do timer. Cada VM se relê sozinho; o relay só avisa os demais com
         // `refresh()` — que não avisa de volta, senão as janelas ficariam se avisando em laço.
         let relay = TaskChangeRelay(timer: self.timerViewModel)
-        self.tasksViewModel = TasksViewModel(useCase: manageTasks) { relay.tasksChanged(from: .list) }
-        self.kanbanViewModel = KanbanViewModel(useCase: manageKanban, manageTasks: manageTasks) {
+        self.tasksViewModel = TasksViewModel(useCase: manageTasks, manageProjects: manageProjects) {
+            relay.tasksChanged(from: .list)
+        }
+        self.kanbanViewModel = KanbanViewModel(
+            useCase: manageKanban, manageTasks: manageTasks, manageProjects: manageProjects
+        ) {
             relay.tasksChanged(from: .board)
         }
         self.kanbanSettingsViewModel = KanbanSettingsViewModel(
@@ -89,6 +97,8 @@ final class AppContainer: ObservableObject {
         relay.connect(list: tasksViewModel, board: kanbanViewModel,
                       boardSettings: kanbanSettingsViewModel, focusSettings: settingsViewModel)
         self.reportsViewModel = ReportsViewModel(sessions: sessions, tasks: tasks)
+        self.projectReportsViewModel = ProjectReportsViewModel(
+            sessions: sessions, tasks: tasks, manageProjects: manageProjects)
         self.breakOverlay = BreakOverlayPresenter(viewModel: self.timerViewModel)
         self.activationPolicy.start()
     }
@@ -134,7 +144,15 @@ final class AppContainer: ObservableObject {
             apps: appBlocker, websites: persistentWebsiteBlocker,
             onWebsiteFailure: { _ in notifier.notify(.websiteBlockingUnavailable) })
         let clock = DispatchSessionClock()
-        let sessions = FileSessionSnapshotStore()
+        // Banco SwiftData (FEAT-006, ADR-11): tarefas, quadro, histórico, sessão ativa e tags.
+        // Configurações seguem no UserDefaults e a senha no Keychain.
+        let database = Self.openDatabase()
+        let sessions = SwiftDataSessionStore(database: database)
+        let taskStore = SwiftDataTaskStore(database: database)
+        let kanbanStore = SwiftDataKanbanStore(database: database)
+        let tagCatalog = SwiftDataTagCatalog(database: database)
+        let projectStore = SwiftDataProjectStore(database: database)
+        Self.importLegacyJSON(database: database, tasks: taskStore, sessions: sessions, tags: tagCatalog)
 
         let coordinator = SessionCoordinator(
             clock: clock, appBlocker: appBlocker, websiteBlocker: persistentWebsiteBlocker,
@@ -148,21 +166,23 @@ final class AppContainer: ObservableObject {
         let appPicker = NSOpenPanelApplicationPicker()
 
         // Tarefas + importação do Lembretes (RF-09).
-        let taskStore = FileTaskStore()
-        let kanbanStore = FileKanbanStore()
         let manageTasks = ManageTasksUseCase(
             tasks: taskStore, importer: EventKitReminderImporter(), now: { clock.now },
             shouldSyncReminderCompletion: { settings.loadConfiguration().syncReminderCompletion },
-            tagCatalog: UserDefaultsTagCatalog(), calendar: .autoupdatingCurrent,
-            kanbanBoards: kanbanStore, settings: settings)
-        // Quadro Kanban (FEAT-005): raias + config em `kanban.json`, ao lado do `tasks.json`.
+            tagCatalog: tagCatalog, calendar: .autoupdatingCurrent,
+            kanbanBoards: kanbanStore, settings: settings, projects: projectStore)
+        // Quadro Kanban (FEAT-005): raias + config numa linha do banco.
         let manageKanban = ManageKanbanUseCase(boards: kanbanStore, tasks: manageTasks, now: { clock.now })
+        // Projetos (FEAT-006): apagar projeto + tirar das tarefas numa transação do banco.
+        let manageProjects = ManageProjectsUseCase(
+            projects: projectStore, tasks: taskStore, unitOfWork: database, now: { clock.now },
+            calendar: .autoupdatingCurrent)
 
         notificationAdapter.requestAuthorization()
 
         let container = AppContainer(
             coordinator: coordinator, recover: recover, manageBlockList: manageBlockList,
-            manageTasks: manageTasks, manageKanban: manageKanban,
+            manageTasks: manageTasks, manageKanban: manageKanban, manageProjects: manageProjects,
             settings: settings, sessions: sessions, tasks: taskStore,
             appPicker: appPicker, persistentBlocking: persistentBlocking,
             authorizer: authorizer, passwordStore: passwordStore,
@@ -179,6 +199,53 @@ final class AppContainer: ObservableObject {
         return container
     }
 
+    /// Abre o banco em Application Support. Se nem um banco novo abrir (disco cheio, permissão),
+    /// o app sobe com um banco em memória em vez de não abrir — e avisa que nada será salvo.
+    private static func openDatabase() -> TomafocoDatabase {
+        do {
+            return try TomafocoDatabase.open(at: TomafocoDatabase.defaultURL())
+        } catch {
+            logger.fault("Banco não abriu, usando memória: \(String(describing: error), privacy: .public)")
+            let openError = error
+            do {
+                let database = try TomafocoDatabase.inMemory()
+                DatabaseAlert.presentUnavailable(error: openError)
+                return database
+            } catch {
+                // Nem em memória: é defeito de esquema (`@Model` mudado sem V2), não de disco.
+                // Explicar e sair limpo é melhor que o trap. Só este alerta é síncrono — o
+                // enfileirado nunca apareceria antes do `exit`.
+                logger.fault("Banco em memória também falhou: \(String(describing: error), privacy: .public)")
+                DatabaseAlert.presentFatalAndExit(error: error)
+            }
+        }
+    }
+
+    /// Migração única dos JSON antigos (P5). Falha aqui não impede o app de abrir: os JSON
+    /// continuam no lugar e a migração é tentada de novo no próximo lançamento.
+    private static func importLegacyJSON(database: TomafocoDatabase, tasks: SwiftDataTaskStore,
+                                         sessions: SwiftDataSessionStore, tags: SwiftDataTagCatalog) {
+        // Banco em memória = disco indisponível: importar renomearia os JSON sem salvar nada.
+        // Os arquivos ficam onde estão e a migração roda quando o banco voltar a abrir.
+        guard !database.isInMemory else { return }
+        if database.wasReset { DatabaseAlert.presentReset() }
+        let importer = JSONToSwiftDataImporter(
+            database: database, tasks: tasks, sessions: sessions, tags: tags,
+            directory: TomafocoDatabase.defaultURL().deletingLastPathComponent(),
+            legacyTags: UserDefaultsTagCatalog(), now: { Date() })
+        do {
+            let report = try importer.run()
+            if !report.unreadableFiles.isEmpty {
+                DatabaseAlert.presentUnreadableFiles(report.unreadableFiles)
+            }
+        } catch {
+            logger.error("Migração JSON → banco falhou: \(String(describing: error), privacy: .public)")
+            DatabaseAlert.presentMigrationFailed(error: error)
+        }
+    }
+
+    private static let logger = Logger(subsystem: "com.dsdumba.tomafoco", category: "AppContainer")
+
     /// Executado no lançamento: resolve sessões órfãs (UC-04) e pergunta ao usuário o que fazer
     /// com uma sessão que sobreviveu ao encerramento.
     func recoverFromCrashIfNeeded() async {
@@ -186,9 +253,8 @@ final class AppContainer: ObservableObject {
         timerViewModel.handleRecovery(result, recover: recover)
 
         guard let session = timerViewModel.pendingRecovery else { return }
-        // Deixa o lançamento terminar antes de subir um modal.
-        await Task.yield()
-        switch RecoveryAlert.present(description: timerViewModel.recoveryDescription(for: session)) {
+        // O `LaunchAlert` espera o lançamento terminar e enfileira atrás dos avisos do banco.
+        switch await RecoveryAlert.present(description: timerViewModel.recoveryDescription(for: session)) {
         case .resume: await timerViewModel.resumeRecoveredSession()
         case .discard: await timerViewModel.discardRecoveredSession()
         }

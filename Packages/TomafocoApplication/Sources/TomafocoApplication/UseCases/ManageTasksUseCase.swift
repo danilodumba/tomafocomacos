@@ -44,10 +44,13 @@ public struct TaskEdit: Equatable, Sendable {
     public var notes: String?
     public var link: String?
     public var isUrgent: Bool
+    /// Projeto (FEAT-006). Em subtarefa é ignorado — vale o do pai.
+    public var projectID: UUID?
 
     public init(
         title: String, tags: [String] = [], dueDate: Date? = nil, priority: TaskPriority = .none,
-        repeatsDaily: Bool = false, notes: String? = nil, link: String? = nil, isUrgent: Bool = false
+        repeatsDaily: Bool = false, notes: String? = nil, link: String? = nil, isUrgent: Bool = false,
+        projectID: UUID? = nil
     ) {
         self.title = title
         self.tags = tags
@@ -57,9 +60,11 @@ public struct TaskEdit: Equatable, Sendable {
         self.notes = notes
         self.link = link
         self.isUrgent = isUrgent
+        self.projectID = projectID
     }
 }
 
+@MainActor
 public final class ManageTasksUseCase {
     private let tasks: TaskRepository
     private let importer: TaskImporting
@@ -77,6 +82,9 @@ public final class ManageTasksUseCase {
     /// Configuração do app (RF-09.15), só para manter o escopo por tag do seletor do foco em dia
     /// quando uma tag é renomeada/apagada. Opcional pelo mesmo motivo do quadro.
     private let settings: SettingsRepository?
+    /// Projetos (FEAT-006), só para recusar vínculo com projeto inexistente. Padrão vazio
+    /// (`EphemeralProjectRepository`): sem store injetado, todo `projectID` é recusado — nunca aceito.
+    private let projects: ProjectRepository
     private static let logger = Logger(subsystem: "com.dsdumba.tomafoco", category: "ManageTasksUseCase")
 
     // `now` sem default de propósito: `Date()` é proibido na Application (testabilidade) —
@@ -90,7 +98,8 @@ public final class ManageTasksUseCase {
         tagCatalog: TagCatalog = EphemeralTagCatalog(),
         calendar: Calendar = .current,
         kanbanBoards: KanbanBoardRepository? = nil,
-        settings: SettingsRepository? = nil
+        settings: SettingsRepository? = nil,
+        projects: ProjectRepository = EphemeralProjectRepository()
     ) {
         self.tasks = tasks
         self.importer = importer
@@ -101,6 +110,7 @@ public final class ManageTasksUseCase {
         self.calendar = calendar
         self.kanbanBoards = kanbanBoards
         self.settings = settings
+        self.projects = projects
     }
 
     public func allTasks() throws -> [FocusTask] { try tasks.loadTasks() }
@@ -115,17 +125,20 @@ public final class ManageTasksUseCase {
     /// Cria tarefa manual de topo. Lança `emptyTaskTitle` ou `duplicateEntry` (título repetido
     /// entre as ativas **de topo** — subtarefa pode repetir título de uma tarefa de topo).
     /// `tags` é normalizado (`FocusTask.normalizeTags`) — vazias/duplicatas somem.
+    /// `projectID` (FEAT-006): projeto inexistente lança `projectNotFound`.
     @discardableResult
-    public func addTask(title: String, tags: [String] = []) throws -> FocusTask {
+    public func addTask(title: String, tags: [String] = [], projectID: UUID? = nil) throws -> FocusTask {
         let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { throw DomainError.emptyTaskTitle }
+        try requireProject(projectID)
 
         var all = try tasks.loadTasks()
         guard !Self.hasActiveSibling(titled: trimmed, parentID: nil, excluding: nil, in: all) else {
             throw DomainError.duplicateEntry(trimmed)
         }
 
-        let task = FocusTask(id: makeID(), title: trimmed, source: .manual, createdAt: now(), tags: tags)
+        let task = FocusTask(id: makeID(), title: trimmed, source: .manual, createdAt: now(), tags: tags,
+                             projectID: projectID)
         all.append(task)
         try tasks.saveTasks(all)
         return task
@@ -133,7 +146,8 @@ public final class ManageTasksUseCase {
 
     // MARK: - Subtarefas (FEAT-003 / RF-09.14)
 
-    /// Cria uma subtarefa: tarefa manual completa com `parentID`. Nasce na raia do pai (Kanban).
+    /// Cria uma subtarefa: tarefa manual completa com `parentID`. Nasce na raia e no projeto do
+    /// pai (Kanban, FEAT-006).
     /// Lança `parentTaskNotFound`, `subtaskNestingNotAllowed` (pai já é subtarefa — um nível só),
     /// `emptyTaskTitle` ou `duplicateEntry` (título repetido entre as subtarefas ATIVAS do mesmo
     /// pai — sob outro pai, ou como tarefa de topo, pode repetir).
@@ -157,7 +171,7 @@ public final class ManageTasksUseCase {
 
         let task = FocusTask(
             id: makeID(), title: trimmed, source: .manual, createdAt: now(), tags: tags,
-            laneID: all[parentIdx].laneID, parentID: parentID)
+            laneID: all[parentIdx].laneID, parentID: parentID, projectID: all[parentIdx].projectID)
         all.append(task)
         try tasks.saveTasks(all)
         registerInCatalog(task.tags)
@@ -173,6 +187,7 @@ public final class ManageTasksUseCase {
     /// Mesmo pai de antes → nada muda nem grava. A raia do Kanban é **mantida** (a tarefa já
     /// mora numa raia; só a hierarquia muda — diferente de `addSubtask`, que nasce na do pai).
     /// Invariante "subtarefa ativa ⇒ pai ativo": pai concluído é reaberto na mesma gravação.
+    /// Assume o projeto do novo pai (FEAT-006).
     @discardableResult
     public func makeSubtask(id: UUID, parentID: UUID) throws -> FocusTask? {
         var all = try tasks.loadTasks()
@@ -188,6 +203,7 @@ public final class ManageTasksUseCase {
             if all[parentIdx].isCompleted { applyReopen(to: &all[parentIdx]) }
         }
         all[idx].parentID = parentID
+        all[idx].projectID = all[parentIdx].projectID // subtarefa tem o projeto do pai (FEAT-006)
         try tasks.saveTasks(all)
         return all[idx]
     }
@@ -236,6 +252,7 @@ public final class ManageTasksUseCase {
         if let first = try validateNewTasks(drafts).min(by: { $0.key < $1.key }) {
             throw first.value
         }
+        for projectID in Set(drafts.compactMap(\.projectID)) { try requireProject(projectID) }
 
         let created = drafts.map { draft in
             FocusTask(
@@ -245,7 +262,8 @@ public final class ManageTasksUseCase {
                 createdAt: now(),
                 tags: draft.tags,
                 dueDate: draft.dueDate,
-                priority: draft.priority.rawPriority
+                priority: draft.priority.rawPriority,
+                projectID: draft.projectID
             )
         }
         try tasks.saveTasks(try tasks.loadTasks() + created)
@@ -279,7 +297,8 @@ public final class ManageTasksUseCase {
         let current = all[idx]
         return try applyEdit(TaskEdit(
             title: title, tags: tags, dueDate: dueDate, priority: priority, repeatsDaily: repeatsDaily,
-            notes: current.notes, link: current.sourceURL, isUrgent: current.isUrgent), at: idx, in: &all)
+            notes: current.notes, link: current.sourceURL, isUrgent: current.isUrgent,
+            projectID: current.projectID), at: idx, in: &all)
     }
 
     /// Edição completa numa transação (RF-09.6 + RF-09.13). Nota em branco vira `nil`; link ganha
@@ -317,9 +336,35 @@ public final class ManageTasksUseCase {
         all[idx].notes = FocusTask.normalizeNotes(edit.notes)
         all[idx].sourceURL = link
         all[idx].isUrgent = edit.isUrgent
+        try applyProject(edit.projectID, at: idx, in: &all)
         try tasks.saveTasks(all)
         registerInCatalog(normalizedTags)
         return all[idx]
+    }
+
+    // MARK: - Projeto (FEAT-006)
+
+    /// Subtarefa fica com o projeto do pai (o valor recebido é ignorado); tarefa de topo grava o
+    /// novo projeto e **propaga** às filhas na mesma gravação.
+    private func applyProject(_ projectID: UUID?, at idx: Int, in all: inout [FocusTask]) throws {
+        if let parentID = all[idx].parentID {
+            all[idx].projectID = all.first { $0.id == parentID }?.projectID
+            return
+        }
+        guard projectID != all[idx].projectID else { return }
+        try requireProject(projectID)
+        all[idx].projectID = projectID
+        let parentID = all[idx].id
+        for child in all.indices where all[child].parentID == parentID {
+            all[child].projectID = projectID
+        }
+    }
+
+    /// `projectNotFound` se o projeto não existe (apagado em outra janela com o formulário
+    /// aberto). `nil` = sem projeto, sempre válido.
+    private func requireProject(_ projectID: UUID?) throws {
+        guard let projectID else { return }
+        guard try projects.project(id: projectID) != nil else { throw DomainError.projectNotFound }
     }
 
     /// Liga/desliga "Urgente" pelo menu de contexto (RF-09.13). Tarefa inexistente é no-op.
@@ -652,10 +697,10 @@ public final class ManageTasksUseCase {
     /// `internal`: o `ManageKanbanUseCase` grava raia + histórico por aqui (FEAT-005).
     @discardableResult
     func update(id: UUID, _ mutate: (inout FocusTask) -> Void) throws -> FocusTask? {
-        var all = try tasks.loadTasks()
-        guard let idx = all.firstIndex(where: { $0.id == id }) else { return nil }
-        mutate(&all[idx])
-        try tasks.saveTasks(all)
-        return all[idx]
+        // Uma tarefa só: lê e grava só ela (FEAT-006) — sem carregar/regravar a lista inteira.
+        guard var task = try tasks.task(id: id) else { return nil }
+        mutate(&task)
+        try tasks.upsert([task])
+        return task
     }
 }

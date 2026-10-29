@@ -12,7 +12,10 @@ struct OverflowMenu: View {
         Menu {
             Button("Tarefas…") { open("tasks") }
             Button("Kanban…") { open("kanban") }
-            Button("Relatórios…") { open("reports") }
+            Menu("Relatórios") {
+                Button("Tarefas…") { open("reports") }
+                Button("Projetos…") { open("project-reports") }
+            }
             OpenSettingsControl { Text("Configurações…") }
             Divider()
             Button("Buscar atualizações…") { updater.checkForUpdates() }

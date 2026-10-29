@@ -36,6 +36,7 @@ struct TomafocoApp: App {
         }
 
         reportsWindow
+        projectReportsWindow
         kanbanWindow
 
         Settings {
@@ -51,7 +52,7 @@ struct TomafocoApp: App {
 
     // `SceneBuilder` não aceita `if #available` (não tem `buildEither`), então
     // `defaultLaunchBehavior(.suppressed)` (macOS 15+) está fora de alcance com deployment
-    // target 13 — quem impede a abertura automática é a ordem das cenas acima.
+    // target 14 — quem impede a abertura automática é a ordem das cenas acima.
     private var tasksWindow: some Scene {
         Window("Tarefas", id: "tasks") {
             TasksView(viewModel: container.tasksViewModel)
@@ -70,10 +71,21 @@ struct TomafocoApp: App {
     }
 
     private var reportsWindow: some Scene {
-        Window("Relatórios", id: "reports") {
+        Window("Relatórios — Tarefas", id: "reports") {
             ReportsView(viewModel: container.reportsViewModel)
                 .frame(minWidth: 560, minHeight: 560)
         }
+    }
+}
+
+extension TomafocoApp {
+    /// Relatórios › Projetos (FEAT-006 / RF-10.7).
+    fileprivate var projectReportsWindow: some Scene {
+        Window("Relatórios — Projetos", id: "project-reports") {
+            ProjectReportsView(viewModel: container.projectReportsViewModel)
+                .frame(minWidth: 620, minHeight: 520)
+        }
+        .defaultSize(width: 760, height: 640)
     }
 }
 

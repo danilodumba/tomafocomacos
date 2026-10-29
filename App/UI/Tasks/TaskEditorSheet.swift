@@ -116,6 +116,13 @@ struct TaskEditorSheet: View {
             TextField("Título", text: $viewModel.title)
                 .onSubmit { viewModel.save() }
 
+            // FEAT-006: subtarefa mostra o projeto do pai, sem editar.
+            LabeledContent("Projeto") {
+                ProjectPicker(projects: viewModel.projects, selection: $viewModel.projectID)
+                    .disabled(viewModel.isProjectInherited)
+                    .help(viewModel.isProjectInherited ? "Subtarefa fica no projeto da tarefa pai" : "")
+            }
+
             Picker("Prioridade", selection: $viewModel.priority) {
                 ForEach(TaskPriority.displayOrder, id: \.self) { p in
                     Text(p.displayName).tag(p)
@@ -260,7 +267,7 @@ struct TaskEditorSheet: View {
             if let due = subtask.dueDate {
                 Text(due.formatted(date: .abbreviated, time: .omitted))
                     .font(.system(size: 10))
-                    .foregroundStyle(subtask.isOverdue ? Brand.danger : Brand.textFaint)
+                    .foregroundStyle(subtask.isOverdue(now: viewModel.now()) ? Brand.danger : Brand.textFaint)
             }
 
             Spacer()

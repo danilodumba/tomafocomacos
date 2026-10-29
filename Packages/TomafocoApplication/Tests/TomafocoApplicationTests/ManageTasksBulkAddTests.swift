@@ -4,6 +4,7 @@ import TomafocoTestSupport
 @testable import TomafocoApplication
 
 /// Criação de tarefas em lote (RF-09.8): texto → grid → `addTasks`.
+@MainActor
 final class ManageTasksBulkAddTests: XCTestCase {
 
     private var repo: InMemoryTaskRepository!

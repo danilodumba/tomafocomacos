@@ -4,9 +4,11 @@ import Foundation
 /// aparece em `all`.
 public enum TaskDueFilter: String, CaseIterable, Sendable {
     case all
-    /// Vence hoje — inclusive as que já venceram mais cedo hoje.
+    /// O que é para hoje: vence hoje (inclusive já vencidas mais cedo hoje) **e** as abertas
+    /// atrasadas de dias anteriores (FEAT-006).
     case today
-    /// Vence de hoje (dia inteiro) até o fim do 7º dia seguinte.
+    /// Vence de hoje (dia inteiro) até o fim do 7º dia seguinte — **mais** as abertas atrasadas,
+    /// como "Hoje": alargar o recorte não pode fazer tarefa sumir (FEAT-006).
     case next7Days
     /// Aberta e com vencimento já passado.
     case overdue
@@ -18,11 +20,13 @@ public enum TaskDueFilter: String, CaseIterable, Sendable {
         case .all:
             return true
         case .today:
-            return calendar.isDate(due, inSameDayAs: now)
+            if calendar.isDate(due, inSameDayAs: now) { return true }
+            return !task.isCompleted && due < calendar.startOfDay(for: now)
         case .next7Days:
             let start = calendar.startOfDay(for: now)
             let end = calendar.date(byAdding: .day, value: 8, to: start) ?? start.addingTimeInterval(8 * 86_400)
-            return due >= start && due < end
+            if due < start { return !task.isCompleted }
+            return due < end
         case .overdue:
             return !task.isCompleted && due < now
         }

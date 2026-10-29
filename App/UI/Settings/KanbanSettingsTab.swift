@@ -150,7 +150,7 @@ private struct LaneRow: View {
                 .textFieldStyle(.roundedBorder)
                 .focused($focused)
                 .onSubmit(commit)
-                .onChange(of: focused) { isFocused in
+                .onChange(of: focused) { _, isFocused in
                     if !isFocused { commit() }
                 }
 
@@ -177,7 +177,7 @@ private struct LaneRow: View {
         }
         .buttonStyle(.borderless)
         .onAppear { draft = lane.title }
-        .onChange(of: lane.title) { draft = $0 }
+        .onChange(of: lane.title) { _, title in draft = title }
     }
 
     private func commit() {

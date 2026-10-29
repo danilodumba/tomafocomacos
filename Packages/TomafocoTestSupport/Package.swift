@@ -5,7 +5,7 @@ import PackageDescription
 // Depende apenas de TomafocoDomain.
 let package = Package(
     name: "TomafocoTestSupport",
-    platforms: [.macOS(.v13)],
+    platforms: [.macOS(.v14)],
     products: [
         .library(name: "TomafocoTestSupport", targets: ["TomafocoTestSupport"])
     ],

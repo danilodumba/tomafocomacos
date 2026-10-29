@@ -6,6 +6,7 @@ import TomafocoDomain
 /// Conclusão/reabertura passam pelo `ManageTasksUseCase` — inclusive o espelhamento no
 /// Lembretes e a regra da tarefa diária —, então mover para a raia Done é exatamente o mesmo
 /// que concluir pela lista. Cada movimentação vira uma entrada no histórico da tarefa.
+@MainActor
 public final class ManageKanbanUseCase {
     private let boards: KanbanBoardRepository
     private let tasks: ManageTasksUseCase

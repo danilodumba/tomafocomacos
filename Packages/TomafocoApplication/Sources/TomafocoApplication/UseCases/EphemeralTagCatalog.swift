@@ -4,10 +4,11 @@ import TomafocoDomain
 /// Catálogo de tags em memória — padrão do `ManageTasksUseCase` quando nenhum store persistente
 /// é injetado (usado nos testes e como fallback). Some ao encerrar o processo; o app real injeta
 /// a implementação de `UserDefaults` (Infrastructure).
+@MainActor
 public final class EphemeralTagCatalog: TagCatalog {
     private var tags: [String]
 
-    public init(tags: [String] = []) {
+    public nonisolated init(tags: [String] = []) {
         self.tags = tags
     }
 

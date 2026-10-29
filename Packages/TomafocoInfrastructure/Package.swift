@@ -6,7 +6,7 @@ import PackageDescription
 // (`#if canImport(AppKit)`) para que a lógica pura (ex.: BrowserScript) também construa em CI Linux.
 let package = Package(
     name: "TomafocoInfrastructure",
-    platforms: [.macOS(.v13)],
+    platforms: [.macOS(.v14)],
     products: [
         .library(name: "TomafocoInfrastructure", targets: ["TomafocoInfrastructure"])
     ],

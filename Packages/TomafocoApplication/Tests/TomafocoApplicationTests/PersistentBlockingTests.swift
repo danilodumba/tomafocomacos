@@ -3,6 +3,7 @@ import TomafocoDomain
 import TomafocoTestSupport
 @testable import TomafocoApplication
 
+@MainActor
 final class PersistentBlockingTests: XCTestCase {
 
     private var settings: InMemorySettingsRepository!

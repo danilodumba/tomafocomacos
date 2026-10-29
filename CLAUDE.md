@@ -7,7 +7,7 @@ Este arquivo registra o contexto e **onde o trabalho parou** para retomar em ses
 
 - **Local no disco:** `/Volumes/danilo_ssd/Projetos/tomafoco/APP` (pasta renomeada de `ds.focus` para `APP` em 2026-08-06, alinhando com `DOCS - Tomafoco/APP/` e `../site/`)
 - **Documentação de produto/arquitetura:** controlada em `../DOCS - Tomafoco/APP/` (Obsidian vault), **não** mais em `docs/` deste repositório. Ver "Documentação" logo abaixo.
-- **Plataforma/stack:** macOS 13+, Swift 5.9 / SwiftUI, universal binary
+- **Plataforma/stack:** macOS 14+ (desde a FEAT-006, 2026-10-29 — SwiftData), Swift 5.9 / SwiftUI, universal binary
 - **Distribuição:** FORA da Mac App Store (Developer ID, assinado + notarizado). Sandbox desligado.
 - **Decisões-chave (ADRs em `../DOCS - Tomafoco/APP/arquitetura.md`):**
   - Bloqueio de sites: edição idempotente do `/etc/hosts` (MVP). NetworkExtension fica para v3.
@@ -395,6 +395,51 @@ pelo quadro (o clone já é visível). Só `App/`, sem mudança de testes.
   appcast no mesmo commit, push em `tomafoco-site`.
 - ⚠️ Validação manual da 1.15 e da 1.16 ainda pendente (cartão com tudo preenchido → 4 linhas na ordem;
   diária na Done sem aviso).
+
+**🗂️ FEAT-006 — Projetos + banco SwiftData + bugs de data (2026-10-29, branch `feat/feat-006-projetos`, NÃO commitado):**
+Plano, decisões e desvios em `../DOCS - Tomafoco/APP/Features/FEAT-006 Criar o conceito de projetos..md`.
+- **Datas:** "Hoje" inclui abertas atrasadas de dias anteriores; `TaskFilter.matchesCard` avalia
+  vencimento só da própria tarefa (bug confirmado: pai atrasado levava a filha para "Atrasadas");
+  `ReminderDueDate` (lembrete dia inteiro → 23:59); `MinuteClock` + `isOverdue(now:)` (destaque e
+  filtro com o mesmo `now`, avança por minuto com a janela aberta). Atrasada continua **por hora**
+  (decisão do usuário).
+- **macOS 14 mínimo** (`project.yml` + 4 `Package.swift`); fallbacks de 13 removidos.
+- **SwiftData (ADR-11):** `Persistence/SwiftData/` — `TomafocoSchemaV1` (payload Codable do Domain +
+  colunas de busca), `TomafocoDatabase` (`mainContext`, sem autosave, `perform` = transação, implementa
+  `UnitOfWork`; store que não abre vira `.bak-<data>`), stores de tarefa (espelho em memória + diff),
+  projeto, sessão (histórico só insert), quadro, tags. **Ports de persistência e use cases que os usam
+  são `@MainActor`** — testes dessas classes também. `JSONToSwiftDataImporter` roda no `AppContainer.live()`
+  antes de tudo; idempotente (`StoreMeta`), JSON → `*.json.migrated` só após o `save()`.
+- **Regra nova: mudar um `@Model` exige `TomafocoSchemaV2` + estágio no `TomafocoMigrationPlan`.**
+  Campo novo no Domain NÃO exige (vai no payload).
+- **Projetos:** `Project`/`ProjectColor`/`ProjectFilter` (Domain), `ManageProjectsUseCase`, `FocusTask.projectID`
+  (subtarefa herda/propaga; clone da diária leva), `TaskEdit.projectID` (**a forma curta de `editTask`
+  preserva o projeto**). App: `App/UI/Projects/` (sheet, estilo, chip, faixa, seletor, filtro); urgente
+  perdeu a faixa vermelha (faixa agora é do projeto).
+- Validado com **cópia** dos dados reais (95 tarefas, 302 sessões, 16 tags): migração idêntica.
+- Code review: 7 correções (importador com banco em memória, profundidade da transação no `save()`
+  falho, `perform` aninhado, `onSubmit` do título, retry + aviso ao recriar banco, catálogo de tags
+  antigo preservado, `ProjectCatalog`/`ProjectsHosting`). Lista no FEAT-006.
+- 2º review (xhigh): 13 correções — destaques: filha **sem** vencimento herda o do pai no
+  `matchesCard` (com vencimento, só o dela); task store codifica antes de tocar o contexto;
+  `ProjectCatalog` mantém o anterior em erro; lote avisa `projectNotFound`; sheet de projeto sem
+  `.defaultAction`; `ProjectRepository.project(id:)`. Lista completa no FEAT-006.
+- 3º review (high): 10 correções — destaques: restauração dos `.migrated` decidida pelo disco
+  (`StoreMeta` ausente), não por `wasReset`; "Próximos 7 dias" ⊇ "Hoje"; subtarefa herda só a
+  **data** do pai; `LaunchAlert` = fila sequencial pós-lançamento (`RecoveryAlert` virou `async`);
+  `saveTasks` renumera `position` se reordenar; `MinuteClockHosting`. `projects:` obrigatório com
+  `EphemeralProjectRepository` padrão.
+- `make test` **527 verdes** (Domain 154, Application 282, Infra 91); `xcodebuild` limpo.
+- ⚠️ **Antes de rodar o app:** copiar `~/Library/Application Support/Tomafoco/` — o 1º lançamento migra
+  de verdade. Site ainda diz macOS 13 de propósito (muda na release).
+
+**📊 Relatório de projetos (RF-10.7, 2026-10-29, mesma branch):** `ReportBuilder.projectReport` (só
+tarefas pai; total conta cada sessão uma vez), janela "Relatórios — Projetos" (`project-reports`), menu
+**Relatórios ▸ Tarefas… / Projetos…**, PDF A4 paginado (`ProjectReportPDF`, `ImageRenderer` → `CGContext`
+PDF; cores de papel fixas via `ProjectColor.printColor`; datas pt-BR fixas) com pré-visualização PDFKit,
+salvar e imprimir. **Para conferir o PDF sem rodar o app:** pacote SPM executável no scratchpad
+dependendo de Domain/Application + cópia de `ProjectReportPDF`/`ProjectReportsViewModel`/
+`ReportsViewModel`/`ReportPeriod`/`ProjectStyle`/`Brand`, renderiza e exporta PNG pelo `PDFPage.thumbnail`.
 
 ## Como retomar
 

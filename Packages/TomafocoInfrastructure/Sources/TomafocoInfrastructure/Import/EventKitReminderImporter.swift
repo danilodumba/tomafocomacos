@@ -12,15 +12,8 @@ public final class EventKitReminderImporter: TaskImporting {
     public init() {}
 
     public func requestAccess() async -> Bool {
-        // macOS 14 renomeou a API e passou a exigir a usage description "FullAccess".
-        if #available(macOS 14.0, *) {
-            return (try? await store.requestFullAccessToReminders()) ?? false
-        }
-        return await withCheckedContinuation { continuation in
-            store.requestAccess(to: .reminder) { granted, _ in
-                continuation.resume(returning: granted)
-            }
-        }
+        // Exige a usage description "FullAccess" (macOS 14+).
+        (try? await store.requestFullAccessToReminders()) ?? false
     }
 
     public func fetchReminderLists() async throws -> [ReminderList] {
@@ -53,7 +46,7 @@ public final class EventKitReminderImporter: TaskImporting {
                 listName: $0.calendar?.title ?? "",
                 isCompleted: $0.isCompleted,
                 notes: $0.notes,
-                dueDate: $0.dueDateComponents?.date,
+                dueDate: ReminderDueDate.resolve($0.dueDateComponents, calendar: .autoupdatingCurrent),
                 priority: $0.priority,
                 url: $0.url?.absoluteString
             )

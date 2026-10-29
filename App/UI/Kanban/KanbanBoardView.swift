@@ -34,6 +34,9 @@ struct KanbanBoardView: View {
         .sheet(item: $viewModel.editor) { editor in
             TaskEditorSheet(viewModel: editor)
         }
+        .sheet(item: $viewModel.projectsSheet) { projects in
+            ProjectsSheet(viewModel: projects)
+        }
     }
 
     // MARK: - Barra superior
@@ -64,6 +67,7 @@ struct KanbanBoardView: View {
 
             Button("Adicionar") { viewModel.addTask() }
                 .disabled(!viewModel.canAddTask)
+                .help(newTaskHelp)
 
             Divider().frame(height: 18)
 
@@ -88,6 +92,8 @@ struct KanbanBoardView: View {
                 Label(viewModel.tagFilter ?? "Tag", systemImage: "line.3.horizontal.decrease.circle")
             }
             .fixedSize()
+
+            ProjectFilterMenu(projects: viewModel.projects, filter: $viewModel.projectFilter)
 
             Picker("Vencimento", selection: $viewModel.dueFilter) {
                 ForEach(TaskDueFilter.allCases, id: \.self) { filter in
@@ -117,11 +123,23 @@ struct KanbanBoardView: View {
             }
             .help("Abrir a janela de Tarefas")
 
+            Button {
+                viewModel.openProjects()
+            } label: {
+                Label("Projetos…", systemImage: "folder")
+            }
+
             OpenSettingsControl(tab: .kanban) {
                 Label("Configurar quadro…", systemImage: "slider.horizontal.3")
             }
         }
         .font(.system(size: 12))
+    }
+
+    /// Com projeto filtrado, a tarefa nasce nele (FEAT-006).
+    private var newTaskHelp: String {
+        guard let project = viewModel.newTaskProject else { return "Cria na primeira raia" }
+        return "Cria na primeira raia, no projeto \(project.title)"
     }
 
     private var emptyScope: some View {
@@ -219,13 +237,22 @@ struct KanbanBoardView: View {
     // MARK: - Cartão
 
     private func card(_ task: FocusTask) -> some View {
-        let overdue = task.isOverdue
+        let overdue = task.isOverdue(now: viewModel.now)
         let urgent = task.showsUrgent
         let priority = TaskPriority(rawPriority: task.priority)
         let busy = viewModel.busyTaskIDs.contains(task.id)
+        let project = viewModel.project(of: task)
         return VStack(alignment: .leading, spacing: 6) {
-            if urgent {
-                UrgentBadge()
+            // Linha de topo: projeto primeiro, depois o selo de urgente (FEAT-006).
+            if project != nil || urgent {
+                HStack(spacing: 6) {
+                    if let project {
+                        ProjectBadge(project: project)
+                    }
+                    if urgent {
+                        UrgentBadge()
+                    }
+                }
             }
             HStack(alignment: .top, spacing: 6) {
                 if priority != .none {
@@ -307,7 +334,16 @@ struct KanbanBoardView: View {
             }
         }
         .padding(10)
+        .padding(.leading, project == nil ? 0 : 4)
         .frame(maxWidth: .infinity, alignment: .leading)
+        // FEAT-006: faixa da cor do projeto na borda esquerda do cartão.
+        .overlay(alignment: .leading) {
+            if let project {
+                ProjectStripe(project: project)
+                    .padding(.vertical, 6)
+                    .padding(.leading, 4)
+            }
+        }
         .background(
             RoundedRectangle(cornerRadius: 8, style: .continuous)
                 .fill(urgent ? Brand.danger.opacity(0.10) : Brand.surface)

@@ -53,6 +53,9 @@ public struct FocusTask: Equatable, Codable, Sendable, Identifiable {
     /// pode ter filhos — a regra é do use case (`subtaskNestingNotAllowed`). `nil` = tarefa de topo.
     /// Helpers de árvore (filhos, progresso, título "Pai › Filha") em `TaskTree`.
     public var parentID: UUID?
+    /// Projeto da tarefa (FEAT-006). `nil` = sem projeto. Subtarefa tem sempre o projeto do pai
+    /// — a regra é do use case (herança na criação e propagação na edição do pai).
+    public var projectID: UUID?
 
     public var isCompleted: Bool { completedAt != nil }
 
@@ -75,7 +78,8 @@ public struct FocusTask: Equatable, Codable, Sendable, Identifiable {
         completionLog: [Date] = [],
         laneID: UUID? = nil,
         isUrgent: Bool = false,
-        parentID: UUID? = nil
+        parentID: UUID? = nil,
+        projectID: UUID? = nil
     ) {
         self.id = id
         self.title = title
@@ -94,6 +98,7 @@ public struct FocusTask: Equatable, Codable, Sendable, Identifiable {
         self.laneID = laneID
         self.isUrgent = isUrgent
         self.parentID = parentID
+        self.projectID = projectID
     }
 
     // Decode manual por causa de `tags` e dos campos ricos de importação: JSON gravado antes
@@ -102,7 +107,7 @@ public struct FocusTask: Equatable, Codable, Sendable, Identifiable {
     private enum CodingKeys: String, CodingKey {
         case id, title, source, reminderID, createdAt, completedAt, tags
         case notes, dueDate, priority, sourceURL, history
-        case repeatsDaily, completionLog, laneID, isUrgent, parentID
+        case repeatsDaily, completionLog, laneID, isUrgent, parentID, projectID
     }
 
     public init(from decoder: Decoder) throws {
@@ -124,6 +129,7 @@ public struct FocusTask: Equatable, Codable, Sendable, Identifiable {
         self.laneID = try c.decodeIfPresent(UUID.self, forKey: .laneID)
         self.isUrgent = try c.decodeIfPresent(Bool.self, forKey: .isUrgent) ?? false
         self.parentID = try c.decodeIfPresent(UUID.self, forKey: .parentID)
+        self.projectID = try c.decodeIfPresent(UUID.self, forKey: .projectID)
     }
 
     // MARK: - Nota e link (RF-09.13)
@@ -152,7 +158,7 @@ public struct FocusTask: Equatable, Codable, Sendable, Identifiable {
     /// `createdAt = now`, aberta, **sem histórico** — decisão do usuário em 2026-10-27, não
     /// copiar), com os mesmos título, tags, nota, link, prioridade, urgência, pai e origem (o
     /// `reminderID` vai junto — concluir o clone amanhã espelha a próxima ocorrência do lembrete
-    /// recorrente). Vencimento = `nextDailyDueDate`. Sem raia (`laneID = nil`): o dia novo
+    /// recorrente) e o projeto (FEAT-006). Vencimento = `nextDailyDueDate`. Sem raia (`laneID = nil`): o dia novo
     /// começa na primeira raia do Kanban.
     public func nextDailyOccurrence(id: UUID, now: Date, calendar: Calendar) -> FocusTask {
         FocusTask(
@@ -168,7 +174,8 @@ public struct FocusTask: Equatable, Codable, Sendable, Identifiable {
             sourceURL: sourceURL,
             repeatsDaily: true,
             isUrgent: isUrgent,
-            parentID: parentID
+            parentID: parentID,
+            projectID: projectID
         )
     }
 

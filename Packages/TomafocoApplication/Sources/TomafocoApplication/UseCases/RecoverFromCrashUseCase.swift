@@ -6,6 +6,7 @@ import TomafocoDomain
 /// Lê a sessão de foco persistida (failsafe). Se ela já deveria ter terminado, restaura
 /// tudo silenciosamente. Se ainda está vigente, devolve a decisão para a UI (retomar/encerrar).
 /// Garante que NENHUM caminho deixe o usuário bloqueado sem uma sessão correspondente.
+@MainActor
 public final class RecoverFromCrashUseCase {
     public enum Result: Equatable {
         /// Não havia sessão pendente.

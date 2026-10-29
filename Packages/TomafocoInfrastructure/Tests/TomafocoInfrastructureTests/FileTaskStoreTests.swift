@@ -2,6 +2,7 @@ import XCTest
 import TomafocoDomain
 @testable import TomafocoInfrastructure
 
+@MainActor
 final class FileTaskStoreTests: XCTestCase {
 
     private var dir: URL!

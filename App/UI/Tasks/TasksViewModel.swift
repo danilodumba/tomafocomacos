@@ -5,7 +5,7 @@ import TomafocoApplication
 
 /// ViewModel da aba Tarefas (RF-09): CRUD manual + importação do Lembretes.
 @MainActor
-final class TasksViewModel: ObservableObject, TaskRowActionRunning {
+final class TasksViewModel: ObservableObject, TaskRowActionRunning, ProjectsHosting, MinuteClockHosting {
 
     @Published private(set) var activeTasks: [FocusTask] = []
     @Published private(set) var completedTasks: [FocusTask] = []
@@ -34,9 +34,19 @@ final class TasksViewModel: ObservableObject, TaskRowActionRunning {
     @Published var priorityFilter: TaskPriority?
     /// Recorte por vencimento (FEAT-005): hoje / próximos 7 dias / atrasadas.
     @Published var dueFilter: TaskDueFilter = .all
+    /// Recorte por projeto (FEAT-006). Com um projeto filtrado, a tarefa criada aqui nasce nele.
+    @Published var projectFilter: ProjectFilter = .all
+    /// Projetos da tela (FEAT-006) — ver `ProjectsHosting`.
+    @Published var projectCatalog = ProjectCatalog()
+    /// Sheet de cadastro de projetos (FEAT-006) — `nil` = fechado.
+    @Published var projectsSheet: ProjectsViewModel?
     /// Tarefas com concluir/reabrir/apagar em andamento — a linha mostra loading no lugar do botão
     /// (trava em `TaskRowActionRunning`).
     @Published var busyTaskIDs: Set<UUID> = []
+    /// "Agora" da tela (FEAT-006, H3): filtro por vencimento e destaque de atrasada leem daqui.
+    /// Avança a cada minuto enquanto a janela está aberta (`didAppear`).
+    @Published var now = Date()
+    let clock = MinuteClock()
 
     /// Sheet de criação em lote (RF-09.8) — `nil` = fechado.
     @Published var bulkAdd: BulkAddTasksViewModel?
@@ -76,12 +86,14 @@ final class TasksViewModel: ObservableObject, TaskRowActionRunning {
     private static let showsCompletedKey = "tasksShowsCompleted"
 
     private let useCase: ManageTasksUseCase
+    let manageProjects: ManageProjectsUseCase
     /// Avisa que as tarefas mudaram por aqui — o seletor do timer e o Kanban recarregam.
     private let onTasksChanged: () -> Void
 
-    init(useCase: ManageTasksUseCase, defaults: UserDefaults = .standard,
-         onTasksChanged: @escaping () -> Void) {
+    init(useCase: ManageTasksUseCase, manageProjects: ManageProjectsUseCase,
+         defaults: UserDefaults = .standard, onTasksChanged: @escaping () -> Void) {
         self.useCase = useCase
+        self.manageProjects = manageProjects
         self.defaults = defaults
         self.onTasksChanged = onTasksChanged
         sortOrder = TaskSortOrder.stored(in: defaults, key: Self.sortOrderKey)
@@ -97,7 +109,18 @@ final class TasksViewModel: ObservableObject, TaskRowActionRunning {
 
     /// Só relê. É o que as outras janelas chamam quando a mudança veio delas — chamar `reload()`
     /// ali avisaria de volta e as janelas ficariam se avisando em laço.
+    /// Janela abriu: relê, avisa e liga o relógio de minuto.
+    func didAppear() {
+        reload()
+        startMinuteClock()
+    }
+
+    func didDisappear() {
+        stopMinuteClock()
+    }
+
     func refresh() {
+        resetNow()
         let all = (try? useCase.allTasks()) ?? []
         activeTasks = all.filter { !$0.isCompleted }
         completedTasks = all.filter(\.isCompleted).sorted { ($0.completedAt ?? .distantPast) > ($1.completedAt ?? .distantPast) }
@@ -109,6 +132,7 @@ final class TasksViewModel: ObservableObject, TaskRowActionRunning {
         reimportableReminderIDs = Set(completedTasks.compactMap(\.reminderID))
             .subtracting(importedReminderIDs)
         knownTags = (try? useCase.allTags()) ?? []
+        reloadProjects()
         // Tarefa apagada em outra janela fecha o formulário em vez de editar algo que não existe.
         if let editor, !(activeTasks + completedTasks).contains(where: { $0.id == editor.task.id }) {
             self.editor = nil
@@ -128,14 +152,15 @@ final class TasksViewModel: ObservableObject, TaskRowActionRunning {
     }
 
     private var filter: TaskFilter {
-        TaskFilter(searchText: searchText, tag: tagFilter, priority: priorityFilter, due: dueFilter)
+        TaskFilter(searchText: searchText, tag: tagFilter, priority: priorityFilter, due: dueFilter,
+                   project: projectFilter)
     }
 
     /// Busca, tag, prioridade e vencimento — a tarefa de topo entra se ela OU alguma subtarefa
     /// casa (achar a tarefa pelo passo). Vale para ativas e concluídas.
     private func applyFilters(_ tasks: [FocusTask]) -> [FocusTask] {
         let filter = self.filter
-        let now = Date()
+        let now = self.now
         return tasks.filter {
             filter.matchesTree($0, children: allChildren(of: $0.id), now: now, calendar: .current)
         }
@@ -154,7 +179,8 @@ final class TasksViewModel: ObservableObject, TaskRowActionRunning {
     func addTask() {
         feedback = nil
         do {
-            try useCase.addTask(title: newTitle, tags: TaskEditorViewModel.parseTags(newTags))
+            try useCase.addTask(title: newTitle, tags: TaskEditorViewModel.parseTags(newTags),
+                                projectID: projectFilter.projectIDForNewTask)
             newTitle = ""
             newTags = ""
             reload()
@@ -162,6 +188,9 @@ final class TasksViewModel: ObservableObject, TaskRowActionRunning {
             feedback = "Informe um título para a tarefa."
         } catch DomainError.duplicateEntry(let title) {
             feedback = "Já existe uma tarefa ativa chamada \"\(title)\"."
+        } catch DomainError.projectNotFound {
+            feedback = "O projeto filtrado foi apagado."
+            refresh()
         } catch {
             feedback = "Não foi possível salvar: \(error.localizedDescription)"
         }
@@ -174,6 +203,8 @@ final class TasksViewModel: ObservableObject, TaskRowActionRunning {
         bulkAdd = BulkAddTasksViewModel(
             useCase: useCase,
             knownTags: knownTags,
+            projects: projects,
+            defaultProjectID: projectFilter.projectIDForNewTask,
             onCreated: { [weak self] count in
                 guard let self else { return }
                 self.bulkAdd = nil
@@ -222,12 +253,12 @@ final class TasksViewModel: ObservableObject, TaskRowActionRunning {
         if expandedTaskIDs.contains(task.id) { return true }
         guard hasActiveFilters else { return false }
         let filter = self.filter
-        return children(of: task).contains { filter.matches($0, now: Date(), calendar: .current) }
+        return children(of: task).contains { filter.matches($0, now: now, calendar: .current) }
     }
 
     private var hasActiveFilters: Bool {
         !searchText.trimmingCharacters(in: .whitespaces).isEmpty
-            || tagFilter != nil || priorityFilter != nil || dueFilter != .all
+            || tagFilter != nil || priorityFilter != nil || dueFilter != .all || projectFilter != .all
     }
 
     /// Subtarefas da linha: abertas na `sortOrder`, concluídas no fim por data de conclusão.
@@ -294,7 +325,7 @@ final class TasksViewModel: ObservableObject, TaskRowActionRunning {
     func beginEditing(_ task: FocusTask) {
         feedback = nil
         editor = TaskEditorViewModel(
-            task: task, knownTags: knownTags, useCase: useCase,
+            task: task, knownTags: knownTags, projects: projects, now: nowProvider, useCase: useCase,
             onChanged: { [weak self] in self?.reload() },
             onClose: { [weak self] in self?.editor = nil },
             onOpenTask: { [weak self] other in self?.beginEditing(other) })

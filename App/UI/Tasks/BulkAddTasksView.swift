@@ -16,7 +16,7 @@ struct BulkAddTasksView: View {
             }
         }
         .padding(16)
-        .frame(width: viewModel.step == .text ? 460 : 800, height: 480)
+        .frame(width: viewModel.step == .text ? 460 : 940, height: 480)
     }
 
     // MARK: - Passo 1: texto
@@ -55,6 +55,7 @@ struct BulkAddTasksView: View {
     private enum Column {
         static let priority: CGFloat = 110
         static let tags: CGFloat = 170
+        static let project: CGFloat = 140
         static let due: CGFloat = 210
         static let remove: CGFloat = 24
     }
@@ -107,6 +108,7 @@ struct BulkAddTasksView: View {
             Text("Título").frame(maxWidth: .infinity, alignment: .leading)
             Text("Prioridade").frame(width: Column.priority, alignment: .leading)
             Text("Tags").frame(width: Column.tags, alignment: .leading)
+            Text("Projeto").frame(width: Column.project, alignment: .leading)
             Text("Vencimento").frame(width: Column.due, alignment: .leading)
             Color.clear.frame(width: Column.remove, height: 1)
         }
@@ -147,6 +149,9 @@ struct BulkAddTasksView: View {
                 TagSuggestionsMenu(knownTags: viewModel.knownTags, text: row.tags)
             }
             .frame(width: Column.tags)
+
+            ProjectPicker(projects: viewModel.projects, selection: row.projectID, compact: true)
+                .frame(width: Column.project, alignment: .leading)
 
             HStack(spacing: 4) {
                 Toggle("Vencimento", isOn: row.hasDueDate)

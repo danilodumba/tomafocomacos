@@ -6,7 +6,7 @@ import TomafocoApplication
 /// e criação rápida. Configuração do quadro (raias, dias no Done, escopo por tag) fica nas
 /// Configurações › Kanban (`KanbanSettingsViewModel`).
 @MainActor
-final class KanbanViewModel: ObservableObject, TaskRowActionRunning {
+final class KanbanViewModel: ObservableObject, TaskRowActionRunning, ProjectsHosting, MinuteClockHosting {
 
     @Published private(set) var board: KanbanBoard?
     @Published private(set) var tasks: [FocusTask] = []
@@ -16,6 +16,12 @@ final class KanbanViewModel: ObservableObject, TaskRowActionRunning {
     @Published var searchText = ""
     @Published var tagFilter: String?
     @Published var dueFilter: TaskDueFilter = .all
+    /// Recorte por projeto (FEAT-006). Com um projeto filtrado, a tarefa criada aqui nasce nele.
+    @Published var projectFilter: ProjectFilter = .all
+    /// Projetos da tela (FEAT-006) — ver `ProjectsHosting`.
+    @Published var projectCatalog = ProjectCatalog()
+    /// Sheet de cadastro de projetos (FEAT-006) — `nil` = fechado.
+    @Published var projectsSheet: ProjectsViewModel?
     /// Persistida, separada da ordenação da lista.
     @Published var sortOrder: TaskSortOrder = .createdAt {
         didSet { defaults.set(sortOrder.rawValue, forKey: Self.sortOrderKey) }
@@ -29,18 +35,23 @@ final class KanbanViewModel: ObservableObject, TaskRowActionRunning {
     @Published var editor: TaskEditorViewModel?
     @Published var feedback: String?
     @Published var busyTaskIDs: Set<UUID> = []
+    /// "Agora" do quadro (FEAT-006, H3): mesmo papel do `TasksViewModel.now`.
+    @Published var now = Date()
+    let clock = MinuteClock()
 
     private let useCase: ManageKanbanUseCase
     private let manageTasks: ManageTasksUseCase
+    let manageProjects: ManageProjectsUseCase
     private let defaults: UserDefaults
     /// Avisa que as tarefas mudaram por aqui — a lista e o seletor do timer recarregam.
     private let onTasksChanged: () -> Void
     private static let sortOrderKey = "kanbanSortOrder"
 
-    init(useCase: ManageKanbanUseCase, manageTasks: ManageTasksUseCase,
+    init(useCase: ManageKanbanUseCase, manageTasks: ManageTasksUseCase, manageProjects: ManageProjectsUseCase,
          defaults: UserDefaults = .standard, onTasksChanged: @escaping () -> Void) {
         self.useCase = useCase
         self.manageTasks = manageTasks
+        self.manageProjects = manageProjects
         self.defaults = defaults
         self.onTasksChanged = onTasksChanged
         sortOrder = TaskSortOrder.stored(in: defaults, key: Self.sortOrderKey)
@@ -55,14 +66,17 @@ final class KanbanViewModel: ObservableObject, TaskRowActionRunning {
     func didAppear() {
         isPresented = true
         refresh()
+        startMinuteClock()
     }
 
     func didDisappear() {
         isPresented = false
+        stopMinuteClock()
     }
 
     /// Só relê (quadro, tarefas, tags). Chamado pelas outras janelas quando a mudança veio delas.
     func refresh() {
+        resetNow()
         do {
             board = try useCase.board()
         } catch {
@@ -70,6 +84,7 @@ final class KanbanViewModel: ObservableObject, TaskRowActionRunning {
         }
         tasks = (try? manageTasks.allTasks()) ?? []
         knownTags = (try? manageTasks.allTags()) ?? []
+        reloadProjects()
 
         let options = tagFilterOptions
         if let tag = tagFilter, !options.contains(where: { $0.caseInsensitiveCompare(tag) == .orderedSame }) {
@@ -83,7 +98,7 @@ final class KanbanViewModel: ObservableObject, TaskRowActionRunning {
     }
 
     /// Relê e avisa as outras telas — depois de toda mudança feita aqui.
-    private func reload() {
+    func reload() {
         refresh()
         onTasksChanged()
     }
@@ -94,15 +109,15 @@ final class KanbanViewModel: ObservableObject, TaskRowActionRunning {
     /// Na Done, concluídas mais recentes primeiro (vencimento/prioridade não dizem nada ali).
     var columns: [KanbanColumn] {
         guard let board else { return [] }
-        let filter = TaskFilter(searchText: searchText, tag: tagFilter, due: dueFilter)
+        let filter = TaskFilter(searchText: searchText, tag: tagFilter, due: dueFilter, project: projectFilter)
         // Subtarefa (FEAT-003) passa se ela ou o pai passa — filtrar pela tag do pai não pode
         // esconder as filhas que estão na mesma raia.
         let visible = tasks.filter {
-            filter.matchesCard($0, parent: TaskTree.parent(of: $0, in: tasks), now: Date(), calendar: .current)
+            filter.matchesCard($0, parent: TaskTree.parent(of: $0, in: tasks), now: now, calendar: .current)
         }
         // `among: tasks`: a herança do escopo procura o pai na lista CHEIA — buscar pelo nome
         // da filha tira o pai de `visible`, e a filha não pode sumir do quadro por isso.
-        return board.columns(for: visible, among: tasks, now: Date(), calendar: .current).map { column in
+        return board.columns(for: visible, among: tasks, now: now, calendar: .current).map { column in
             let sorted = column.lane.isDone
                 ? column.tasks.sorted { ($0.completedAt ?? .distantPast) > ($1.completedAt ?? .distantPast) }
                 : column.tasks.sorted(by: sortOrder.areInIncreasingOrder)
@@ -126,6 +141,7 @@ final class KanbanViewModel: ObservableObject, TaskRowActionRunning {
 
     var hasActiveFilters: Bool {
         !searchText.trimmingCharacters(in: .whitespaces).isEmpty || tagFilter != nil || dueFilter != .all
+            || projectFilter != .all
     }
 
     // MARK: - Subtarefas (FEAT-003)
@@ -194,13 +210,17 @@ final class KanbanViewModel: ObservableObject, TaskRowActionRunning {
             return
         }
         do {
-            try manageTasks.addTask(title: newTitle, tags: newTag.map { [$0] } ?? [])
+            try manageTasks.addTask(title: newTitle, tags: newTag.map { [$0] } ?? [],
+                                    projectID: projectFilter.projectIDForNewTask)
             newTitle = ""
             reload()
         } catch DomainError.emptyTaskTitle {
             feedback = "Informe um título para a tarefa."
         } catch DomainError.duplicateEntry(let title) {
             feedback = "Já existe uma tarefa ativa chamada \"\(title)\"."
+        } catch DomainError.projectNotFound {
+            feedback = "O projeto filtrado foi apagado."
+            refresh()
         } catch {
             feedback = "Não foi possível salvar: \(error.localizedDescription)"
         }
@@ -209,7 +229,7 @@ final class KanbanViewModel: ObservableObject, TaskRowActionRunning {
     func beginEditing(_ task: FocusTask) {
         feedback = nil
         editor = TaskEditorViewModel(
-            task: task, knownTags: knownTags, useCase: manageTasks,
+            task: task, knownTags: knownTags, projects: projects, now: nowProvider, useCase: manageTasks,
             onChanged: { [weak self] in
                 guard let self else { return }
                 self.reload()

@@ -8,12 +8,15 @@ public struct NewTaskDraft: Equatable, Sendable {
     public var tags: [String]
     public var dueDate: Date?
     public var priority: TaskPriority
+    public var projectID: UUID?
 
-    public init(title: String, tags: [String] = [], dueDate: Date? = nil, priority: TaskPriority = .none) {
+    public init(title: String, tags: [String] = [], dueDate: Date? = nil, priority: TaskPriority = .none,
+                projectID: UUID? = nil) {
         self.title = title
         self.tags = tags
         self.dueDate = dueDate
         self.priority = priority
+        self.projectID = projectID
     }
 }
 

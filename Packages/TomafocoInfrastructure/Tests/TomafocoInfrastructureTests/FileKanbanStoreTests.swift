@@ -2,6 +2,7 @@ import XCTest
 import TomafocoDomain
 @testable import TomafocoInfrastructure
 
+@MainActor
 final class FileKanbanStoreTests: XCTestCase {
 
     private var dir: URL!

@@ -19,6 +19,8 @@ final class BulkAddTasksViewModel: ObservableObject, Identifiable {
         var tags = ""
         var hasDueDate = false
         var dueDate: Date
+        /// Projeto (FEAT-006) — começa no projeto filtrado na lista.
+        var projectID: UUID?
     }
 
     @Published var step: Step = .text
@@ -32,15 +34,21 @@ final class BulkAddTasksViewModel: ObservableObject, Identifiable {
     @Published private(set) var feedback: String?
 
     let knownTags: [String]
+    let projects: [Project]
+    /// Projeto das linhas novas (o filtrado na lista).
+    private let defaultProjectID: UUID?
     private let useCase: ManageTasksUseCase
     /// Chamado após criar: o `TasksViewModel` recarrega a lista e fecha o sheet.
     private let onCreated: (Int) -> Void
     private let onCancel: () -> Void
 
-    init(useCase: ManageTasksUseCase, knownTags: [String],
+    init(useCase: ManageTasksUseCase, knownTags: [String], projects: [Project] = [],
+         defaultProjectID: UUID? = nil,
          onCreated: @escaping (Int) -> Void, onCancel: @escaping () -> Void) {
         self.useCase = useCase
         self.knownTags = knownTags
+        self.projects = projects
+        self.defaultProjectID = defaultProjectID
         self.onCreated = onCreated
         self.onCancel = onCancel
     }
@@ -59,7 +67,7 @@ final class BulkAddTasksViewModel: ObservableObject, Identifiable {
             if let idx = previous.firstIndex(where: { $0.title == title }) {
                 return previous.remove(at: idx)
             }
-            return Row(title: title, dueDate: dueDate)
+            return Row(title: title, dueDate: dueDate, projectID: defaultProjectID)
         }
         feedback = nil
         revalidate()
@@ -84,6 +92,10 @@ final class BulkAddTasksViewModel: ObservableObject, Identifiable {
         do {
             let created = try useCase.addTasks(drafts)
             onCreated(created.count)
+        } catch DomainError.projectNotFound {
+            // Projeto apagado em outra janela com o sheet aberto: `revalidate()` só olha títulos,
+            // então sem esta mensagem o botão parecia não fazer nada.
+            feedback = "Um dos projetos escolhidos foi apagado. Troque o projeto das linhas e tente de novo."
         } catch is DomainError {
             revalidate() // estado mudou por fora (outra janela) — as linhas mostram o motivo
         } catch {
@@ -97,7 +109,8 @@ final class BulkAddTasksViewModel: ObservableObject, Identifiable {
                 title: $0.title,
                 tags: TaskEditorViewModel.parseTags($0.tags),
                 dueDate: $0.hasDueDate ? $0.dueDate : nil,
-                priority: $0.priority
+                priority: $0.priority,
+                projectID: $0.projectID
             )
         }
     }

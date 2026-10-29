@@ -30,6 +30,13 @@ final class TaskEditorViewModel: ObservableObject, Identifiable {
     @Published var notes: String
     @Published var link: String
     @Published var isUrgent: Bool
+    /// Projeto (FEAT-006). Em subtarefa é só exibição — vale o do pai (`isProjectInherited`).
+    @Published var projectID: UUID?
+    /// Snapshot de quando o sheet abriu; projeto que o use case recusou (apagado) sai daqui.
+    @Published private(set) var projects: [Project]
+    /// "Agora" da tela que abriu o editor (FEAT-006, H3) — o destaque de atrasada nas subtarefas
+    /// usa o mesmo relógio da lista/quadro atrás do sheet.
+    let now: () -> Date
     /// Erro do formulário — separado do feedback da janela porque o sheet cobre a tela.
     @Published var feedback: String?
     /// Histórico da tarefa, mais recente primeiro.
@@ -52,11 +59,13 @@ final class TaskEditorViewModel: ObservableObject, Identifiable {
     /// Abrir o formulário de OUTRA tarefa (a subtarefa clicada) — a janela troca o editor.
     private let onOpenTask: (FocusTask) -> Void
 
-    init(task: FocusTask, knownTags: [String], useCase: ManageTasksUseCase,
-         onChanged: @escaping () -> Void, onClose: @escaping () -> Void,
+    init(task: FocusTask, knownTags: [String], projects: [Project], now: @escaping () -> Date = { Date() },
+         useCase: ManageTasksUseCase, onChanged: @escaping () -> Void, onClose: @escaping () -> Void,
          onOpenTask: @escaping (FocusTask) -> Void = { _ in }) {
         self.task = task
         self.knownTags = knownTags
+        self.projects = projects
+        self.now = now
         self.useCase = useCase
         self.onChanged = onChanged
         self.onClose = onClose
@@ -70,11 +79,15 @@ final class TaskEditorViewModel: ObservableObject, Identifiable {
         notes = task.notes ?? ""
         link = task.sourceURL ?? ""
         isUrgent = task.isUrgent
+        projectID = task.projectID
         history = Self.sortedHistory(task)
         let all = (try? useCase.allTasks()) ?? []
         subtasks = Self.sortedChildren(of: task, in: all)
         parent = TaskTree.parent(of: task, in: all)
     }
+
+    /// Subtarefa tem o projeto do pai (FEAT-006): o seletor só mostra, não edita.
+    var isProjectInherited: Bool { task.isSubtask }
 
     /// Um nível só (FEAT-003): subtarefa não tem a seção de subtarefas.
     var canHaveSubtasks: Bool { !task.isSubtask }
@@ -123,7 +136,8 @@ final class TaskEditorViewModel: ObservableObject, Identifiable {
                 repeatsDaily: repeatsDaily,
                 notes: notes,
                 link: link,
-                isUrgent: isUrgent
+                isUrgent: isUrgent,
+                projectID: projectID
             ))
             wroteSomething = true
         } catch DomainError.emptyTaskTitle {
@@ -134,6 +148,11 @@ final class TaskEditorViewModel: ObservableObject, Identifiable {
             return
         } catch DomainError.invalidLink(let raw) {
             feedback = "\"\(raw)\" não é um link válido. Use algo como site.com ou https://site.com/pagina."
+            return
+        } catch DomainError.projectNotFound {
+            feedback = "O projeto escolhido foi apagado. Escolha outro ou \"Sem projeto\"."
+            if let missing = projectID { projects.removeAll { $0.id == missing } }
+            projectID = nil
             return
         } catch {
             feedback = "Não foi possível salvar: \(error.localizedDescription)"

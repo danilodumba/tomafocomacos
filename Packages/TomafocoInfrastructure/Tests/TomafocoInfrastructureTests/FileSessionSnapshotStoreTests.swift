@@ -4,6 +4,7 @@ import TomafocoDomain
 
 /// Persistência do failsafe e do histórico contra diretório temporário — sem tocar em
 /// Application Support de verdade.
+@MainActor
 final class FileSessionSnapshotStoreTests: XCTestCase {
 
     private var directory: URL!

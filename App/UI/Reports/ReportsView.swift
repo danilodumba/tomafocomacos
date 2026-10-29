@@ -129,7 +129,7 @@ struct ReportsView: View {
         ]
         return LazyVGrid(columns: [GridItem(.adaptive(minimum: 110), spacing: 10)], spacing: 10) {
             ForEach(tiles, id: \.0) { title, value in
-                statTile(title: title, value: value)
+                StatTile(title: title, value: value)
             }
         }
     }
@@ -449,32 +449,9 @@ struct ReportsView: View {
         ]
         return LazyVGrid(columns: [GridItem(.adaptive(minimum: 110), spacing: 10)], spacing: 10) {
             ForEach(tiles, id: \.0) { title, value in
-                statTile(title: title, value: value)
+                StatTile(title: title, value: value)
             }
         }
-    }
-
-    /// Stat tile compartilhado entre o resumo do período e o relatório por tarefa.
-    private func statTile(title: String, value: String) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(title.uppercased())
-                .font(.system(size: 9, weight: .semibold))
-                .tracking(1.1)
-                .foregroundStyle(Brand.textFaint)
-            Text(value)
-                .font(.system(size: 17, weight: .semibold, design: .rounded))
-                .foregroundStyle(Brand.textPrimary)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(10)
-        .background(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .fill(Brand.surface)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .strokeBorder(Brand.surfaceStroke, lineWidth: 1)
-                )
-        )
     }
 
     // MARK: - Gráficos (uma série cada — o título nomeia; sem legenda)

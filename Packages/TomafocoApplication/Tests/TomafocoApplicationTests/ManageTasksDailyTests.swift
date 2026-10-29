@@ -5,6 +5,7 @@ import TomafocoTestSupport
 
 /// Tarefa diária (FEAT-004): concluir fecha a tarefa como qualquer outra e cria um clone com
 /// vencimento amanhã. A concluída não é reaberta.
+@MainActor
 final class ManageTasksDailyTests: XCTestCase {
 
     private var repo: InMemoryTaskRepository!

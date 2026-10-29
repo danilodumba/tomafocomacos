@@ -8,13 +8,7 @@ import TomafocoApplication
 @MainActor
 final class ReportsViewModel: ObservableObject {
 
-    enum Period: String, CaseIterable, Identifiable {
-        case today = "Hoje"
-        case week = "7 dias"
-        case month = "30 dias"
-        case all = "Tudo"
-        var id: String { rawValue }
-    }
+    typealias Period = ReportPeriod
 
     @Published var period: Period = .week {
         didSet { reload() }
@@ -160,20 +154,7 @@ final class ReportsViewModel: ObservableObject {
     }
 
     private func interval(for period: Period) -> DateInterval? {
-        let days: Int
-        switch period {
-        case .today: days = 1
-        case .week: days = 7
-        case .month: days = 30
-        case .all: return nil
-        }
-        // Do início de (hoje − N + 1) até agora: "7 dias" = hoje + 6 anteriores completos;
-        // "Hoje" = do início de hoje até agora.
-        let startOfToday = calendar.startOfDay(for: Date())
-        guard let start = calendar.date(byAdding: .day, value: -(days - 1), to: startOfToday) else {
-            return nil
-        }
-        return DateInterval(start: start, end: Date())
+        period.interval(now: Date(), calendar: calendar)
     }
 
     // MARK: - Formatação
