@@ -31,4 +31,25 @@ public enum TaskDueFilter: String, CaseIterable, Sendable {
             return !task.isCompleted && due < now
         }
     }
+
+    /// Recorte pela **data de conclusão** — a raia Done do quadro julga o cartão concluído só
+    /// por aqui (o vencimento é ignorado). Mesma janela do vencimento: "Hoje" = concluída hoje;
+    /// "Próximos 7 dias" = concluída de hoje em diante (na prática, hoje). "Atrasadas" não tem
+    /// sentido para conclusão — nunca casa.
+    public func matchesCompletion(_ task: FocusTask, now: Date, calendar: Calendar) -> Bool {
+        guard self != .all else { return true }
+        guard let completed = task.completedAt else { return false }
+        switch self {
+        case .all:
+            return true
+        case .today:
+            return calendar.isDate(completed, inSameDayAs: now)
+        case .next7Days:
+            let start = calendar.startOfDay(for: now)
+            let end = calendar.date(byAdding: .day, value: 8, to: start) ?? start.addingTimeInterval(8 * 86_400)
+            return completed >= start && completed < end
+        case .overdue:
+            return false
+        }
+    }
 }

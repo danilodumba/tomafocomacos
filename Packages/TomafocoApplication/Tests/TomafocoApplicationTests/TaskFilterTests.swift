@@ -76,9 +76,25 @@ final class TaskFilterTests: XCTestCase {
         let pai = task("Apresentação", due: now.addingTimeInterval(-86_400))
         var feita = task("Revisar"); feita.parentID = pai.id; feita.completedAt = now.addingTimeInterval(-3_600)
         XCTAssertFalse(TaskFilter(due: .overdue).matchesCard(feita, parent: pai, now: now, calendar: calendar))
-        // "Hoje" com pai vencendo hoje: concluída ainda entra (mesma regra da tarefa de topo concluída hoje).
+        // "Hoje": concluída hoje entra — pela conclusão, não pela data do pai.
         let paiHoje = task("Apresentação", due: now.addingTimeInterval(600))
         XCTAssertTrue(TaskFilter(due: .today).matchesCard(feita, parent: paiHoje, now: now, calendar: calendar))
+    }
+
+    /// Done: concluída é julgada só pela data de conclusão — o vencimento é ignorado (vencer
+    /// hoje mas ter sido concluída ontem não entra em "Hoje"). "Atrasadas" segue sem concluídas.
+    func test_matchesCard_concluida_soPelaDataDeConclusao() {
+        var semData = task("Sem data"); semData.completedAt = now.addingTimeInterval(-60)
+        var vencida = task("Vencia antes", due: now.addingTimeInterval(-86_400 * 5))
+        vencida.completedAt = now.addingTimeInterval(-60)
+        var ontem = task("Vence hoje, feita ontem", due: now.addingTimeInterval(600))
+        ontem.completedAt = now.addingTimeInterval(-86_400 * 2)
+        let today = TaskFilter(due: .today)
+        XCTAssertTrue(today.matchesCard(semData, parent: nil, now: now, calendar: calendar))
+        XCTAssertTrue(today.matchesCard(vencida, parent: nil, now: now, calendar: calendar))
+        XCTAssertFalse(today.matchesCard(ontem, parent: nil, now: now, calendar: calendar))
+        XCTAssertTrue(TaskFilter(due: .next7Days).matchesCard(semData, parent: nil, now: now, calendar: calendar))
+        XCTAssertFalse(TaskFilter(due: .overdue).matchesCard(vencida, parent: nil, now: now, calendar: calendar))
     }
 
     /// Busca/tag/prioridade seguem passando pelo pai, mas o vencimento da filha ainda vale.

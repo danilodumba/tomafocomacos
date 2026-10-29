@@ -304,6 +304,11 @@ struct KanbanBoardView: View {
                     Label(due.formatted(date: .abbreviated, time: .shortened), systemImage: "calendar")
                         .foregroundStyle(overdue ? Brand.danger : Brand.textFaint)
                 }
+                if let completed = task.completedAt {
+                    Label(completed.formatted(date: .abbreviated, time: .shortened), systemImage: "checkmark.circle")
+                        .foregroundStyle(Brand.cyan)
+                        .help("Concluída em \(completed.formatted(date: .long, time: .shortened))")
+                }
                 if let url = task.linkURL {
                     Link(destination: url) {
                         Label(url.host ?? "Link", systemImage: "link")

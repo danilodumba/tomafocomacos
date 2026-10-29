@@ -45,10 +45,16 @@ public struct TaskFilter: Equatable, Sendable {
     /// não a leva para "Atrasadas"); filha **sem** vencimento herda a **data** do pai — é o que
     /// a lista faz (mostra todas as filhas sob o pai que casou). A **conclusão** é sempre a do
     /// cartão: filha concluída não vira "atrasada" porque o pai ainda está aberto.
+    /// **Done:** cartão concluído é julgado **só pela data de conclusão** (vencimento não diz
+    /// nada ali) — ver `TaskDueFilter.matchesCompletion`.
     public func matchesCard(_ task: FocusTask, parent: FocusTask?, now: Date, calendar: Calendar) -> Bool {
-        var dueSubject = task
-        if task.dueDate == nil, let parent { dueSubject.dueDate = parent.dueDate }
-        guard due.matches(dueSubject, now: now, calendar: calendar) else { return false }
+        if task.isCompleted {
+            guard due.matchesCompletion(task, now: now, calendar: calendar) else { return false }
+        } else {
+            var dueSubject = task
+            if task.dueDate == nil, let parent { dueSubject.dueDate = parent.dueDate }
+            guard due.matches(dueSubject, now: now, calendar: calendar) else { return false }
+        }
         let query = trimmedQuery
         return matchesAttributes(task, query: query)
             || parent.map { matchesAttributes($0, query: query) } == true
