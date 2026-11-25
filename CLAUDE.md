@@ -497,6 +497,16 @@ Plano, decisões (P1–P7 aprovadas), desvios e review em `../DOCS - Tomafoco/AP
 - ⚠️ **Antes de rodar o app:** copiar `~/Library/Application Support/Tomafoco/` (1º lançamento migra para V2).
   ⚠️ Validar à mão (lista no FEAT-007).
 
+**🚀 Release 1.19 publicada (2026-11-25)** — `MARKETING_VERSION 1.19` / `CURRENT_PROJECT_VERSION 20`.
+Conteúdo: FEAT-007 inteira (documento em markdown nas tarefas). **Primeiro lançamento migra o banco V1 → V2.**
+- `make release`: notarização **Accepted** (app e DMG), staple ok, `spctl` → `Notarized Developer ID`,
+  universal (`x86_64 arm64`), DMG 7,6 MB. Appcast `sparkle:version 20`, `minimumSystemVersion 14.0`.
+- Commits `feat:` + `release:` na branch `feat/feat-007-documento`, merge fast-forward na `main`, tag `v1.19`.
+  Site: sed `1\.18` nos 4 arquivos, card "Documento em markdown por tarefa" (grade 3+3+2), DMG + notas +
+  appcast no mesmo commit. Verificado ao vivo: `/`, DMG, `app.js`, notas **200**; appcast versão 20; SHA-256 do
+  DMG servido = local.
+- ⚠️ Validação manual da FEAT-007 **não** foi feita antes da release (pedido do usuário) — fazer na 1ª abertura.
+
 ## Como retomar
 
 ```bash
