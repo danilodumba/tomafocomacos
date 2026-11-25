@@ -32,4 +32,6 @@ public enum DomainError: Error, Equatable {
     case duplicateProject(String)
     /// Projeto inexistente (apagado em outra janela enquanto o formulário estava aberto).
     case projectNotFound
+    /// Documento da tarefa acima do limite (FEAT-007) — limite em bytes para a mensagem da UI.
+    case documentTooLarge(maxBytes: Int)
 }

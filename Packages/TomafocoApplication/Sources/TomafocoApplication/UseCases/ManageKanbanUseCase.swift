@@ -137,8 +137,9 @@ public final class ManageKanbanUseCase {
         // Saindo da Done, uma subtarefa reabre também o pai concluído (invariante "subtarefa
         // ativa ⇒ pai ativo") — o cartão do pai volta à raia que ele tinha.
         var reopenedParent: FocusTask?
+        var completion: ManageTasksUseCase.CompletionCascade?
         if target.isDone {
-            tasks.applyCompletionCascade(id: id, in: &all)
+            completion = tasks.applyCompletionCascade(id: id, in: &all)
         } else if origin.isDone {
             reopenedParent = tasks.applyReopenCascade(id: id, in: &all)?.reopenedParent
         }
@@ -147,8 +148,9 @@ public final class ManageKanbanUseCase {
             all[idx].laneID = target.id
         }
         // Concluída mantém o `laneID`: reabrir pela lista a devolve à raia de antes. Diária
-        // (FEAT-004) idem — o clone para amanhã que a cascata acrescentou nasce sem raia (1ª).
-        try tasks.replaceAll(all)
+        // (FEAT-004) idem — o clone para amanhã que a cascata acrescentou nasce sem raia (1ª) e
+        // leva o documento (FEAT-007) na mesma transação.
+        try tasks.saveCompletion(all, cascade: completion)
         guard target.isDone || origin.isDone else { return .notApplicable }
         let outcome = await tasks.syncCompletion(of: all[idx])
         guard let reopenedParent else { return outcome }

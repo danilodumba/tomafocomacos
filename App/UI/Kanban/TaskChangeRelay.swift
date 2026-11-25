@@ -14,9 +14,18 @@ final class TaskChangeRelay {
     private weak var board: KanbanViewModel?
     private weak var boardSettings: KanbanSettingsViewModel?
     private weak var focusSettings: SettingsViewModel?
+    /// Selo "tem documento" (FEAT-007): apagar tarefa e clonar diária mexem nos documentos.
+    private let documentIndex: TaskDocumentIndex
+    /// Janelas de documento abertas — relêem título/existência da tarefa (só a tarefa delas).
+    private let documentWindows = NSHashTable<TaskDocumentViewModel>.weakObjects()
 
-    init(timer: TimerViewModel) {
+    init(timer: TimerViewModel, documentIndex: TaskDocumentIndex) {
         self.timer = timer
+        self.documentIndex = documentIndex
+    }
+
+    func register(documentWindow: TaskDocumentViewModel) {
+        documentWindows.add(documentWindow)
     }
 
     func connect(list: TasksViewModel, board: KanbanViewModel,
@@ -33,5 +42,7 @@ final class TaskChangeRelay {
         if source != .settings, let boardSettings, boardSettings.isPresented { boardSettings.reload() }
         if let focusSettings, focusSettings.isPresented { focusSettings.reloadFocusScope() }
         timer.reloadAvailableTasks()
+        documentIndex.reload()
+        documentWindows.allObjects.forEach { $0.refresh() }
     }
 }

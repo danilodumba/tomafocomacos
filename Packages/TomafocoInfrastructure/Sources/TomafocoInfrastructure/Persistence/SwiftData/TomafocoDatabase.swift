@@ -164,9 +164,12 @@ public final class TomafocoDatabase: UnitOfWork {
 
     // MARK: - Privado
 
+    /// Versão de esquema que o app abre — a última do `TomafocoMigrationPlan`.
+    static let currentSchema: any VersionedSchema.Type = TomafocoSchemaV2.self
+
     private static func makeContainer(_ configuration: ModelConfiguration) throws -> ModelContainer {
         try ModelContainer(
-            for: Schema(versionedSchema: TomafocoSchemaV1.self),
+            for: Schema(versionedSchema: currentSchema),
             migrationPlan: TomafocoMigrationPlan.self,
             configurations: [configuration]
         )

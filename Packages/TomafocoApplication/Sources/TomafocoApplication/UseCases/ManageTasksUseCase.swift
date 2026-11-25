@@ -85,6 +85,14 @@ public final class ManageTasksUseCase {
     /// Projetos (FEAT-006), só para recusar vínculo com projeto inexistente. Padrão vazio
     /// (`EphemeralProjectRepository`): sem store injetado, todo `projectID` é recusado — nunca aceito.
     private let projects: ProjectRepository
+    /// Documentos das tarefas (FEAT-007): apagados junto com a tarefa e copiados para o clone da
+    /// diária. Padrão efêmero (testes antigos não tratam de documento).
+    private let documents: TaskDocumentRepository
+    /// Transação tarefas + documentos (apagar, clonar diária). Padrão imediato: sem banco não há
+    /// o que desfazer.
+    private let unitOfWork: UnitOfWork
+    /// Desmarca o checklist do documento clonado para a diária de amanhã (FEAT-007, P2).
+    private let checklistResetter: ChecklistResetting
     private static let logger = Logger(subsystem: "com.dsdumba.tomafoco", category: "ManageTasksUseCase")
 
     // `now` sem default de propósito: `Date()` é proibido na Application (testabilidade) —
@@ -99,7 +107,10 @@ public final class ManageTasksUseCase {
         calendar: Calendar = .current,
         kanbanBoards: KanbanBoardRepository? = nil,
         settings: SettingsRepository? = nil,
-        projects: ProjectRepository = EphemeralProjectRepository()
+        projects: ProjectRepository = EphemeralProjectRepository(),
+        documents: TaskDocumentRepository = EphemeralTaskDocumentRepository(),
+        unitOfWork: UnitOfWork = ImmediateUnitOfWork(),
+        checklistResetter: ChecklistResetting = IdentityChecklistResetter()
     ) {
         self.tasks = tasks
         self.importer = importer
@@ -111,6 +122,9 @@ public final class ManageTasksUseCase {
         self.kanbanBoards = kanbanBoards
         self.settings = settings
         self.projects = projects
+        self.documents = documents
+        self.unitOfWork = unitOfWork
+        self.checklistResetter = checklistResetter
     }
 
     public func allTasks() throws -> [FocusTask] { try tasks.loadTasks() }
@@ -500,9 +514,9 @@ public final class ManageTasksUseCase {
     @discardableResult
     public func completeTask(id: UUID) async throws -> ReminderSyncOutcome {
         var all = try tasks.loadTasks()
-        guard let task = applyCompletionCascade(id: id, in: &all) else { return .notApplicable }
-        try tasks.saveTasks(all)
-        return await syncCompletion(of: task)
+        guard let cascade = applyCompletionCascade(id: id, in: &all) else { return .notApplicable }
+        try saveCompletion(all, cascade: cascade)
+        return await syncCompletion(of: cascade.task)
     }
 
     /// Reabre a tarefa. Subtarefa (FEAT-003) reabre também o pai concluído — invariante
@@ -542,17 +556,45 @@ public final class ManageTasksUseCase {
     /// Devolve a tarefa gravada ou `nil` se não existe.
     /// `internal`: o `ManageKanbanUseCase` aplica junto com a troca de raia numa gravação só.
     @discardableResult
-    func applyCompletionCascade(id: UUID, in all: inout [FocusTask]) -> FocusTask? {
+    func applyCompletionCascade(id: UUID, in all: inout [FocusTask]) -> CompletionCascade? {
         guard let idx = all.firstIndex(where: { $0.id == id }) else { return nil }
         let completedAt = now()
         all[idx].completedAt = completedAt
         for child in all.indices where all[child].parentID == id && !all[child].isCompleted {
             all[child].completedAt = completedAt
         }
+        var dailyClone: (sourceID: UUID, cloneID: UUID)?
         if all[idx].repeatsDaily {
-            all.append(all[idx].nextDailyOccurrence(id: makeID(), now: completedAt, calendar: calendar))
+            let clone = all[idx].nextDailyOccurrence(id: makeID(), now: completedAt, calendar: calendar)
+            all.append(clone)
+            dailyClone = (id, clone.id)
         }
-        return all[idx]
+        return CompletionCascade(task: all[idx], dailyClone: dailyClone)
+    }
+
+    /// Resultado da cascata de conclusão: a tarefa concluída e, se ela era diária, o par
+    /// origem → clone (o documento acompanha o clone na gravação — `saveCompletion`).
+    struct CompletionCascade {
+        let task: FocusTask
+        let dailyClone: (sourceID: UUID, cloneID: UUID)?
+    }
+
+    /// Grava a lista depois de uma conclusão e, se houve clone da diária, copia o documento da
+    /// origem para o clone com o checklist desmarcado (FEAT-007, P2) — numa transação só: clone
+    /// gravado sem o documento (ou o contrário) não pode acontecer. `internal`: o Kanban conclui
+    /// pela Done com a mesma gravação.
+    func saveCompletion(_ all: [FocusTask], cascade: CompletionCascade?) throws {
+        guard let clone = cascade?.dailyClone else {
+            try tasks.saveTasks(all)
+            return
+        }
+        try unitOfWork.perform {
+            try tasks.saveTasks(all)
+            guard let source = try documents.document(taskID: clone.sourceID) else { return }
+            try documents.save(TaskDocument(taskID: clone.cloneID,
+                                            markdown: checklistResetter.uncheckingAll(source.markdown),
+                                            updatedAt: now()))
+        }
     }
 
     /// Reabrir não reabre as subtarefas (FEAT-003): o usuário reabre à mão o que quiser refazer.
@@ -578,10 +620,16 @@ public final class ManageTasksUseCase {
 
     /// Apaga a tarefa e, em **cascata**, as subtarefas dela (FEAT-003) — subtarefa sem pai não
     /// faz sentido. A UI pede confirmação quando há filhas. Tarefa inexistente é no-op.
+    /// Os documentos (FEAT-007) da tarefa e das filhas saem na mesma transação.
     public func deleteTask(id: UUID) throws {
         var all = try tasks.loadTasks()
-        all.removeAll { $0.id == id || $0.parentID == id }
-        try tasks.saveTasks(all)
+        let removed = Set(all.lazy.filter { $0.id == id || $0.parentID == id }.map(\.id))
+        guard !removed.isEmpty else { return }
+        all.removeAll { removed.contains($0.id) }
+        try unitOfWork.perform {
+            try tasks.saveTasks(all)
+            try documents.delete(taskIDs: removed)
+        }
     }
 
     /// Listas do Lembretes disponíveis para o filtro de importação (RF-09.3).

@@ -6,6 +6,8 @@ import TomafocoDomain
 /// poder usar tela cheia e Split View.
 struct KanbanBoardView: View {
     @ObservedObject var viewModel: KanbanViewModel
+    /// Selo "tem documento" (FEAT-007) — observado direto: nested ObservableObject não propaga.
+    @ObservedObject var documentIndex: TaskDocumentIndex
     @Environment(\.openWindow) private var openWindow
     /// Coluna sob o arraste — destaque visual.
     @State private var targetedLaneID: UUID?
@@ -32,7 +34,7 @@ struct KanbanBoardView: View {
         .onAppear { viewModel.didAppear() }
         .onDisappear { viewModel.didDisappear() }
         .sheet(item: $viewModel.editor) { editor in
-            TaskEditorSheet(viewModel: editor)
+            TaskEditorSheet(viewModel: editor, documentIndex: documentIndex)
         }
         .sheet(item: $viewModel.projectsSheet) { projects in
             ProjectsSheet(viewModel: projects)
@@ -317,7 +319,8 @@ struct KanbanBoardView: View {
                     .foregroundStyle(Brand.cyan)
                     .help(url.absoluteString)
                 }
-                if task.repeatsDaily || !task.history.isEmpty {
+                let hasDocument = documentIndex.contains(task.id)
+                if task.repeatsDaily || !task.history.isEmpty || hasDocument {
                     HStack(spacing: 8) {
                         if task.repeatsDaily {
                             Label("Diária", systemImage: "repeat").foregroundStyle(Brand.cyan)
@@ -326,6 +329,10 @@ struct KanbanBoardView: View {
                             Label("\(task.history.count)", systemImage: "clock.arrow.circlepath")
                                 .foregroundStyle(Brand.textFaint)
                                 .help("\(task.history.count) entrada(s) no histórico")
+                        }
+                        if hasDocument {
+                            Button { openWindow.taskDocument(task.id) } label: { DocumentBadge() }
+                                .buttonStyle(.plain)
                         }
                     }
                 }
@@ -370,6 +377,7 @@ struct KanbanBoardView: View {
     @ViewBuilder
     private func cardMenu(_ task: FocusTask) -> some View {
         Button("Editar…") { viewModel.beginEditing(task) }
+        Button("Abrir documento") { openWindow.taskDocument(task.id) }
         if !task.isSubtask {
             // A criação fica no formulário do pai (campo "Nova subtarefa").
             Button("Adicionar subtarefa…") { viewModel.beginEditing(task) }

@@ -6,6 +6,8 @@ import TomafocoDomain
 /// Traz busca, ordenação, filtros, prioridade e destaque de atraso (itens 4–7).
 struct TasksView: View {
     @ObservedObject var viewModel: TasksViewModel
+    /// Selo "tem documento" (FEAT-007) — observado direto: nested ObservableObject não propaga.
+    @ObservedObject var documentIndex: TaskDocumentIndex
     @Environment(\.openWindow) private var openWindow
     /// Linha sob o cursor durante o arraste de outra tarefa (FEAT-003: soltar = virar subtarefa).
     @State private var targetedTaskID: UUID?
@@ -53,7 +55,7 @@ struct TasksView: View {
             ProjectsSheet(viewModel: projects)
         }
         .sheet(item: $viewModel.editor) { editor in
-            TaskEditorSheet(viewModel: editor)
+            TaskEditorSheet(viewModel: editor, documentIndex: documentIndex)
         }
         // FEAT-003: apagar o pai leva as subtarefas junto — confirmar antes.
         .confirmationDialog(
@@ -460,6 +462,10 @@ struct TasksView: View {
                             .foregroundStyle(Brand.textFaint)
                             .help("\(task.history.count) entrada(s) no histórico")
                     }
+                    if documentIndex.contains(task.id) {
+                        Button { openWindow.taskDocument(task.id) } label: { DocumentBadge() }
+                            .buttonStyle(.plain)
+                    }
                     ForEach(task.tags, id: \.self) { tag in
                         TagChip(tag: tag)
                     }
@@ -524,6 +530,7 @@ struct TasksView: View {
         }
         .contextMenu {
             Button("Editar…") { viewModel.beginEditing(task) }
+            Button("Abrir documento") { openWindow.taskDocument(task.id) }
             if depth == 0 {
                 // A criação fica no formulário do pai (campo "Nova subtarefa").
                 Button("Adicionar subtarefa…") { viewModel.beginEditing(task) }

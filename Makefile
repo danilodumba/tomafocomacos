@@ -1,5 +1,5 @@
 # Atalhos de desenvolvimento do Tomafoco.
-.PHONY: test test-domain test-application test-infra project lint open help release release-dry sparkle-keys
+.PHONY: test test-domain test-application test-infra test-markdown project lint open help release release-dry sparkle-keys
 
 help:
 	@echo "Alvos:"
@@ -12,7 +12,7 @@ help:
 	@echo "  make release-dry    - empacota sem notarizar (teste local)"
 	@echo "  make sparkle-keys   - gera/mostra a chave EdDSA das atualizações (1x só)"
 
-test: test-domain test-application test-infra
+test: test-domain test-application test-infra test-markdown
 
 test-domain:
 	cd Packages/TomafocoDomain && swift test
@@ -22,6 +22,9 @@ test-application:
 
 test-infra:
 	cd Packages/TomafocoInfrastructure && swift test
+
+test-markdown:
+	cd Packages/TomafocoMarkdown && swift test
 
 project:
 	xcodegen generate

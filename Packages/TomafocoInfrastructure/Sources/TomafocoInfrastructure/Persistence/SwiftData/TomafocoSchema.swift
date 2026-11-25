@@ -97,11 +97,37 @@ public enum TomafocoSchemaV1: VersionedSchema {
     }
 }
 
+/// V2 (FEAT-007, ADR-12): acrescenta a tabela de documentos das tarefas. Os modelos da V1 seguem
+/// **os mesmos tipos** (não mudaram) — só a tabela nova entra, por isso o estágio é leve.
+public enum TomafocoSchemaV2: VersionedSchema {
+    public static var versionIdentifier: Schema.Version { Schema.Version(2, 0, 0) }
+
+    public static var models: [any PersistentModel.Type] {
+        TomafocoSchemaV1.models + [TaskDocumentRecord.self]
+    }
+
+    /// Documento em markdown de uma tarefa (`TaskDocument`). Uma linha por tarefa. O texto vai no
+    /// payload como tudo no banco; `updatedAt` fica de coluna para ordenação/diagnóstico.
+    @Model
+    public final class TaskDocumentRecord {
+        @Attribute(.unique) public var taskID: UUID
+        public var updatedAt: Date
+        public var payload: Data
+
+        public init(taskID: UUID, updatedAt: Date, payload: Data) {
+            self.taskID = taskID
+            self.updatedAt = updatedAt
+            self.payload = payload
+        }
+    }
+}
+
 public typealias TaskRecord = TomafocoSchemaV1.TaskRecord
 public typealias ProjectRecord = TomafocoSchemaV1.ProjectRecord
 public typealias SessionHistoryRecord = TomafocoSchemaV1.SessionHistoryRecord
 public typealias SingletonRecord = TomafocoSchemaV1.SingletonRecord
 public typealias TagRecord = TomafocoSchemaV1.TagRecord
+public typealias TaskDocumentRecord = TomafocoSchemaV2.TaskDocumentRecord
 
 /// Chaves do `SingletonRecord`.
 enum SingletonKey {
@@ -110,8 +136,13 @@ enum SingletonKey {
     static let storeMeta = "storeMeta"
 }
 
-/// Plano de migração do esquema. Vazio na V1; cada versão nova entra aqui com seu estágio.
+/// Plano de migração do esquema. Cada versão nova entra aqui com seu estágio; a última da lista
+/// é a que o app abre (`TomafocoDatabase.currentSchema`).
 public enum TomafocoMigrationPlan: SchemaMigrationPlan {
-    public static var schemas: [any VersionedSchema.Type] { [TomafocoSchemaV1.self] }
-    public static var stages: [MigrationStage] { [] }
+    public static var schemas: [any VersionedSchema.Type] { [TomafocoSchemaV1.self, TomafocoSchemaV2.self] }
+    public static var stages: [MigrationStage] { [migrateV1toV2] }
+
+    /// Só acrescenta a tabela de documentos: nenhuma linha existente muda.
+    static let migrateV1toV2 = MigrationStage.lightweight(fromVersion: TomafocoSchemaV1.self,
+                                                          toVersion: TomafocoSchemaV2.self)
 }

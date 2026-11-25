@@ -4,6 +4,7 @@ import SwiftUI
 import TomafocoDomain
 import TomafocoApplication
 import TomafocoInfrastructure
+import TomafocoMarkdown
 
 /// Composition Root: ÚNICO lugar onde as implementações concretas são instanciadas e injetadas.
 /// Trocar um adapter (ex.: AppleScript → XPC helper na v2) muda apenas este arquivo (OCP/DIP).
@@ -34,6 +35,11 @@ final class AppContainer: ObservableObject {
     let reportsViewModel: ReportsViewModel
     /// Relatórios › Projetos (FEAT-006 / RF-10.7).
     let projectReportsViewModel: ProjectReportsViewModel
+    /// Documento em markdown das tarefas (FEAT-007): selo da lista/Kanban + janelas de documento.
+    let documentIndex: TaskDocumentIndex
+    private let manageDocuments: ManageTaskDocumentsUseCase
+    private let manageTasks: ManageTasksUseCase
+    private let relay: TaskChangeRelay
     /// Atualização automática (ADR-9). Criado aqui — e não sob demanda numa View — porque o
     /// Sparkle precisa subir junto com o app para agendar a checagem periódica.
     let updater = UpdaterController()
@@ -53,6 +59,7 @@ final class AppContainer: ObservableObject {
         manageTasks: ManageTasksUseCase,
         manageKanban: ManageKanbanUseCase,
         manageProjects: ManageProjectsUseCase,
+        manageDocuments: ManageTaskDocumentsUseCase,
         settings: SettingsRepository,
         sessions: SessionRepository,
         tasks: TaskRepository,
@@ -67,6 +74,10 @@ final class AppContainer: ObservableObject {
         self.recover = recover
         self.manageBlockList = manageBlockList
         self.notificationAdapter = notificationAdapter
+        self.manageDocuments = manageDocuments
+        self.manageTasks = manageTasks
+        let documentIndex = TaskDocumentIndex(useCase: manageDocuments)
+        self.documentIndex = documentIndex
         let timer = TimerViewModel(coordinator: coordinator, settings: settings, manageTasks: manageTasks)
         self.timerViewModel = timer
         let refreshBlocking = { Task { await persistentBlocking.refresh() } }
@@ -83,7 +94,8 @@ final class AppContainer: ObservableObject {
         // Mudança de tarefa numa janela reflete na outra (lista ↔ Kanban, que podem estar lado
         // a lado) e no seletor do timer. Cada VM se relê sozinho; o relay só avisa os demais com
         // `refresh()` — que não avisa de volta, senão as janelas ficariam se avisando em laço.
-        let relay = TaskChangeRelay(timer: self.timerViewModel)
+        let relay = TaskChangeRelay(timer: self.timerViewModel, documentIndex: documentIndex)
+        self.relay = relay
         self.tasksViewModel = TasksViewModel(useCase: manageTasks, manageProjects: manageProjects) {
             relay.tasksChanged(from: .list)
         }
@@ -152,7 +164,9 @@ final class AppContainer: ObservableObject {
         let kanbanStore = SwiftDataKanbanStore(database: database)
         let tagCatalog = SwiftDataTagCatalog(database: database)
         let projectStore = SwiftDataProjectStore(database: database)
+        let documentStore = SwiftDataTaskDocumentStore(database: database)
         Self.importLegacyJSON(database: database, tasks: taskStore, sessions: sessions, tags: tagCatalog)
+        Self.deleteOrphanDocuments(documents: documentStore)
 
         let coordinator = SessionCoordinator(
             clock: clock, appBlocker: appBlocker, websiteBlocker: persistentWebsiteBlocker,
@@ -170,7 +184,12 @@ final class AppContainer: ObservableObject {
             tasks: taskStore, importer: EventKitReminderImporter(), now: { clock.now },
             shouldSyncReminderCompletion: { settings.loadConfiguration().syncReminderCompletion },
             tagCatalog: tagCatalog, calendar: .autoupdatingCurrent,
-            kanbanBoards: kanbanStore, settings: settings, projects: projectStore)
+            kanbanBoards: kanbanStore, settings: settings, projects: projectStore,
+            // FEAT-007: documento sai junto com a tarefa e acompanha o clone da diária, com o
+            // checklist desmarcado — na mesma transação do banco.
+            documents: documentStore, unitOfWork: database, checklistResetter: MarkdownChecklistResetter())
+        let manageDocuments = ManageTaskDocumentsUseCase(
+            documents: documentStore, tasks: taskStore, now: { clock.now })
         // Quadro Kanban (FEAT-005): raias + config numa linha do banco.
         let manageKanban = ManageKanbanUseCase(boards: kanbanStore, tasks: manageTasks, now: { clock.now })
         // Projetos (FEAT-006): apagar projeto + tirar das tarefas numa transação do banco.
@@ -183,7 +202,7 @@ final class AppContainer: ObservableObject {
         let container = AppContainer(
             coordinator: coordinator, recover: recover, manageBlockList: manageBlockList,
             manageTasks: manageTasks, manageKanban: manageKanban, manageProjects: manageProjects,
-            settings: settings, sessions: sessions, tasks: taskStore,
+            manageDocuments: manageDocuments, settings: settings, sessions: sessions, tasks: taskStore,
             appPicker: appPicker, persistentBlocking: persistentBlocking,
             authorizer: authorizer, passwordStore: passwordStore,
             notificationAdapter: notificationAdapter
@@ -242,6 +261,27 @@ final class AppContainer: ObservableObject {
             logger.error("Migração JSON → banco falhou: \(String(describing: error), privacy: .public)")
             DatabaseAlert.presentMigrationFailed(error: error)
         }
+    }
+
+    /// Rede de segurança do FEAT-007: documento de tarefa que não existe mais é apagado. Falha
+    /// aqui só deixa o órfão para o próximo lançamento.
+    private static func deleteOrphanDocuments(documents: SwiftDataTaskDocumentStore) {
+        do {
+            try documents.deleteOrphans()
+        } catch {
+            logger.error("Limpeza de documentos órfãos falhou: \(String(describing: error), privacy: .public)")
+        }
+    }
+
+    /// VM de uma janela de documento (FEAT-007) — registrado no relay para acompanhar renomear/
+    /// apagar a tarefa em outra janela.
+    func makeDocumentViewModel(taskID: UUID) -> TaskDocumentViewModel {
+        let index = documentIndex
+        let viewModel = TaskDocumentViewModel(
+            taskID: taskID, documents: manageDocuments, tasks: manageTasks,
+            onPresenceChanged: { index.reload() })
+        relay.register(documentWindow: viewModel)
+        return viewModel
     }
 
     private static let logger = Logger(subsystem: "com.dsdumba.tomafoco", category: "AppContainer")

@@ -162,28 +162,58 @@ public final class InMemoryProjectRepository: ProjectRepository {
     }
 }
 
+/// Documentos das tarefas em memória (FEAT-007).
+@MainActor
+public final class InMemoryTaskDocumentRepository: TaskDocumentRepository {
+    public var documents: [UUID: TaskDocument]
+    public var saveError: Error?
+
+    public init(documents: [TaskDocument] = []) {
+        self.documents = Dictionary(uniqueKeysWithValues: documents.map { ($0.taskID, $0) })
+    }
+
+    public func document(taskID: UUID) throws -> TaskDocument? { documents[taskID] }
+
+    public func save(_ document: TaskDocument) throws {
+        if let saveError { throw saveError }
+        documents[document.taskID] = document
+    }
+
+    public func delete(taskIDs: Set<UUID>) throws {
+        if let saveError { throw saveError }
+        taskIDs.forEach { documents[$0] = nil }
+    }
+
+    public func taskIDsWithDocument() throws -> Set<UUID> { Set(documents.keys) }
+}
+
 /// Transação em memória (FEAT-006): fotografa os repositórios antes do bloco e os restaura se
 /// ele lançar — testa o rollback de verdade.
 @MainActor
 public final class InMemoryUnitOfWork: UnitOfWork {
     private let tasks: InMemoryTaskRepository?
     private let projects: InMemoryProjectRepository?
+    private let documents: InMemoryTaskDocumentRepository?
     public private(set) var performCount = 0
 
-    public init(tasks: InMemoryTaskRepository? = nil, projects: InMemoryProjectRepository? = nil) {
+    public init(tasks: InMemoryTaskRepository? = nil, projects: InMemoryProjectRepository? = nil,
+                documents: InMemoryTaskDocumentRepository? = nil) {
         self.tasks = tasks
         self.projects = projects
+        self.documents = documents
     }
 
     public func perform<T>(_ work: () throws -> T) throws -> T {
         performCount += 1
         let taskSnapshot = tasks?.tasks
         let projectSnapshot = projects?.projects
+        let documentSnapshot = documents?.documents
         do {
             return try work()
         } catch {
             if let taskSnapshot { tasks?.tasks = taskSnapshot }
             if let projectSnapshot { projects?.projects = projectSnapshot }
+            if let documentSnapshot { documents?.documents = documentSnapshot }
             throw error
         }
     }

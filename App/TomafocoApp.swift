@@ -38,6 +38,7 @@ struct TomafocoApp: App {
         reportsWindow
         projectReportsWindow
         kanbanWindow
+        documentWindow
 
         Settings {
             SettingsView(
@@ -55,7 +56,7 @@ struct TomafocoApp: App {
     // target 14 — quem impede a abertura automática é a ordem das cenas acima.
     private var tasksWindow: some Scene {
         Window("Tarefas", id: "tasks") {
-            TasksView(viewModel: container.tasksViewModel)
+            TasksView(viewModel: container.tasksViewModel, documentIndex: container.documentIndex)
                 .frame(minWidth: 520, minHeight: 540)
         }
     }
@@ -63,7 +64,7 @@ struct TomafocoApp: App {
     /// Kanban em janela própria (FEAT-005) para usar tela cheia e Split View.
     private var kanbanWindow: some Scene {
         Window("Kanban", id: "kanban") {
-            KanbanBoardView(viewModel: container.kanbanViewModel)
+            KanbanBoardView(viewModel: container.kanbanViewModel, documentIndex: container.documentIndex)
                 .frame(minWidth: 840, minHeight: 540)
                 .allowsFullScreen()
         }
@@ -79,6 +80,25 @@ struct TomafocoApp: App {
 }
 
 extension TomafocoApp {
+    /// Documento em markdown de uma tarefa (FEAT-007) — uma janela por tarefa: o
+    /// `WindowGroup(for:)` reaproveita a janela já aberta do mesmo `UUID`. Nunca abre sozinho no
+    /// lançamento (o `MenuBarExtra` é a primeira cena).
+    fileprivate var documentWindow: some Scene {
+        WindowGroup("Documento", id: TaskDocumentWindow.sceneID, for: UUID.self) { $taskID in
+            if let taskID {
+                TaskDocumentWindow(viewModel: container.makeDocumentViewModel(taskID: taskID))
+                    .id(taskID)
+                    .frame(minWidth: 560, minHeight: 420)
+                    .allowsFullScreen()
+            } else {
+                Text("Nenhuma tarefa selecionada.")
+                    .foregroundStyle(Brand.textFaint)
+                    .frame(minWidth: 400, minHeight: 300)
+            }
+        }
+        .defaultSize(width: 980, height: 720)
+    }
+
     /// Relatórios › Projetos (FEAT-006 / RF-10.7).
     fileprivate var projectReportsWindow: some Scene {
         Window("Relatórios — Projetos", id: "project-reports") {

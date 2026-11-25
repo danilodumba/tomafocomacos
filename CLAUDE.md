@@ -464,6 +464,39 @@ colunas abertas e a lista seguem pelo vencimento) + cartão concluído mostra a 
   commit. Verificado ao vivo: `/`, DMG, appcast, `app.js` **200**; SHA-256 do DMG servido = local; notas **301**.
 - Em aberto (pergunta ao usuário): "Próximos 7 dias" na Done mostrar concluídas dos **últimos** 7 dias.
 
+**📝 FEAT-007 — Documento em markdown nas tarefas (2026-11-25, branch `feat/feat-007-documento`, NÃO commitado):**
+Plano, decisões (P1–P7 aprovadas), desvios e review em `../DOCS - Tomafoco/APP/Features/FEAT-007 Documento em markdown nas tarefas.md`.
+- **Pacote novo `TomafocoMarkdown`** (swift-markdown 0.9.0; sem SwiftUI/AppKit; entra no `make test`):
+  `MarkdownRenderer` → `[MarkdownBlock]` (modelo de render puro, inline = `AttributedString` só com
+  `inlinePresentationIntent`/`link`), `MarkdownChecklist` (toggle/desmarcar pelo AST — coluna do cmark é
+  **byte UTF-8, 1-based**), `MarkdownFormatting` (barra do editor, `NSRange` UTF-16). Só `http`/`https`/
+  `mailto` viram link; imagem não é baixada; HTML vira texto. Checklist em citação não é reconhecido (cmark-gfm).
+- Domain: `TaskDocument` (limite 1 MB em bytes, branco = sem documento), port `TaskDocumentRepository`,
+  port `ChecklistResetting` (Domain/Application não dependem do parser), `DomainError.documentTooLarge`.
+- Application: `ManageTaskDocumentsUseCase.save` → `TaskDocumentSaveResult` (`changesPresence` avisa o selo).
+  `ManageTasksUseCase` ganhou `documents`/`unitOfWork`/`checklistResetter` (padrões efêmero/imediato/identidade):
+  `deleteTask` apaga documentos da tarefa + filhas na mesma transação; `applyCompletionCascade` devolve
+  `CompletionCascade` e `saveCompletion` copia o documento para o clone da diária desmarcado (lista e Kanban).
+- Infra: **`TomafocoSchemaV2`** (= modelos da V1 + `TaskDocumentRecord`) + estágio leve V1→V2 — primeira
+  migração real. `SwiftDataTaskDocumentStore` (lê um por vez; ids em cache; `deleteOrphans()` no lançamento
+  usa as **linhas** `TaskRecord`, não a lista decodificada).
+- **Regra de migração (atualizada):** a V2 reaproveita as classes da V1. Quando uma V3 mudar um modelo
+  da V1 (ex.: `TaskRecord`), é preciso **congelar cópias** das classes antigas na V1 e na V2 — senão o hash
+  da V1/V2 muda, o store antigo não é reconhecido e cai no `.bak`.
+- App: `WindowGroup(for: UUID)` "Documento" (`TaskDocumentWindow`, uma janela por tarefa), `TaskDocumentViewModel`
+  (autosave 0,8 s, flush ao fechar/sair/qualquer janela perder o foco; parse da visualização fora da main;
+  `isReadOnly` = tarefa apagada ou documento que não abriu), `MarkdownTextView` (`NSTextView` — `TextEditor` do
+  macOS 14 não expõe seleção), `MarkdownView` (equatable por versão do parse), `TaskDocumentIndex` (selo "Doc",
+  observado direto por lista, Kanban e formulário; relay recarrega). Entradas: linha "Documento" no formulário,
+  menu de contexto da linha/cartão, clique no selo.
+- **Conferir layout sem gravação de tela:** harness SPM no scratchpad com cópia de `App/UI/Documents/*` +
+  `Brand.swift`, renderiza `TaskDocumentWindow` em `NSHostingView` offscreen e `cacheDisplay(in:to:)` → PNG
+  (desenha até `Toggle`/`NSTextView`, ao contrário do `ImageRenderer`).
+- `make test` **600 verdes** (Domain 161, Application 303, Infra 98, Markdown 38); `xcodebuild` limpo;
+  `make release-dry` ok (universal). Migração validada em **cópia** do banco real (154/440/10, 140 ms).
+- ⚠️ **Antes de rodar o app:** copiar `~/Library/Application Support/Tomafoco/` (1º lançamento migra para V2).
+  ⚠️ Validar à mão (lista no FEAT-007).
+
 ## Como retomar
 
 ```bash

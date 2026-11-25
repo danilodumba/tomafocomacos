@@ -14,6 +14,9 @@ packages:
     path: Packages/TomafocoApplication
   TomafocoInfrastructure:
     path: Packages/TomafocoInfrastructure
+  # Documento em markdown das tarefas (FEAT-007, ADR-12): parse via swift-markdown.
+  TomafocoMarkdown:
+    path: Packages/TomafocoMarkdown
   # Atualização automática fora da Mac App Store (ADR-9). Só o target do app depende
   # do Sparkle — os pacotes de domínio/aplicação seguem puros.
   Sparkle:
@@ -30,6 +33,7 @@ targets:
       - package: TomafocoDomain
       - package: TomafocoApplication
       - package: TomafocoInfrastructure
+      - package: TomafocoMarkdown
       - package: Sparkle
     settings:
       base:

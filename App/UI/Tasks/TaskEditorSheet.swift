@@ -15,6 +15,9 @@ enum TaskEditorField: Hashable {
 /// subtarefas gravam na hora.
 struct TaskEditorSheet: View {
     @ObservedObject var viewModel: TaskEditorViewModel
+    /// Linha "Documento" (FEAT-007) — observado direto para o estado mudar com a janela aberta.
+    @ObservedObject var documentIndex: TaskDocumentIndex
+    @Environment(\.openWindow) private var openWindow
 
     var body: some View {
         FocusHost { focused in content(focused: focused) }
@@ -64,12 +67,37 @@ struct TaskEditorSheet: View {
         .padding(.vertical, 12)
     }
 
+    // MARK: - Documento (FEAT-007)
+
+    /// Fora do `Form` pelo mesmo motivo do histórico (linha com `Button` em `.grouped` vira alvo
+    /// de clique inteira). O documento abre em janela própria e salva sozinho — não entra no
+    /// rascunho, então "Cancelar" aqui não o desfaz.
+    private var documentRow: some View {
+        let hasDocument = documentIndex.contains(viewModel.task.id)
+        return HStack(spacing: 8) {
+            Label("Documento", systemImage: "doc.text")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(Brand.textPrimary)
+            Text(hasDocument ? "com conteúdo" : "vazio")
+                .font(.system(size: 11))
+                .foregroundStyle(hasDocument ? Brand.cyan : Brand.textFaint)
+            Spacer()
+            Button(hasDocument ? "Abrir documento" : "Escrever documento") {
+                openWindow.taskDocument(viewModel.task.id)
+            }
+            .help("Abre o documento em markdown desta tarefa numa janela própria (salva sozinho)")
+        }
+    }
+
     // MARK: - Body (rola)
 
     private func scrollBody(focused: FocusState<TaskEditorField?>.Binding) -> some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
                 draftForm
+
+                documentRow
+                    .padding(.horizontal, 4)
 
                 // Fora do `Form` de propósito: em `.grouped`, linha com `Button` vira alvo de clique
                 // inteira — o clique no campo "Nova entrada" ia para o botão e o campo nunca focava.

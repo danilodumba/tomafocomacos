@@ -46,6 +46,19 @@ public protocol ProjectRepository: AnyObject {
     func delete(id: UUID) throws
 }
 
+/// Documentos em markdown das tarefas (FEAT-007). Lidos **sob demanda** — nunca a tabela
+/// inteira com texto: a lista/Kanban só precisam saber quem tem documento.
+@MainActor
+public protocol TaskDocumentRepository: AnyObject {
+    func document(taskID: UUID) throws -> TaskDocument?
+    /// Insere ou substitui o documento da tarefa.
+    func save(_ document: TaskDocument) throws
+    /// Apaga os documentos destas tarefas (ids sem documento são ignorados).
+    func delete(taskIDs: Set<UUID>) throws
+    /// Tarefas que têm documento — para o selo na lista/Kanban, sem ler os textos.
+    func taskIDsWithDocument() throws -> Set<UUID>
+}
+
 /// Transação que abrange vários repositórios (FEAT-006): o que é gravado dentro de `perform`
 /// só vai para o disco no fim, e um erro desfaz tudo. Ex.: apagar projeto + tirar o projeto das
 /// tarefas — metade feita deixaria tarefas apontando para projeto inexistente.
