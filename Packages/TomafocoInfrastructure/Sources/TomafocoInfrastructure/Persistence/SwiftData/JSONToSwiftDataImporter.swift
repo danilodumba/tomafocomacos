@@ -93,7 +93,8 @@ public final class JSONToSwiftDataImporter {
             report.tasks = taskList.count
 
             if let board = readBoard(&report) {
-                try database.setSingleton(SingletonKey.kanbanBoard, payload: PayloadCoding.encoder.encode(board))
+                // Formato atual (FEAT-008): lista de quadros.
+                try database.setSingleton(SingletonKey.kanbanBoards, payload: PayloadCoding.encoder.encode([board]))
                 report.importedBoard = true
             }
 

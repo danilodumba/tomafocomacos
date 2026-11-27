@@ -35,8 +35,13 @@ public final class KeychainAppUnlockPasswordStore: AppUnlockPasswordStoring, @un
     private let iterations: Int
 
     public convenience init() {
-        self.init(storage: KeychainSecretStorage(
-            service: "com.dsdumba.tomafoco.unlock", account: "app-unlock-password"))
+        self.init(service: "com.dsdumba.tomafoco.unlock")
+    }
+
+    /// `service` próprio por build: o "Tomafoco Dev" usa outro item do chaveiro para trocar a
+    /// senha em desenvolvimento não mexer na do app de produção.
+    public convenience init(service: String) {
+        self.init(storage: KeychainSecretStorage(service: service, account: "app-unlock-password"))
     }
 
     init(storage: SecretStorage, iterations: Int = defaultIterations) {

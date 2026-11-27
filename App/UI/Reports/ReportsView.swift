@@ -307,7 +307,7 @@ struct ReportsView: View {
         HStack(spacing: 8) {
             Image(systemName: "checkmark.circle.fill").foregroundStyle(Brand.cyan)
             VStack(alignment: .leading, spacing: 2) {
-                Text(task.title)
+                Text(task.displayTitle)
                     .foregroundStyle(Brand.textPrimary)
                     .lineLimit(1)
                 HStack(spacing: 6) {

@@ -117,21 +117,24 @@ public final class InMemorySettingsRepository: SettingsRepository {
     public func save(_ blockList: BlockList) { self.blockList = blockList }
 }
 
-/// Quadro Kanban em memória (FEAT-005). `nil` = nunca salvo.
+/// Quadros Kanban em memória (FEAT-005/FEAT-008). Vazio = nunca salvo.
 @MainActor
 public final class InMemoryKanbanBoardRepository: KanbanBoardRepository {
-    public var board: KanbanBoard?
+    public var boards: [KanbanBoard]
     public var saveError: Error?
     public private(set) var saveCount = 0
 
-    public init(board: KanbanBoard? = nil) { self.board = board }
+    public init(boards: [KanbanBoard] = []) { self.boards = boards }
 
-    public func loadBoard() throws -> KanbanBoard? { board }
+    /// Atalho para os testes de um quadro só: o primeiro da lista.
+    public var board: KanbanBoard? { boards.first }
 
-    public func saveBoard(_ board: KanbanBoard) throws {
+    public func loadBoards() throws -> [KanbanBoard] { boards }
+
+    public func saveBoards(_ boards: [KanbanBoard]) throws {
         if let saveError { throw saveError }
         saveCount += 1
-        self.board = board
+        self.boards = boards
     }
 }
 
@@ -187,6 +190,39 @@ public final class InMemoryTaskDocumentRepository: TaskDocumentRepository {
     public func taskIDsWithDocument() throws -> Set<UUID> { Set(documents.keys) }
 }
 
+/// Documentos dos projetos em memória (FEAT-009).
+@MainActor
+public final class InMemoryProjectDocumentRepository: ProjectDocumentRepository {
+    public var documents: [UUID: ProjectDocument] = [:]
+    public var saveError: Error?
+    public var deleteError: Error?
+    public private(set) var saveCount = 0
+
+    public init() {}
+
+    public func summaries(projectID: UUID) throws -> [ProjectDocumentSummary] {
+        documents.values.filter { $0.projectID == projectID }.map(\.summary)
+    }
+
+    public func document(id: UUID) throws -> ProjectDocument? { documents[id] }
+
+    public func save(_ document: ProjectDocument) throws {
+        if let saveError { throw saveError }
+        saveCount += 1
+        documents[document.id] = document
+    }
+
+    public func delete(id: UUID) throws {
+        if let deleteError { throw deleteError }
+        documents[id] = nil
+    }
+
+    public func delete(projectID: UUID) throws {
+        if let deleteError { throw deleteError }
+        documents = documents.filter { $0.value.projectID != projectID }
+    }
+}
+
 /// Transação em memória (FEAT-006): fotografa os repositórios antes do bloco e os restaura se
 /// ele lançar — testa o rollback de verdade.
 @MainActor
@@ -194,13 +230,16 @@ public final class InMemoryUnitOfWork: UnitOfWork {
     private let tasks: InMemoryTaskRepository?
     private let projects: InMemoryProjectRepository?
     private let documents: InMemoryTaskDocumentRepository?
+    private let projectDocuments: InMemoryProjectDocumentRepository?
     public private(set) var performCount = 0
 
     public init(tasks: InMemoryTaskRepository? = nil, projects: InMemoryProjectRepository? = nil,
-                documents: InMemoryTaskDocumentRepository? = nil) {
+                documents: InMemoryTaskDocumentRepository? = nil,
+                projectDocuments: InMemoryProjectDocumentRepository? = nil) {
         self.tasks = tasks
         self.projects = projects
         self.documents = documents
+        self.projectDocuments = projectDocuments
     }
 
     public func perform<T>(_ work: () throws -> T) throws -> T {
@@ -208,12 +247,14 @@ public final class InMemoryUnitOfWork: UnitOfWork {
         let taskSnapshot = tasks?.tasks
         let projectSnapshot = projects?.projects
         let documentSnapshot = documents?.documents
+        let projectDocumentSnapshot = projectDocuments?.documents
         do {
             return try work()
         } catch {
             if let taskSnapshot { tasks?.tasks = taskSnapshot }
             if let projectSnapshot { projects?.projects = projectSnapshot }
             if let documentSnapshot { documents?.documents = documentSnapshot }
+            if let projectDocumentSnapshot { projectDocuments?.documents = projectDocumentSnapshot }
             throw error
         }
     }

@@ -47,11 +47,25 @@ targets:
         DEVELOPMENT_TEAM: CJQ7T4KV7H
         CODE_SIGN_ENTITLEMENTS: App/Resources/Tomafoco.entitlements
         DEVELOPMENT_LANGUAGE: pt-BR
+      # Build de desenvolvimento separado da produção (2026-11-27): bundle ID próprio dá
+      # UserDefaults, chaveiro, permissões (TCC) e item de login separados, e a pasta de dados
+      # `Tomafoco-Dev` mantém o banco real intocado. `make dev-data` copia a produção para lá.
+      # O `release.sh` compila em Release — o DMG continua sendo o Tomafoco de sempre.
+      configs:
+        Debug:
+          PRODUCT_BUNDLE_IDENTIFIER: com.dsdumba.tomafoco.dev
+          TOMAFOCO_DISPLAY_NAME: Tomafoco Dev
+          TOMAFOCO_DATA_FOLDER: Tomafoco-Dev
+        Release:
+          TOMAFOCO_DISPLAY_NAME: Tomafoco
+          TOMAFOCO_DATA_FOLDER: Tomafoco
     # Info.plist gerado pelo XcodeGen (fonte única aqui; evita conflito com INFOPLIST_KEY_*).
     info:
       path: App/Resources/Info.generated.plist
       properties:
-        CFBundleDisplayName: Tomafoco
+        CFBundleDisplayName: "$(TOMAFOCO_DISPLAY_NAME)"
+        # Pasta em Application Support (lida pelo `AppEnvironment`).
+        TomafocoDataFolder: "$(TOMAFOCO_DATA_FOLDER)"
         # Versão: fonte única = MARKETING_VERSION/CURRENT_PROJECT_VERSION (settings acima).
         # Sem isso o XcodeGen grava o default 1.0/1 e o bump de versão não pega.
         CFBundleShortVersionString: "$(MARKETING_VERSION)"

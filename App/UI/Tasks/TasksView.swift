@@ -205,10 +205,10 @@ struct TasksView: View {
                 Label("Tags…", systemImage: "tag.circle")
             }
 
-            // FEAT-005: o quadro mora em janela própria (tela cheia / Split View).
+            // FEAT-005: o quadro mora em janela própria (tela cheia / Split View). Abre o
+            // último quadro usado (FEAT-008).
             Button {
-                openWindow(id: "kanban")
-                NSApp.activate(ignoringOtherApps: true)
+                openWindow.kanbanBoard()
             } label: {
                 Label("Kanban", systemImage: "rectangle.split.3x1")
             }
@@ -422,7 +422,8 @@ struct TasksView: View {
                             .font(.system(size: 10))
                             .foregroundStyle(Brand.danger)
                     }
-                    Text(task.title)
+                    // "PSC0001 - Título" (RF-09.22).
+                    Text(task.displayTitle)
                         .fontWeight(urgent ? .semibold : .regular)
                         .strikethrough(task.isCompleted)
                         .foregroundStyle(task.isCompleted ? Brand.textFaint
@@ -437,11 +438,9 @@ struct TasksView: View {
                             .font(.system(size: 10))
                             .foregroundStyle(Brand.textFaint)
                     }
-                    if task.repeatsDaily {
-                        Label("Diária", systemImage: "repeat")
+                    if let recurrence = task.recurrence {
+                        RecurrenceBadge(recurrence: recurrence)
                             .font(.system(size: 10))
-                            .foregroundStyle(Brand.cyan)
-                            .help("Repete todo dia: ao concluir, uma cópia é criada com vencimento amanhã")
                     }
                     if let due = task.dueDate {
                         Label(due.formatted(date: .abbreviated, time: .shortened), systemImage: "calendar")
@@ -531,6 +530,7 @@ struct TasksView: View {
         .contextMenu {
             Button("Editar…") { viewModel.beginEditing(task) }
             Button("Abrir documento") { openWindow.taskDocument(task.id) }
+            Button("Duplicar") { viewModel.duplicate(task) }
             if depth == 0 {
                 // A criação fica no formulário do pai (campo "Nova subtarefa").
                 Button("Adicionar subtarefa…") { viewModel.beginEditing(task) }
@@ -539,9 +539,9 @@ struct TasksView: View {
             Toggle("Urgente", isOn: Binding(
                 get: { task.isUrgent },
                 set: { viewModel.setUrgent(task, $0) }))
-            Toggle("Repetir diariamente", isOn: Binding(
-                get: { task.repeatsDaily },
-                set: { viewModel.setRepeatsDaily(task, $0) }))
+            RecurrenceMenu(task: task,
+                           set: { viewModel.setRecurrence(task, $0) },
+                           customize: { viewModel.beginEditing(task) })
             if let url = task.linkURL {
                 Link("Abrir link", destination: url)
             }

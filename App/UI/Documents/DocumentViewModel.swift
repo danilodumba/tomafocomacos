@@ -6,15 +6,16 @@ import TomafocoDomain
 import TomafocoApplication
 import TomafocoMarkdown
 
-/// Janela do documento de UMA tarefa (FEAT-007). Uma instância por janela — o `WindowGroup(for:)`
-/// garante uma janela por tarefa.
+/// Janela de UM documento em markdown — da tarefa (FEAT-007) ou do projeto (FEAT-009); o dono
+/// vem por `DocumentSource`. Uma instância por janela — o `WindowGroup(for:)` garante uma janela
+/// por tarefa / por documento de projeto.
 ///
 /// **Salva sozinho**: cada mudança agenda a gravação (`saveDelay`); fechar a janela ou sair do
 /// app grava o que estiver pendente (`flush`). Não há rascunho/Cancelar — é documento, não
 /// formulário. O parse para a visualização também é adiado (`parseDelay`) e só roda nos modos
 /// que mostram a visualização.
 @MainActor
-final class TaskDocumentViewModel: ObservableObject {
+final class DocumentViewModel: ObservableObject {
 
     enum Mode: String, CaseIterable, Identifiable {
         case edit, split, preview
@@ -37,16 +38,16 @@ final class TaskDocumentViewModel: ObservableObject {
         case failed(String)
     }
 
-    let taskID: UUID
-    @Published private(set) var taskTitle = ""
-    @Published private(set) var parentTitle: String?
-    /// A tarefa foi apagada com a janela aberta: o editor vira só leitura e nada é gravado.
-    @Published private(set) var isTaskMissing = false
+    let source: DocumentSource
+    @Published private(set) var header = DocumentHeader(title: "")
+    /// O dono (tarefa, projeto ou o documento) foi apagado com a janela aberta: o editor vira só
+    /// leitura e nada é gravado.
+    @Published private(set) var isOwnerMissing = false
     /// O documento salvo não pôde ser lido ao abrir. Editor só leitura: tratar como "vazio"
     /// deixaria o usuário digitar por cima e o autosave substituiria o documento real.
     @Published private(set) var loadError: String?
-    /// Nada é gravado: tarefa apagada ou documento que não abriu.
-    var isReadOnly: Bool { isTaskMissing || loadError != nil }
+    /// Nada é gravado: dono apagado ou documento que não abriu.
+    var isReadOnly: Bool { isOwnerMissing || loadError != nil }
     @Published var text: String {
         didSet {
             guard text != oldValue else { return }
@@ -73,36 +74,34 @@ final class TaskDocumentViewModel: ObservableObject {
     /// Ponte para o `NSTextView` (barra de formatação e checklist com desfazer).
     let editor = MarkdownEditorController()
 
-    private let documents: ManageTaskDocumentsUseCase
-    private let tasks: ManageTasksUseCase
     private let defaults: UserDefaults
-    /// O documento passou a existir ou deixou de existir — o selo das outras janelas muda.
+    /// Outras telas precisam reler: selo "Doc" da tarefa, lista de documentos do projeto.
     private let onPresenceChanged: () -> Void
     private var lastSavedText: String
+    private var lastSavedAt: Date?
     private var saveTask: Task<Void, Never>?
     private var parseTask: Task<Void, Never>?
     private var terminationObserver: AnyCancellable?
     private var resignKeyObserver: AnyCancellable?
 
+    /// Mesma chave para tarefa e projeto (era só da tarefa): o modo é preferência de leitura.
     private static let modeKey = "taskDocumentMode"
     private static let saveDelay: UInt64 = 800_000_000
     private static let parseDelay: UInt64 = 150_000_000
 
-    init(taskID: UUID, documents: ManageTaskDocumentsUseCase, tasks: ManageTasksUseCase,
-         defaults: UserDefaults = .standard, onPresenceChanged: @escaping () -> Void) {
-        self.taskID = taskID
-        self.documents = documents
-        self.tasks = tasks
+    init(source: DocumentSource, defaults: UserDefaults = .standard, onPresenceChanged: @escaping () -> Void) {
+        self.source = source
         self.defaults = defaults
         self.onPresenceChanged = onPresenceChanged
-        var saved: TaskDocument?
+        var saved: (markdown: String, updatedAt: Date)?
         do {
-            saved = try documents.document(taskID: taskID)
+            saved = try source.load()
         } catch {
             loadError = "Não foi possível abrir o documento (\(error.localizedDescription)). Feche e abra de novo."
         }
         text = saved?.markdown ?? ""
         lastSavedText = saved?.markdown ?? ""
+        lastSavedAt = saved?.updatedAt
         mode = defaults.string(forKey: Self.modeKey).flatMap(Mode.init(rawValue:)) ?? .split
         if let saved { status = .saved(saved.updatedAt) }
         refresh()
@@ -122,27 +121,47 @@ final class TaskDocumentViewModel: ObservableObject {
             .sink { [weak self] _ in MainActor.assumeIsolated { self?.flush() } }
     }
 
-    // MARK: - Tarefa
+    // MARK: - Dono
 
-    /// Relê título/pai/existência da tarefa — chamado pelo `TaskChangeRelay` quando as tarefas
-    /// mudam em outra janela (renomeada, apagada).
+    /// Relê título/contexto/existência do dono — chamado pelo `TaskChangeRelay` quando algo muda
+    /// em outra janela (tarefa renomeada/apagada, projeto ou documento apagado).
     func refresh() {
-        // Erro de leitura NÃO é "tarefa apagada": mantém o estado e tenta no próximo aviso.
-        guard let all = try? tasks.allTasks() else { return }
-        guard let task = all.first(where: { $0.id == taskID }) else {
-            isTaskMissing = true
+        // Erro de leitura NÃO é "dono apagado": mantém o estado e tenta no próximo aviso. (Sem
+        // `try?`: ele achataria "erro" e "apagado" no mesmo `nil`.)
+        let fetched: DocumentHeader?
+        do {
+            fetched = try source.header()
+        } catch {
+            return
+        }
+        guard let current = fetched else {
+            isOwnerMissing = true
             saveTask?.cancel()
             return
         }
-        let reappeared = isTaskMissing
-        isTaskMissing = false
+        let reappeared = isOwnerMissing
+        isOwnerMissing = false
         if reappeared, text != lastSavedText { scheduleSave() }
-        taskTitle = task.title
-        parentTitle = TaskTree.parent(of: task, in: all)?.title
+        header = current
     }
 
     var windowTitle: String {
-        taskTitle.isEmpty ? "Documento" : "Documento — \(taskTitle)"
+        header.title.isEmpty ? "Documento" : "Documento — \(header.title)"
+    }
+
+    /// Renomeia o documento (só documento de projeto). Título em branco vira "Sem título".
+    func rename(to title: String) {
+        guard source.canRename, !isReadOnly, title != header.title else { return }
+        do {
+            if let renamed = try source.rename(title) {
+                header = renamed
+                onPresenceChanged()
+            } else {
+                isOwnerMissing = true
+            }
+        } catch {
+            status = .failed("Não foi possível renomear: \(error.localizedDescription)")
+        }
     }
 
     // MARK: - Gravação
@@ -172,19 +191,20 @@ final class TaskDocumentViewModel: ObservableObject {
         }
         let snapshot = text
         do {
-            let result = try documents.save(taskID: taskID, markdown: snapshot)
-            switch result {
-            case .saved(let document, _):
+            let outcome = try source.save(snapshot)
+            switch outcome.kind {
+            case .saved(let updatedAt):
                 lastSavedText = snapshot
-                status = .saved(document.updatedAt)
-            case .deleted, .unchanged:
+                lastSavedAt = updatedAt
+                status = .saved(updatedAt)
+            case .cleared:
                 lastSavedText = snapshot
-                status = .idle
-            case .taskNotFound:
-                isTaskMissing = true
-                status = .failed("A tarefa foi apagada — o documento não foi salvo.")
+                status = lastSavedStatus
+            case .ownerMissing:
+                isOwnerMissing = true
+                status = .failed("O dono do documento foi apagado — o texto não foi salvo.")
             }
-            if result.changesPresence { onPresenceChanged() }
+            if outcome.presenceChanged { onPresenceChanged() }
         } catch DomainError.documentTooLarge(let maxBytes) {
             status = .failed("Documento passou do limite de \(maxBytes / 1_000_000) MB — reduza o texto para salvar.")
         } catch {
@@ -193,7 +213,8 @@ final class TaskDocumentViewModel: ObservableObject {
     }
 
     private var lastSavedStatus: Status {
-        if let updatedAt = (try? documents.document(taskID: taskID))?.updatedAt { return .saved(updatedAt) }
+        // Texto em branco num documento de tarefa = sem documento: nada a dizer.
+        if let lastSavedAt, !lastSavedText.isEmpty || source.canRename { return .saved(lastSavedAt) }
         return .idle
     }
 
@@ -267,7 +288,7 @@ final class TaskDocumentViewModel: ObservableObject {
     func exportMarkdown() {
         let panel = NSSavePanel()
         panel.allowedContentTypes = [UTType(filenameExtension: "md") ?? .plainText]
-        panel.nameFieldStringValue = Self.fileName(for: taskTitle)
+        panel.nameFieldStringValue = Self.fileName(for: header.title)
         panel.canCreateDirectories = true
         guard panel.runModal() == .OK, let url = panel.url else { return }
         do {

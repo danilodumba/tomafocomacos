@@ -87,13 +87,17 @@ final class TasksViewModel: ObservableObject, TaskRowActionRunning, ProjectsHost
 
     private let useCase: ManageTasksUseCase
     let manageProjects: ManageProjectsUseCase
+    /// Documentos dos projetos (FEAT-009) — para o cadastro de projetos aberto daqui.
+    let manageProjectDocuments: ManageProjectDocumentsUseCase
     /// Avisa que as tarefas mudaram por aqui — o seletor do timer e o Kanban recarregam.
     private let onTasksChanged: () -> Void
 
     init(useCase: ManageTasksUseCase, manageProjects: ManageProjectsUseCase,
+         manageProjectDocuments: ManageProjectDocumentsUseCase,
          defaults: UserDefaults = .standard, onTasksChanged: @escaping () -> Void) {
         self.useCase = useCase
         self.manageProjects = manageProjects
+        self.manageProjectDocuments = manageProjectDocuments
         self.defaults = defaults
         self.onTasksChanged = onTasksChanged
         sortOrder = TaskSortOrder.stored(in: defaults, key: Self.sortOrderKey)
@@ -221,10 +225,12 @@ final class TasksViewModel: ObservableObject, TaskRowActionRunning, ProjectsHost
                 ? try await self.useCase.completeTask(id: task.id)
                 : try await self.useCase.reopenTask(id: task.id)
             self.reload()
-            // Diária (FEAT-004): a concluída sai e um clone entra — sem aviso, parece que o clique
-            // não fez nada (ou que a tarefa "não concluiu").
+            // Repetição (FEAT-004 / RF-09.21): a concluída sai e um clone entra — sem aviso,
+            // parece que o clique não fez nada (ou que a tarefa "não concluiu").
             if completed && task.repeatsDaily {
-                self.feedback = "\"\(task.title)\" concluída — nova cópia criada com vencimento amanhã."
+                let next = task.nextOccurrenceDueDate(now: Date(), calendar: .current)
+                self.feedback = "\"\(task.title)\" concluída — nova cópia criada com vencimento "
+                    + "\(next.formatted(date: .abbreviated, time: .omitted))."
             }
             // Falha de espelhamento não desfaz a mudança local, mas precisa aparecer:
             // sem aviso, o usuário só descobre abrindo o Lembretes.
@@ -331,6 +337,23 @@ final class TasksViewModel: ObservableObject, TaskRowActionRunning, ProjectsHost
             onOpenTask: { [weak self] other in self?.beginEditing(other) })
     }
 
+    // MARK: - Duplicar (RF-09.19)
+
+    /// Duplica pelo menu de contexto. Não abre o formulário: a cópia já está gravada, e um
+    /// "Cancelar" ali pareceria desfazer a duplicação. Cópia de subtarefa abre o pai na lista
+    /// para ela não nascer escondida.
+    func duplicate(_ task: FocusTask) {
+        feedback = nil
+        do {
+            guard let copy = try useCase.duplicateTask(id: task.id) else { return }
+            if let parentID = copy.parentID { expandedTaskIDs.insert(parentID) }
+            reload()
+            feedback = "Duplicada como \"\(copy.displayTitle)\"."
+        } catch {
+            feedback = "Não foi possível duplicar: \(error.localizedDescription)"
+        }
+    }
+
     // MARK: - Prioridade (item 4)
 
     func setPriority(_ task: FocusTask, _ priority: TaskPriority) {
@@ -354,11 +377,11 @@ final class TasksViewModel: ObservableObject, TaskRowActionRunning, ProjectsHost
         }
     }
 
-    /// Liga/desliga "Repetir diariamente" pelo menu de contexto da linha (FEAT-004).
-    func setRepeatsDaily(_ task: FocusTask, _ repeatsDaily: Bool) {
+    /// Repetição pelo menu de contexto da linha (FEAT-004 / RF-09.21).
+    func setRecurrence(_ task: FocusTask, _ recurrence: TaskRecurrence?) {
         feedback = nil
         do {
-            try useCase.setRepeatsDaily(id: task.id, repeatsDaily)
+            try useCase.setRecurrence(id: task.id, recurrence)
             reload()
         } catch {
             feedback = "Não foi possível alterar a repetição: \(error.localizedDescription)"

@@ -331,12 +331,12 @@ final class ManageTasksUseCaseTests: XCTestCase {
     /// enquanto o pai está em "Em andamento".
     func test_addSubtask_herdaRaiaDoPai() throws {
         let parent = try sut.addTask(title: "Apresentação")
-        let lane = UUID()
-        try sut.update(id: parent.id) { $0.laneID = lane }
+        let lanes = [UUID(), UUID()]  // uma por quadro (FEAT-008)
+        try sut.update(id: parent.id) { $0.laneIDs = lanes }
 
         let child = try sut.addSubtask(parentID: parent.id, title: "Esboço")
 
-        XCTAssertEqual(child.laneID, lane)
+        XCTAssertEqual(child.laneIDs, lanes)
     }
 
     func test_addSubtask_paiInexistente_lanca() {
@@ -440,14 +440,14 @@ final class ManageTasksUseCaseTests: XCTestCase {
         let parent = try sut.addTask(title: "Apresentação")
         let task = try sut.addTask(title: "Esboço", tags: ["slides"])
         let lane = UUID()
-        try sut.update(id: task.id) { $0.laneID = lane }
+        try sut.update(id: task.id) { $0.laneIDs = [lane] }
         let before = repo.saveCallCount
 
         let result = try sut.makeSubtask(id: task.id, parentID: parent.id)
 
         XCTAssertEqual(result?.parentID, parent.id)
         XCTAssertEqual(try stored(task.id).parentID, parent.id)
-        XCTAssertEqual(try stored(task.id).laneID, lane)
+        XCTAssertEqual(try stored(task.id).laneIDs, [lane])
         XCTAssertEqual(try stored(task.id).tags, ["slides"])
         XCTAssertEqual(repo.saveCallCount - before, 1)
     }
@@ -574,7 +574,7 @@ final class ManageTasksUseCaseTests: XCTestCase {
         let parent = try sut.addTask(title: "Pai")
         let child = try sut.addSubtask(parentID: parent.id, title: "Filha")
         try await sut.completeTask(id: child.id)
-        try sut.update(id: parent.id) { $0.laneID = UUID() }
+        try sut.update(id: parent.id) { $0.laneIDs = [UUID()] }
         let parentBefore = try stored(parent.id)
 
         try await sut.reopenTask(id: child.id)

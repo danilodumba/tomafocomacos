@@ -178,25 +178,50 @@ final class TaskLinkCodingTests: XCTestCase {
         XCTAssertEqual(decoded.completionLog, log)
     }
 
-    func test_focusTaskAntigaSemRaia_decodificaComNil() throws {
+    func test_focusTaskAntigaSemRaia_decodificaVazio() throws {
         let json = """
         {"id":"00000000-0000-0000-0000-0000000000AB","title":"Deploy",
          "source":"manual","createdAt":"2026-07-20T09:00:00Z"}
         """
         let task = try decoder.decode(FocusTask.self, from: Data(json.utf8))
-        XCTAssertNil(task.laneID)
+        XCTAssertEqual(task.laneIDs, [])
+    }
+
+    /// FEAT-008: tarefa gravada com o quadro único (`laneID`) abre com a raia na lista nova —
+    /// sem isso a tarefa perderia a posição no quadro ao atualizar.
+    func test_focusTaskComLaneIDLegado_viraListaDeUmaRaia() throws {
+        let json = """
+        {"id":"00000000-0000-0000-0000-0000000000AB","title":"Deploy",
+         "source":"manual","createdAt":"2026-07-20T09:00:00Z",
+         "laneID":"00000000-0000-0000-0000-0000000000CD"}
+        """
+        let task = try decoder.decode(FocusTask.self, from: Data(json.utf8))
+        XCTAssertEqual(task.laneIDs, [UUID(uuidString: "00000000-0000-0000-0000-0000000000CD")!])
+    }
+
+    func test_focusTaskComLaneIDsELegado_vencemOsNovos() throws {
+        let json = """
+        {"id":"00000000-0000-0000-0000-0000000000AB","title":"Deploy",
+         "source":"manual","createdAt":"2026-07-20T09:00:00Z",
+         "laneID":"00000000-0000-0000-0000-0000000000CD",
+         "laneIDs":["00000000-0000-0000-0000-0000000000EF"]}
+        """
+        let task = try decoder.decode(FocusTask.self, from: Data(json.utf8))
+        XCTAssertEqual(task.laneIDs, [UUID(uuidString: "00000000-0000-0000-0000-0000000000EF")!])
     }
 
     func test_focusTaskRoundtripComRaia_preserva() throws {
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
-        let laneID = UUID()
+        let laneIDs = [UUID(), UUID()]
         let task = FocusTask(
             id: UUID(), title: "Deploy", source: .manual,
-            createdAt: Date(timeIntervalSince1970: 0), laneID: laneID
+            createdAt: Date(timeIntervalSince1970: 0), laneIDs: laneIDs
         )
-        let decoded = try decoder.decode(FocusTask.self, from: encoder.encode(task))
-        XCTAssertEqual(decoded.laneID, laneID)
+        let data = try encoder.encode(task)
+        XCTAssertFalse(String(decoding: data, as: UTF8.self).contains("\"laneID\""), "chave antiga não é mais gravada")
+        let decoded = try decoder.decode(FocusTask.self, from: data)
+        XCTAssertEqual(decoded.laneIDs, laneIDs)
     }
 
     func test_focusTaskAntigaSemUrgente_decodificaFalse() throws {

@@ -26,7 +26,7 @@ final class KanbanBoardTests: XCTestCase {
         _ title: String = "T", laneID: UUID? = nil, completedAt: Date? = nil, tags: [String] = []
     ) -> FocusTask {
         FocusTask(id: UUID(), title: title, source: .manual, createdAt: date(1, 9),
-                  completedAt: completedAt, tags: tags, laneID: laneID)
+                  completedAt: completedAt, tags: tags, laneIDs: laneID.map { [$0] } ?? [])
     }
 
     // MARK: - Padrão e invariantes
@@ -224,7 +224,95 @@ final class KanbanBoardTests: XCTestCase {
     func test_init_reparo_usaMakeIDInjetado() {
         let ids = [UUID(), UUID()]
         var next = ids.makeIterator()
-        let repaired = KanbanBoard(lanes: [], makeID: { next.next()! })
+        let repaired = KanbanBoard(id: UUID(), lanes: [], makeID: { next.next()! })
         XCTAssertEqual(repaired.lanes.map(\.id), ids)
+    }
+
+    // MARK: - Vários quadros (FEAT-008)
+
+    func test_init_nomeVazioViraPadrao_eRenameValida() throws {
+        var b = KanbanBoard(name: "  ", lanes: [])
+        XCTAssertEqual(b.name, "Kanban")
+        try b.rename(to: "  Trabalho ")
+        XCTAssertEqual(b.name, "Trabalho")
+        XCTAssertThrowsError(try b.rename(to: " ")) { XCTAssertEqual($0 as? DomainError, .emptyBoardName) }
+    }
+
+    func test_makeDefault_comNome_geraIdsDistintos() {
+        let b = KanbanBoard.makeDefault(name: "Casa", makeID: { UUID() })
+        XCTAssertEqual(b.name, "Casa")
+        XCTAssertEqual(Set(b.lanes.map(\.id) + [b.id]).count, 4)
+    }
+
+    /// Cada quadro usa o id de raia que é dele; os ids de outros quadros são ignorados.
+    func test_laneFor_variasRaiasDeQuadrosDiferentes_cadaQuadroUsaASua() {
+        let other = KanbanBoard.makeDefault(makeID: { UUID() })
+        let t = FocusTask(id: UUID(), title: "T", source: .manual, createdAt: date(1, 9),
+                          laneIDs: [other.lanes[1].id, doing.id])
+        XCTAssertEqual(board.lane(for: t), doing)
+        XCTAssertEqual(other.lane(for: t), other.lanes[1])
+    }
+
+    func test_place_trocaSoARaiaDesteQuadro() {
+        let other = KanbanBoard.makeDefault(makeID: { UUID() })
+        var t = FocusTask(id: UUID(), title: "T", source: .manual, createdAt: date(1, 9),
+                          laneIDs: [todo.id, other.lanes[1].id])
+        t.place(inLane: doing.id, of: board)
+        XCTAssertEqual(t.laneIDs, [other.lanes[1].id, doing.id])
+        XCTAssertEqual(t.storedLaneID(in: board), doing.id)
+        t.removeLanes(of: board)
+        XCTAssertEqual(t.laneIDs, [other.lanes[1].id])
+        XCTAssertNil(t.storedLaneID(in: board))
+    }
+
+    func test_columns_escopoPorProjeto_combinaComTag() {
+        let projeto = UUID()
+        board.projectScope = .project(projeto)
+        board.taskScope = .tags(["Trabalho"])
+        var ambos = task("ambos", tags: ["trabalho"]); ambos.projectID = projeto
+        var soProjeto = task("só projeto"); soProjeto.projectID = projeto
+        let soTag = task("só tag", tags: ["trabalho"])
+        var filha = task("filha"); filha.parentID = ambos.id; filha.projectID = projeto
+        let titles = board.columns(for: [ambos, soProjeto, soTag, filha], now: date(27, 10), calendar: calendar)
+            .flatMap(\.tasks).map(\.title)
+        XCTAssertEqual(titles, ["ambos", "filha"])
+    }
+
+    func test_columns_escopoSemProjeto() {
+        board.projectScope = .none
+        var com = task("com"); com.projectID = UUID()
+        let sem = task("sem")
+        XCTAssertEqual(board.columns(for: [com, sem], now: date(27, 10), calendar: calendar)
+                           .flatMap(\.tasks).map(\.title), ["sem"])
+    }
+
+    func test_codable_roundtripComIdNomeEProjeto() throws {
+        board.projectScope = .project(UUID())
+        try board.rename(to: "Trabalho")
+        let decoded = try JSONDecoder().decode(KanbanBoard.self, from: JSONEncoder().encode(board))
+        XCTAssertEqual(decoded, board)
+    }
+
+    /// Quadro gravado antes da FEAT-008 (sem id/nome/projeto) abre com id novo, nome padrão e
+    /// "todos os projetos", preservando as raias.
+    func test_decode_quadroAntigoSemIdNomeProjeto() throws {
+        let json = """
+        {"lanes":[{"id":"00000000-0000-0000-0000-0000000000A1","title":"A fazer","isDone":false},
+                  {"id":"00000000-0000-0000-0000-0000000000A2","title":"Feito","isDone":true}],
+         "doneRetentionDays":3}
+        """
+        let decoded = try JSONDecoder().decode(KanbanBoard.self, from: Data(json.utf8))
+        XCTAssertEqual(decoded.name, "Kanban")
+        XCTAssertEqual(decoded.projectScope, .all)
+        XCTAssertEqual(decoded.doneRetentionDays, 3)
+        XCTAssertEqual(decoded.lanes.map(\.title), ["A fazer", "Feito"])
+    }
+
+    func test_projectFilter_codable_todosOsModos_eModoDesconhecidoViraAll() throws {
+        for filter in [ProjectFilter.all, .none, .project(UUID())] {
+            XCTAssertEqual(try JSONDecoder().decode(ProjectFilter.self, from: JSONEncoder().encode(filter)), filter)
+        }
+        XCTAssertEqual(try JSONDecoder().decode(ProjectFilter.self, from: Data(#"{"mode":"xyz"}"#.utf8)), .all)
+        XCTAssertEqual(try JSONDecoder().decode(ProjectFilter.self, from: Data(#"{"mode":"project"}"#.utf8)), .all)
     }
 }

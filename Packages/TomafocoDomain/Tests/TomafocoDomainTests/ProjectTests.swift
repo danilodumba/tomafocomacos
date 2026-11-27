@@ -89,7 +89,7 @@ final class ProjectTests: XCTestCase {
     func test_cloneDaDiaria_levaOProjeto() {
         var diaria = task(project: UUID())
         diaria.repeatsDaily = true
-        let clone = diaria.nextDailyOccurrence(id: UUID(), now: date(29), calendar: calendar)
+        let clone = diaria.nextOccurrence(id: UUID(), now: date(29), calendar: calendar)
         XCTAssertEqual(clone.projectID, diaria.projectID)
     }
 }

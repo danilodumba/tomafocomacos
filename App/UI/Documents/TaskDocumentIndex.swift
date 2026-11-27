@@ -32,13 +32,30 @@ struct OpenTaskDocumentAction {
     let openWindow: OpenWindowAction
 
     func callAsFunction(_ taskID: UUID) {
-        openWindow(id: TaskDocumentWindow.sceneID, value: taskID)
+        openWindow(id: DocumentWindow.taskSceneID, value: taskID)
         NSApp.activate(ignoringOtherApps: true)
     }
 }
 
 extension OpenWindowAction {
     var taskDocument: OpenTaskDocumentAction { OpenTaskDocumentAction(openWindow: self) }
+
+    /// Abre a janela de um documento de projeto (FEAT-009) — uma por documento.
+    func projectDocument(_ documentID: UUID) {
+        callAsFunction(id: DocumentWindow.projectSceneID, value: documentID)
+        NSApp.activate(ignoringOtherApps: true)
+    }
+}
+
+/// Avisa que os documentos de algum projeto mudaram (criado, renomeado, salvo, apagado) — a lista
+/// de documentos do cadastro de projetos relê. Notificação porque o cadastro é um sheet aberto
+/// sob demanda, fora do `TaskChangeRelay`.
+enum ProjectDocumentsChange {
+    static let notification = Notification.Name("ProjectDocumentsChange")
+
+    static func post() {
+        NotificationCenter.default.post(name: notification, object: nil)
+    }
 }
 
 /// Selo "tem documento" da linha/cartão.

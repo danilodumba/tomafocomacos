@@ -72,11 +72,13 @@ public final class TomafocoDatabase: UnitOfWork {
         }
     }
 
-    /// `~/Library/Application Support/Tomafoco/Tomafoco.store`, ao lado dos JSON antigos.
-    public static func defaultURL(fileManager: FileManager = .default) -> URL {
+    /// `~/Library/Application Support/<folder>/Tomafoco.store`, ao lado dos JSON antigos.
+    /// `folder` é `Tomafoco` na produção e `Tomafoco-Dev` no build de desenvolvimento
+    /// (`AppEnvironment`), para o desenvolvimento nunca abrir — nem migrar — o banco real.
+    public static func defaultURL(folder: String = "Tomafoco", fileManager: FileManager = .default) -> URL {
         let support = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
             ?? fileManager.temporaryDirectory
-        return support.appendingPathComponent("Tomafoco", isDirectory: true)
+        return support.appendingPathComponent(folder, isDirectory: true)
             .appendingPathComponent("Tomafoco.store")
     }
 
@@ -165,7 +167,7 @@ public final class TomafocoDatabase: UnitOfWork {
     // MARK: - Privado
 
     /// Versão de esquema que o app abre — a última do `TomafocoMigrationPlan`.
-    static let currentSchema: any VersionedSchema.Type = TomafocoSchemaV2.self
+    static let currentSchema: any VersionedSchema.Type = TomafocoSchemaV3.self
 
     private static func makeContainer(_ configuration: ModelConfiguration) throws -> ModelContainer {
         try ModelContainer(

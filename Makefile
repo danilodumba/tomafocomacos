@@ -1,5 +1,5 @@
 # Atalhos de desenvolvimento do Tomafoco.
-.PHONY: test test-domain test-application test-infra test-markdown project lint open help release release-dry sparkle-keys
+.PHONY: dev-data test test-domain test-application test-infra test-markdown project lint open help release release-dry sparkle-keys
 
 help:
 	@echo "Alvos:"
@@ -8,6 +8,7 @@ help:
 	@echo "  make project        - gera Tomafoco.xcodeproj via XcodeGen"
 	@echo "  make lint           - roda SwiftLint"
 	@echo "  make open           - gera o projeto e abre no Xcode"
+	@echo "  make dev-data       - copia banco + preferências de produção para o Tomafoco Dev (Debug)"
 	@echo "  make release        - assina, notariza e gera o DMG (ver docs/release.md)"
 	@echo "  make release-dry    - empacota sem notarizar (teste local)"
 	@echo "  make sparkle-keys   - gera/mostra a chave EdDSA das atualizações (1x só)"
@@ -34,6 +35,9 @@ lint:
 
 open: project
 	open Tomafoco.xcodeproj
+
+dev-data:
+	./scripts/dev-data.sh
 
 release:
 	./scripts/release.sh

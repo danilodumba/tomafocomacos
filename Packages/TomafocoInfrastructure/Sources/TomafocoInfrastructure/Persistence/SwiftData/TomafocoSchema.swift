@@ -122,27 +122,72 @@ public enum TomafocoSchemaV2: VersionedSchema {
     }
 }
 
+/// V3 (FEAT-009): acrescenta a tabela de documentos dos projetos. V1 e V2 seguem **os mesmos
+/// tipos** (não mudaram) — só a tabela nova entra, então o estágio é leve, como o V1 → V2.
+///
+/// ⚠️ Regra (ADR-11/FEAT-007): quando uma versão futura MUDAR um modelo existente, congelar cópias
+/// das classes antigas em cada versão anterior — senão o hash dessas versões muda e um banco
+/// antigo deixa de ser reconhecido (cai no `.bak`).
+public enum TomafocoSchemaV3: VersionedSchema {
+    public static var versionIdentifier: Schema.Version { Schema.Version(3, 0, 0) }
+
+    public static var models: [any PersistentModel.Type] {
+        TomafocoSchemaV2.models + [ProjectDocumentRecord.self]
+    }
+
+    /// Documento em markdown de um projeto (`ProjectDocument`). Vários por projeto. Título e datas
+    /// ficam de coluna para listar sem decodificar o texto.
+    @Model
+    public final class ProjectDocumentRecord {
+        @Attribute(.unique) public var id: UUID
+        public var projectID: UUID
+        public var title: String
+        public var createdAt: Date
+        public var updatedAt: Date
+        public var payload: Data
+
+        public init(id: UUID, projectID: UUID, title: String, createdAt: Date, updatedAt: Date, payload: Data) {
+            self.id = id
+            self.projectID = projectID
+            self.title = title
+            self.createdAt = createdAt
+            self.updatedAt = updatedAt
+            self.payload = payload
+        }
+    }
+}
+
 public typealias TaskRecord = TomafocoSchemaV1.TaskRecord
 public typealias ProjectRecord = TomafocoSchemaV1.ProjectRecord
 public typealias SessionHistoryRecord = TomafocoSchemaV1.SessionHistoryRecord
 public typealias SingletonRecord = TomafocoSchemaV1.SingletonRecord
 public typealias TagRecord = TomafocoSchemaV1.TagRecord
 public typealias TaskDocumentRecord = TomafocoSchemaV2.TaskDocumentRecord
+public typealias ProjectDocumentRecord = TomafocoSchemaV3.ProjectDocumentRecord
 
 /// Chaves do `SingletonRecord`.
 enum SingletonKey {
     static let activeSession = "activeSession"
+    /// Quadro único (FEAT-005, até a FEAT-008) — só lido, para migrar para `kanbanBoards`.
     static let kanbanBoard = "kanbanBoard"
+    /// Lista de quadros (FEAT-008).
+    static let kanbanBoards = "kanbanBoards"
     static let storeMeta = "storeMeta"
 }
 
 /// Plano de migração do esquema. Cada versão nova entra aqui com seu estágio; a última da lista
 /// é a que o app abre (`TomafocoDatabase.currentSchema`).
 public enum TomafocoMigrationPlan: SchemaMigrationPlan {
-    public static var schemas: [any VersionedSchema.Type] { [TomafocoSchemaV1.self, TomafocoSchemaV2.self] }
-    public static var stages: [MigrationStage] { [migrateV1toV2] }
+    public static var schemas: [any VersionedSchema.Type] {
+        [TomafocoSchemaV1.self, TomafocoSchemaV2.self, TomafocoSchemaV3.self]
+    }
+    public static var stages: [MigrationStage] { [migrateV1toV2, migrateV2toV3] }
 
     /// Só acrescenta a tabela de documentos: nenhuma linha existente muda.
     static let migrateV1toV2 = MigrationStage.lightweight(fromVersion: TomafocoSchemaV1.self,
                                                           toVersion: TomafocoSchemaV2.self)
+
+    /// Só acrescenta a tabela de documentos dos projetos (FEAT-009).
+    static let migrateV2toV3 = MigrationStage.lightweight(fromVersion: TomafocoSchemaV2.self,
+                                                          toVersion: TomafocoSchemaV3.self)
 }

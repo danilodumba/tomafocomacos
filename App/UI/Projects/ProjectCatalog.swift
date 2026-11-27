@@ -41,6 +41,7 @@ protocol ProjectsHosting: AnyObject {
     var projectsSheet: ProjectsViewModel? { get set }
     var feedback: String? { get set }
     var manageProjects: ManageProjectsUseCase { get }
+    var manageProjectDocuments: ManageProjectDocumentsUseCase { get }
     /// Relê e avisa as outras janelas.
     func reload()
 }
@@ -65,7 +66,7 @@ extension ProjectsHosting {
     func openProjects() {
         feedback = nil
         projectsSheet = ProjectsViewModel(
-            useCase: manageProjects,
+            useCase: manageProjects, documents: manageProjectDocuments,
             onChanged: { [weak self] in self?.reload() },
             onShowTasks: { [weak self] id in
                 self?.projectFilter = .project(id)

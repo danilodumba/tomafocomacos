@@ -40,27 +40,37 @@ public struct TaskEdit: Equatable, Sendable {
     public var tags: [String]
     public var dueDate: Date?
     public var priority: TaskPriority
-    public var repeatsDaily: Bool
+    /// Repetição (RF-09.21). `nil` = não repete.
+    public var recurrence: TaskRecurrence?
+    /// Atalho da época da diária: ligar sem regra = todo dia.
+    public var repeatsDaily: Bool {
+        get { recurrence != nil }
+        set { recurrence = newValue ? (recurrence ?? .everyDay) : nil }
+    }
     public var notes: String?
     public var link: String?
     public var isUrgent: Bool
     /// Projeto (FEAT-006). Em subtarefa é ignorado — vale o do pai.
     public var projectID: UUID?
+    /// Código da tarefa (RF-09.22), livre. Mudar o projeto sem mexer neste campo gera o código do
+    /// projeto novo; digitar um código vale mais que o gerado.
+    public var code: String?
 
     public init(
         title: String, tags: [String] = [], dueDate: Date? = nil, priority: TaskPriority = .none,
         repeatsDaily: Bool = false, notes: String? = nil, link: String? = nil, isUrgent: Bool = false,
-        projectID: UUID? = nil
+        projectID: UUID? = nil, recurrence: TaskRecurrence? = nil, code: String? = nil
     ) {
         self.title = title
         self.tags = tags
         self.dueDate = dueDate
         self.priority = priority
-        self.repeatsDaily = repeatsDaily
+        self.recurrence = recurrence ?? (repeatsDaily ? .everyDay : nil)
         self.notes = notes
         self.link = link
         self.isUrgent = isUrgent
         self.projectID = projectID
+        self.code = code
     }
 }
 
@@ -151,10 +161,11 @@ public final class ManageTasksUseCase {
             throw DomainError.duplicateEntry(trimmed)
         }
 
+        var reserved: [UUID: Project] = [:]
         let task = FocusTask(id: makeID(), title: trimmed, source: .manual, createdAt: now(), tags: tags,
-                             projectID: projectID)
+                             projectID: projectID, code: try takeCode(for: projectID, reserved: &reserved))
         all.append(task)
-        try tasks.saveTasks(all)
+        try save(all, reservingCodesIn: reserved)
         return task
     }
 
@@ -185,11 +196,54 @@ public final class ManageTasksUseCase {
 
         let task = FocusTask(
             id: makeID(), title: trimmed, source: .manual, createdAt: now(), tags: tags,
-            laneID: all[parentIdx].laneID, parentID: parentID, projectID: all[parentIdx].projectID)
+            laneIDs: all[parentIdx].laneIDs, parentID: parentID, projectID: all[parentIdx].projectID)
         all.append(task)
         try tasks.saveTasks(all)
         registerInCatalog(task.tags)
         return task
+    }
+
+    // MARK: - Duplicar (RF-09.19)
+
+    /// Duplica a tarefa (`FocusTask.duplicated`): cópia aberta, manual, logo ao lado da original —
+    /// mesmo pai, projeto e raias —, com título "X (cópia)" (único entre os irmãos ativos).
+    /// - Tarefa com subtarefas: as filhas vêm junto, **todas abertas** e com os mesmos títulos
+    ///   (sob o pai novo não há conflito) — duplicar serve de modelo para refazer o trabalho.
+    /// - Subtarefa: a cópia fica sob o mesmo pai; pai concluído é reaberto (invariante
+    ///   "subtarefa ativa ⇒ pai ativo"), como em `addSubtask`.
+    /// - Documento em markdown (FEAT-007) da tarefa e das filhas é copiado como está.
+    /// Tudo numa transação. Tarefa inexistente → `nil`.
+    @discardableResult
+    public func duplicateTask(id: UUID) throws -> FocusTask? {
+        var all = try tasks.loadTasks()
+        guard let original = all.first(where: { $0.id == id }) else { return nil }
+        let title = FocusTask.duplicateTitle(for: original.title) { candidate in
+            Self.hasActiveSibling(titled: candidate, parentID: original.parentID, excluding: nil, in: all)
+        }
+        var copy = original.duplicated(id: makeID(), title: title, parentID: original.parentID, now: now())
+        // Código (RF-09.22): a cópia de tarefa de topo ganha o próximo código do projeto; subtarefa
+        // e projeto sem código ficam sem.
+        var reserved: [UUID: Project] = [:]
+        if !original.isSubtask { copy.code = try takeCode(for: original.projectID, reserved: &reserved) }
+        var copies = [(source: original.id, copy: copy)]
+        for child in all where child.parentID == original.id {
+            copies.append((child.id, child.duplicated(id: makeID(), title: child.title, parentID: copy.id, now: now())))
+        }
+        if let parentID = original.parentID, let parentIdx = all.firstIndex(where: { $0.id == parentID }),
+           all[parentIdx].isCompleted {
+            applyReopen(to: &all[parentIdx])
+        }
+        all.append(contentsOf: copies.map(\.copy))
+
+        try unitOfWork.perform {
+            try tasks.saveTasks(all)
+            for project in reserved.values { try projects.upsert(project) }
+            for (source, copy) in copies {
+                guard let document = try documents.document(taskID: source) else { continue }
+                try documents.save(TaskDocument(taskID: copy.id, markdown: document.markdown, updatedAt: now()))
+            }
+        }
+        return copy
     }
 
     /// Transforma uma tarefa existente em subtarefa de `parentID` (arrastar uma linha sobre a
@@ -268,7 +322,8 @@ public final class ManageTasksUseCase {
         }
         for projectID in Set(drafts.compactMap(\.projectID)) { try requireProject(projectID) }
 
-        let created = drafts.map { draft in
+        var reserved: [UUID: Project] = [:]
+        let created = try drafts.map { draft in
             FocusTask(
                 id: makeID(),
                 title: draft.title.trimmingCharacters(in: .whitespacesAndNewlines),
@@ -277,10 +332,12 @@ public final class ManageTasksUseCase {
                 tags: draft.tags,
                 dueDate: draft.dueDate,
                 priority: draft.priority.rawPriority,
-                projectID: draft.projectID
+                projectID: draft.projectID,
+                // Códigos em sequência, na ordem do lote (RF-09.22).
+                code: try takeCode(for: draft.projectID, reserved: &reserved)
             )
         }
-        try tasks.saveTasks(try tasks.loadTasks() + created)
+        try save(try tasks.loadTasks() + created, reservingCodesIn: reserved)
         registerInCatalog(created.flatMap(\.tags))
         return created
     }
@@ -309,10 +366,13 @@ public final class ManageTasksUseCase {
         var all = try tasks.loadTasks()
         guard let idx = all.firstIndex(where: { $0.id == id }) else { return nil }
         let current = all[idx]
+        // Edição parcial: "repete" ligado mantém a regra que a tarefa já tinha (RF-09.21).
         return try applyEdit(TaskEdit(
-            title: title, tags: tags, dueDate: dueDate, priority: priority, repeatsDaily: repeatsDaily,
+            title: title, tags: tags, dueDate: dueDate, priority: priority,
             notes: current.notes, link: current.sourceURL, isUrgent: current.isUrgent,
-            projectID: current.projectID), at: idx, in: &all)
+            projectID: current.projectID,
+            recurrence: repeatsDaily ? (current.recurrence ?? .everyDay) : nil,
+            code: current.code), at: idx, in: &all)
     }
 
     /// Edição completa numa transação (RF-09.6 + RF-09.13). Nota em branco vira `nil`; link ganha
@@ -346,12 +406,22 @@ public final class ManageTasksUseCase {
         all[idx].tags = normalizedTags
         all[idx].dueDate = edit.dueDate
         all[idx].priority = edit.priority.rawPriority
-        all[idx].repeatsDaily = edit.repeatsDaily
+        all[idx].recurrence = edit.recurrence?.normalized
         all[idx].notes = FocusTask.normalizeNotes(edit.notes)
         all[idx].sourceURL = link
         all[idx].isUrgent = edit.isUrgent
+        // Código (RF-09.22): o digitado vale; sem mexer no campo, associar a outro projeto com
+        // código gera o código dele (tarefa de topo só). Projeto sem código: o código fica.
+        let typedCode = FocusTask.normalizeCode(edit.code)
+        let codeWasEdited = typedCode != current.code
+        all[idx].code = typedCode
         try applyProject(edit.projectID, at: idx, in: &all)
-        try tasks.saveTasks(all)
+        var reserved: [UUID: Project] = [:]
+        if !codeWasEdited, !all[idx].isSubtask, all[idx].projectID != current.projectID,
+           let generated = try takeCode(for: all[idx].projectID, reserved: &reserved) {
+            all[idx].code = generated
+        }
+        try save(all, reservingCodesIn: reserved)
         registerInCatalog(normalizedTags)
         return all[idx]
     }
@@ -376,6 +446,31 @@ public final class ManageTasksUseCase {
 
     /// `projectNotFound` se o projeto não existe (apagado em outra janela com o formulário
     /// aberto). `nil` = sem projeto, sempre válido.
+    // MARK: - Código da tarefa (RF-09.22)
+
+    /// Próximo código do projeto, avançando o contador numa cópia em `reserved` (gravada junto
+    /// com as tarefas por `save(_:reservingCodesIn:)`). `nil` sem projeto ou projeto sem código.
+    private func takeCode(for projectID: UUID?, reserved: inout [UUID: Project]) throws -> String? {
+        guard let projectID,
+              var project = try reserved[projectID] ?? projects.project(id: projectID),
+              let code = project.takeNextTaskCode() else { return nil }
+        reserved[projectID] = project
+        return code
+    }
+
+    /// Grava as tarefas e, se códigos foram reservados, os contadores dos projetos — na mesma
+    /// transação: código dado sem o contador avançar repetiria o número na próxima tarefa.
+    private func save(_ all: [FocusTask], reservingCodesIn reserved: [UUID: Project]) throws {
+        guard !reserved.isEmpty else {
+            try tasks.saveTasks(all)
+            return
+        }
+        try unitOfWork.perform {
+            try tasks.saveTasks(all)
+            for project in reserved.values { try projects.upsert(project) }
+        }
+    }
+
     private func requireProject(_ projectID: UUID?) throws {
         guard let projectID else { return }
         guard try projects.project(id: projectID) != nil else { throw DomainError.projectNotFound }
@@ -427,6 +522,11 @@ public final class ManageTasksUseCase {
         try update(id: id) { $0.repeatsDaily = repeatsDaily }
     }
 
+    /// Define a regra de repetição (RF-09.21) — `nil` desliga.
+    public func setRecurrence(id: UUID, _ recurrence: TaskRecurrence?) throws {
+        try update(id: id) { $0.recurrence = recurrence?.normalized }
+    }
+
     /// Todas as tags conhecidas (em uso pelas tarefas + catálogo de cadastro), ordenadas —
     /// alimenta sugestões/filtros e a tela de gestão de tags (RF-09.5).
     public func allTags() throws -> [String] {
@@ -474,19 +574,22 @@ public final class ManageTasksUseCase {
         updateScopes { $0.removingTag(target) }
     }
 
-    /// Reescreve os escopos por tag — do quadro (FEAT-005) e do seletor do foco (RF-09.15).
+    /// Reescreve os escopos por tag — dos quadros (FEAT-005/FEAT-008) e do seletor do foco (RF-09.15).
     /// Best-effort: a operação de tag já foi gravada nas tarefas e não é desfeita se um deles
     /// falhar — só fica no log.
     private func updateScopes(_ transform: (TaskScope) -> TaskScope) {
         if let kanbanBoards {
             do {
-                if var board = try kanbanBoards.loadBoard() {
-                    let scope = transform(board.taskScope)
-                    if scope != board.taskScope {
-                        board.taskScope = scope
-                        try kanbanBoards.saveBoard(board)
+                var boards = try kanbanBoards.loadBoards()
+                var changed = false
+                for idx in boards.indices {
+                    let scope = transform(boards[idx].taskScope)
+                    if scope != boards[idx].taskScope {
+                        boards[idx].taskScope = scope
+                        changed = true
                     }
                 }
+                if changed { try kanbanBoards.saveBoards(boards) }
             } catch {
                 Self.logger.error("Falha ao atualizar o escopo do Kanban: \(String(describing: error), privacy: .public)")
             }
@@ -550,7 +653,7 @@ public final class ManageTasksUseCase {
     /// Concluir com **cascata** (FEAT-003), sem I/O: fecha a tarefa e as subtarefas ainda
     /// abertas (as já concluídas mantêm a data). Reabrir não tem cascata.
     /// Diária (FEAT-004): a tarefa fecha como qualquer outra e um **clone** para amanhã
-    /// (`FocusTask.nextDailyOccurrence`) entra no fim da lista. Só a tarefa concluída
+    /// (`FocusTask.nextOccurrence`) entra no fim da lista. Só a tarefa concluída
     /// diretamente é clonada — filha diária fechada pela cascata do pai não gera clone (o pai
     /// acabou; um clone dela ficaria órfão de pai ativo, violando "subtarefa ativa ⇒ pai ativo").
     /// Devolve a tarefa gravada ou `nil` se não existe.
@@ -565,7 +668,7 @@ public final class ManageTasksUseCase {
         }
         var dailyClone: (sourceID: UUID, cloneID: UUID)?
         if all[idx].repeatsDaily {
-            let clone = all[idx].nextDailyOccurrence(id: makeID(), now: completedAt, calendar: calendar)
+            let clone = all[idx].nextOccurrence(id: makeID(), now: completedAt, calendar: calendar)
             all.append(clone)
             dailyClone = (id, clone.id)
         }

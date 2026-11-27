@@ -7,6 +7,8 @@ import TomafocoDomain
 struct MainView: View {
     @ObservedObject var viewModel: TimerViewModel
     @ObservedObject var updater: UpdaterController
+    /// Quadros Kanban para o menu da engrenagem (FEAT-008).
+    let kanbanBoards: KanbanBoardList
     @Environment(\.openWindow) private var openWindow
 
     var body: some View {
@@ -21,9 +23,25 @@ struct MainView: View {
                 footer
             }
             .padding(24)
+            // Na margem inferior (overlay), não no VStack: o popover tem altura fixa e o rodapé
+            // com seletor + erro + controles já usa quase todo o espaço.
+            .overlay(alignment: .bottom) { versionLabel.padding(.bottom, 6) }
         }
         // Popover não redimensiona: tamanho fixo em vez de mínimo.
         .frame(width: 340, height: 480)
+    }
+
+    // MARK: - Versão
+
+    /// Versão sempre à vista na tela principal — antes só aparecia no fim das Configurações.
+    /// Selecionável para colar num relato de problema.
+    private var versionLabel: some View {
+        Text(AppInfo.short + (AppEnvironment.current.isDevelopment ? " · DEV" : ""))
+            .font(.system(size: 10))
+            .monospacedDigit()
+            .foregroundStyle(Brand.textFaint)
+            .textSelection(.enabled)
+            .accessibilityLabel("Versão \(AppInfo.version), build \(AppInfo.build)")
     }
 
     // MARK: - Cabeçalho
@@ -38,7 +56,7 @@ struct MainView: View {
             HStack {
                 tasksButton
                 Spacer()
-                OverflowMenu(updater: updater)
+                OverflowMenu(updater: updater, kanbanBoards: kanbanBoards)
             }
         }
         .frame(height: 24)
@@ -190,8 +208,8 @@ struct MainView: View {
 
     /// Título + tags (`Título  tag1 · tag2`, tags esmaecidas) para o item do menu.
     private func menuItemText(_ task: FocusTask) -> Text {
-        guard !task.tags.isEmpty else { return Text(task.title) }
-        return Text(task.title)
+        guard !task.tags.isEmpty else { return Text(task.displayTitle) }
+        return Text(task.displayTitle)
             + Text("  " + task.tags.joined(separator: " · "))
                 .font(.system(size: 11))
                 .foregroundColor(Brand.textFaint)
@@ -202,7 +220,7 @@ struct MainView: View {
         guard !selected.isEmpty else { return "Sem tarefa" }
         if selected.count == 1, let id = selected.first,
            let task = viewModel.availableTasks.first(where: { $0.id == id }) {
-            return task.title
+            return task.displayTitle
         }
         return "\(selected.count) tarefas"
     }

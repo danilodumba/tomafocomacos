@@ -11,8 +11,18 @@ enum AppInfo {
         Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "?"
     }
 
-    /// "Tomafoco 1.0 (1)" — para menu e rodapé das configurações.
+    /// Nome visível do bundle — "Tomafoco", ou "Tomafoco Dev" no build de desenvolvimento.
+    static var name: String {
+        Bundle.main.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String ?? "Tomafoco"
+    }
+
+    /// "Tomafoco 1.19 (20)" — menu da engrenagem e rodapé das configurações.
     static var display: String {
-        "Tomafoco \(version) (\(build))"
+        "\(name) \(version) (\(build))"
+    }
+
+    /// "v1.19 · build 20" — rodapé do popover, onde o nome do app já é óbvio.
+    static var short: String {
+        "v\(version) · build \(build)"
     }
 }

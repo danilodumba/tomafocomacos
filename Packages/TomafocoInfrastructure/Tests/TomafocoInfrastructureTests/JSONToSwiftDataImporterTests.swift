@@ -9,7 +9,11 @@ final class JSONToSwiftDataImporterTests: XCTestCase {
 
     private var dir: URL!
     private var defaults: UserDefaults!
-    private var suiteName: String!
+    /// Nome FIXO de propósito: `removePersistentDomain` esvazia o domínio mas deixa o `.plist` em
+    /// `~/Library/Preferences` — com um UUID por teste sobrava um arquivo vazio a cada execução
+    /// (194 acumulados até 2026-11-27). Com nome fixo é sempre o mesmo arquivo, reaproveitado. Os
+    /// testes da classe rodam em série, então compartilhar o domínio é seguro.
+    private let suiteName = "com.dsdumba.tomafoco.tests.json-import"
     private var database: TomafocoDatabase!
     private let now = Date(timeIntervalSince1970: 1_900_000_000)
 
@@ -17,8 +21,9 @@ final class JSONToSwiftDataImporterTests: XCTestCase {
         dir = FileManager.default.temporaryDirectory
             .appendingPathComponent("tomafoco-import-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        suiteName = "tomafoco-import-\(UUID().uuidString)"
         defaults = UserDefaults(suiteName: suiteName)
+        // Execução anterior interrompida pode ter deixado tags no domínio.
+        defaults.removePersistentDomain(forName: suiteName)
         database = try TomafocoDatabase.inMemory()
     }
 
@@ -77,7 +82,7 @@ final class JSONToSwiftDataImporterTests: XCTestCase {
 
         // ISO 8601 dos arquivos guarda segundos inteiros — as datas das fixtures também.
         XCTAssertEqual(try SwiftDataTaskStore(database: database).loadTasks(), seeded.tasks)
-        XCTAssertEqual(try SwiftDataKanbanStore(database: database).loadBoard(), seeded.board)
+        XCTAssertEqual(try SwiftDataKanbanStore(database: database).loadBoards(), [seeded.board])
         XCTAssertEqual(try SwiftDataSessionStore(database: database).loadHistory(), seeded.history)
         XCTAssertEqual(try SwiftDataSessionStore(database: database).loadActive(), seeded.active)
         XCTAssertEqual(SwiftDataTagCatalog(database: database).loadTags(), ["órfã", "Trabalho"])
@@ -150,7 +155,7 @@ final class JSONToSwiftDataImporterTests: XCTestCase {
         XCTAssertEqual(imported.title, "Antiga")
         XCTAssertEqual(imported.tags, [])
         XCTAssertEqual(imported.history, [])
-        XCTAssertNil(imported.laneID)
+        XCTAssertEqual(imported.laneIDs, [])
         XCTAssertNil(imported.parentID)
     }
 

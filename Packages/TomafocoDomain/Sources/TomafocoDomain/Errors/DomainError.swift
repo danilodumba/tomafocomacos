@@ -26,10 +26,22 @@ public enum DomainError: Error, Equatable {
     case cannotDeleteDoneLane
     /// O quadro precisa de pelo menos uma raia aberta além da Done (FEAT-005).
     case cannotDeleteLastOpenLane
+    /// Nome de quadro Kanban vazio após trim (FEAT-008).
+    case emptyBoardName
+    /// Já existe quadro com esse nome, sem distinção de caixa (FEAT-008) — valor para a UI.
+    case duplicateBoardName(String)
+    /// Sempre existe pelo menos um quadro (FEAT-008).
+    case cannotDeleteLastBoard
+    /// Quadro inexistente (apagado em outra janela) (FEAT-008).
+    case boardNotFound
     /// Título de projeto vazio após trim (FEAT-006).
     case emptyProjectTitle
     /// Já existe projeto com esse título, sem distinção de caixa (FEAT-006) — valor para a UI.
     case duplicateProject(String)
+    /// Código de projeto inválido (RF-09.22): mais caracteres que o limite ou espaço no meio.
+    case invalidProjectCode(maxLength: Int)
+    /// Já existe projeto com esse código (RF-09.22) — tarefas de dois projetos teriam o mesmo código.
+    case duplicateProjectCode(String)
     /// Projeto inexistente (apagado em outra janela enquanto o formulário estava aberto).
     case projectNotFound
     /// Documento da tarefa acima do limite (FEAT-007) — limite em bytes para a mensagem da UI.

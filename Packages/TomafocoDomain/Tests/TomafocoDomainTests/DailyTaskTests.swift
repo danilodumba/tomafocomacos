@@ -20,34 +20,34 @@ final class DailyTaskTests: XCTestCase {
                   completedAt: completedAt, dueDate: dueDate, repeatsDaily: repeatsDaily)
     }
 
-    func test_nextDailyDueDate_comVencimento_amanhaNoMesmoHorario() {
-        let next = task(completedAt: nil, dueDate: date(8, 18, 30)).nextDailyDueDate(now: date(10, 9), calendar: calendar)
+    func test_nextOccurrenceDueDate_comVencimento_amanhaNoMesmoHorario() {
+        let next = task(completedAt: nil, dueDate: date(8, 18, 30)).nextOccurrenceDueDate(now: date(10, 9), calendar: calendar)
         XCTAssertEqual(next, date(11, 18, 30))
     }
 
-    func test_nextDailyDueDate_vencimentoFuturo_aindaAmanha() {
-        let next = task(completedAt: nil, dueDate: date(20, 7)).nextDailyDueDate(now: date(10, 9), calendar: calendar)
+    func test_nextOccurrenceDueDate_vencimentoFuturo_aindaAmanha() {
+        let next = task(completedAt: nil, dueDate: date(20, 7)).nextOccurrenceDueDate(now: date(10, 9), calendar: calendar)
         XCTAssertEqual(next, date(11, 7))
     }
 
-    func test_nextDailyDueDate_semVencimento_amanhaFimDoDia() {
-        let next = task(completedAt: nil).nextDailyDueDate(now: date(10, 23, 50), calendar: calendar)
+    func test_nextOccurrenceDueDate_semVencimento_amanhaFimDoDia() {
+        let next = task(completedAt: nil).nextOccurrenceDueDate(now: date(10, 23, 50), calendar: calendar)
         XCTAssertEqual(next, date(11, 23, 59))
     }
 
     // MARK: - Clone para o dia seguinte
 
-    func test_nextDailyOccurrence_copiaOsCamposEVenceAmanha() {
+    func test_nextOccurrence_copiaOsCamposEVenceAmanha() {
         let parentID = UUID()
         let original = FocusTask(
             id: UUID(), title: "Inglês", source: .reminders, reminderID: "r1", createdAt: date(1, 8),
             completedAt: date(10, 9), tags: ["estudo"], notes: "Duolingo", dueDate: date(10, 18, 30),
             priority: 1, sourceURL: "https://duolingo.com",
             history: [TaskHistoryEntry(id: UUID(), createdAt: date(5, 8), text: "x")],
-            repeatsDaily: true, completionLog: [date(5, 8)], laneID: UUID(), isUrgent: true, parentID: parentID)
+            repeatsDaily: true, completionLog: [date(5, 8)], laneIDs: [UUID()], isUrgent: true, parentID: parentID)
         let cloneID = UUID()
 
-        let clone = original.nextDailyOccurrence(id: cloneID, now: date(10, 9), calendar: calendar)
+        let clone = original.nextOccurrence(id: cloneID, now: date(10, 9), calendar: calendar)
 
         XCTAssertEqual(clone.id, cloneID)
         XCTAssertEqual(clone.title, "Inglês")
@@ -65,21 +65,21 @@ final class DailyTaskTests: XCTestCase {
         XCTAssertEqual(clone.parentID, parentID)
     }
 
-    func test_nextDailyOccurrence_naoHerdaHistoricoLogNemRaia() {
+    func test_nextOccurrence_naoHerdaHistoricoLogNemRaia() {
         let original = FocusTask(
             id: UUID(), title: "Inglês", source: .manual, createdAt: date(1, 8), completedAt: date(10, 9),
             history: [TaskHistoryEntry(id: UUID(), createdAt: date(5, 8), text: "x")],
-            repeatsDaily: true, completionLog: [date(5, 8)], laneID: UUID())
+            repeatsDaily: true, completionLog: [date(5, 8)], laneIDs: [UUID()])
 
-        let clone = original.nextDailyOccurrence(id: UUID(), now: date(10, 9), calendar: calendar)
+        let clone = original.nextOccurrence(id: UUID(), now: date(10, 9), calendar: calendar)
 
         XCTAssertEqual(clone.history, [])
         XCTAssertEqual(clone.completionLog, [])
-        XCTAssertNil(clone.laneID)
+        XCTAssertTrue(clone.laneIDs.isEmpty)
     }
 
-    func test_nextDailyOccurrence_semVencimento_amanhaFimDoDia() {
-        let clone = task(completedAt: date(10, 9)).nextDailyOccurrence(id: UUID(), now: date(10, 9), calendar: calendar)
+    func test_nextOccurrence_semVencimento_amanhaFimDoDia() {
+        let clone = task(completedAt: date(10, 9)).nextOccurrence(id: UUID(), now: date(10, 9), calendar: calendar)
         XCTAssertEqual(clone.dueDate, date(11, 23, 59))
     }
 }

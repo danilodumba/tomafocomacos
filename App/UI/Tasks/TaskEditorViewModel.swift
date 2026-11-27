@@ -18,14 +18,16 @@ final class TaskEditorViewModel: ObservableObject, Identifiable {
     var parentTitle: String? { parent?.title }
 
     @Published var title: String
+    /// Código da tarefa (RF-09.22) — livre; em branco = sem código.
+    @Published var code: String
     /// Tags do rascunho, separadas por vírgula (mesmo formato do campo de criação).
     @Published var tags: String
     /// Vencimento é opcional: o toggle liga/desliga o `DatePicker` e desligado grava `nil`.
     @Published var hasDueDate: Bool
     @Published var dueDate: Date
     @Published var priority: TaskPriority
-    /// "Repetir diariamente" (FEAT-004).
-    @Published var repeatsDaily: Bool
+    /// Repetição (FEAT-004, customizada no RF-09.21). `nil` = não repete.
+    @Published var recurrence: TaskRecurrence?
     /// Nota, link e urgente (RF-09.13). Link cru — o use case completa `https://` e valida.
     @Published var notes: String
     @Published var link: String
@@ -71,11 +73,12 @@ final class TaskEditorViewModel: ObservableObject, Identifiable {
         self.onClose = onClose
         self.onOpenTask = onOpenTask
         title = task.title
+        code = task.code ?? ""
         tags = task.tags.joined(separator: ", ")
         hasDueDate = task.dueDate != nil
         dueDate = task.dueDate ?? Self.defaultDueDate()
         priority = TaskPriority(rawPriority: task.priority)
-        repeatsDaily = task.repeatsDaily
+        recurrence = task.recurrence
         notes = task.notes ?? ""
         link = task.sourceURL ?? ""
         isUrgent = task.isUrgent
@@ -133,11 +136,12 @@ final class TaskEditorViewModel: ObservableObject, Identifiable {
                 tags: Self.parseTags(tags),
                 dueDate: hasDueDate ? dueDate : nil,
                 priority: priority,
-                repeatsDaily: repeatsDaily,
                 notes: notes,
                 link: link,
                 isUrgent: isUrgent,
-                projectID: projectID
+                projectID: projectID,
+                recurrence: recurrence,
+                code: code
             ))
             wroteSomething = true
         } catch DomainError.emptyTaskTitle {
@@ -273,6 +277,20 @@ final class TaskEditorViewModel: ObservableObject, Identifiable {
     /// Edição completa da subtarefa (tags, prioridade, vencimento…): troca este editor pelo dela.
     func openSubtask(_ subtask: FocusTask) {
         onOpenTask(subtask)
+    }
+
+    /// Duplica a tarefa gravada (RF-09.19) e troca este editor pelo da cópia — o caminho natural
+    /// para ajustar o título "(cópia)". O rascunho desta não é gravado (mesma regra de abrir a
+    /// subtarefa); a cópia parte do que está salvo.
+    func duplicate() {
+        feedback = nil
+        do {
+            guard let copy = try useCase.duplicateTask(id: task.id) else { return }
+            onChanged()
+            onOpenTask(copy)
+        } catch {
+            feedback = "Não foi possível duplicar: \(error.localizedDescription)"
+        }
     }
 
     /// Caminho inverso: do editor da subtarefa para o do pai (clique no "↳ Pai" do cabeçalho).

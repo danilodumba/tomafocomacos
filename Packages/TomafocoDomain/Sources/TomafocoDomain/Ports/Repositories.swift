@@ -27,12 +27,12 @@ public protocol TaskRepository: AnyObject {
     func upsert(_ tasks: [FocusTask]) throws
 }
 
-/// Persistência do quadro Kanban (FEAT-005): raias + configuração do quadro.
-/// `nil` = nunca salvo (o use case cria o quadro padrão).
+/// Persistência dos quadros Kanban (FEAT-005, vários desde a FEAT-008): lista inteira, na ordem
+/// de criação — é pequena e sempre usada inteira. Vazia = nunca salvo (o use case cria o padrão).
 @MainActor
 public protocol KanbanBoardRepository: AnyObject {
-    func loadBoard() throws -> KanbanBoard?
-    func saveBoard(_ board: KanbanBoard) throws
+    func loadBoards() throws -> [KanbanBoard]
+    func saveBoards(_ boards: [KanbanBoard]) throws
 }
 
 /// Projetos (FEAT-006). Volume pequeno: leitura sempre da lista inteira.
@@ -57,6 +57,19 @@ public protocol TaskDocumentRepository: AnyObject {
     func delete(taskIDs: Set<UUID>) throws
     /// Tarefas que têm documento — para o selo na lista/Kanban, sem ler os textos.
     func taskIDsWithDocument() throws -> Set<UUID>
+}
+
+/// Documentos dos projetos (FEAT-009). A lista lê só os resumos; o texto, um por vez.
+@MainActor
+public protocol ProjectDocumentRepository: AnyObject {
+    /// Resumos (sem texto) dos documentos do projeto, em qualquer ordem.
+    func summaries(projectID: UUID) throws -> [ProjectDocumentSummary]
+    func document(id: UUID) throws -> ProjectDocument?
+    /// Insere ou substitui.
+    func save(_ document: ProjectDocument) throws
+    func delete(id: UUID) throws
+    /// Todos os documentos do projeto (o projeto foi apagado).
+    func delete(projectID: UUID) throws
 }
 
 /// Transação que abrange vários repositórios (FEAT-006): o que é gravado dentro de `perform`

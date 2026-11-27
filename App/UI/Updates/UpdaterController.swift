@@ -39,8 +39,10 @@ final class UpdaterController: ObservableObject {
         // do Info.plist e agenda a checagem periódica (`SUScheduledCheckInterval`).
         // Sem delegates: o comportamento padrão já é o desejado — checa em segundo plano e
         // PERGUNTA antes de baixar/instalar, nunca troca a versão sem o usuário mandar.
+        // Build de desenvolvimento não se atualiza: o Sparkle trocaria o "Tomafoco Dev" pelo
+        // DMG de produção.
         controller = SPUStandardUpdaterController(
-            startingUpdater: true, updaterDelegate: nil, userDriverDelegate: nil)
+            startingUpdater: !AppEnvironment.current.isDevelopment, updaterDelegate: nil, userDriverDelegate: nil)
 
         // Atribuição dentro do `init` não dispara `didSet` — não há eco de volta para o Sparkle.
         automaticallyChecks = controller.updater.automaticallyChecksForUpdates

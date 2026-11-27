@@ -6,12 +6,24 @@ struct OverflowMenu: View {
     /// Observado DIRETAMENTE (não via `AppContainer`): sem isso o item de atualização não
     /// reagiria a `canCheckForUpdates` — mesma armadilha do rótulo do `MenuBarExtra`.
     @ObservedObject var updater: UpdaterController
+    /// Quadros Kanban (FEAT-008) — observado direto pelo mesmo motivo.
+    @ObservedObject var kanbanBoards: KanbanBoardList
     @Environment(\.openWindow) private var openWindow
 
     var body: some View {
         Menu {
+            // Versão no topo do menu (só informativa).
+            Text(AppInfo.display)
+            Divider()
             Button("Tarefas…") { open("tasks") }
-            Button("Kanban…") { open("kanban") }
+            if kanbanBoards.items.count > 1 {
+                // Vários quadros (FEAT-008): um item por quadro.
+                Menu("Kanban") {
+                    KanbanBoardMenuItems(boards: kanbanBoards)
+                }
+            } else {
+                Button("Kanban…") { openWindow.kanbanBoard(fallback: kanbanBoards.items) }
+            }
             Menu("Relatórios") {
                 Button("Tarefas…") { open("reports") }
                 Button("Projetos…") { open("project-reports") }

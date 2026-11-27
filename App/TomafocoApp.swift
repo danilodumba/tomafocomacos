@@ -13,7 +13,8 @@ struct TomafocoApp: App {
         // PRIMEIRA cena de propósito: a cena inicial é a que o SwiftUI abre no lançamento.
         // Com uma `Window` na frente, a janela de Tarefas subia sozinha ao abrir o app.
         MenuBarExtra {
-            MainView(viewModel: container.timerViewModel, updater: container.updater)
+            MainView(viewModel: container.timerViewModel, updater: container.updater,
+                     kanbanBoards: container.kanbanBoardList)
         } label: {
             MenuBarLabel(viewModel: container.timerViewModel)
         }
@@ -28,10 +29,11 @@ struct TomafocoApp: App {
             CommandGroup(after: .appInfo) {
                 CheckForUpdatesMenuItem(updater: container.updater)
             }
-            // ⌥⌘K abre o Kanban. Só existe com alguma janela aberta (o app é `.accessory` no
-            // resto do tempo); fora disso o caminho é o menu de engrenagem do popover.
+            // ⌥⌘K abre o último quadro Kanban usado; os demais quadros vêm logo abaixo. Só
+            // existe com alguma janela aberta (o app é `.accessory` no resto do tempo); fora
+            // disso o caminho é o menu de engrenagem do popover.
             CommandGroup(before: .windowList) {
-                OpenKanbanMenuItem()
+                OpenKanbanMenuItem(boards: container.kanbanBoardList)
             }
         }
 
@@ -39,6 +41,7 @@ struct TomafocoApp: App {
         projectReportsWindow
         kanbanWindow
         documentWindow
+        projectDocumentWindow
 
         Settings {
             SettingsView(
@@ -61,10 +64,13 @@ struct TomafocoApp: App {
         }
     }
 
-    /// Kanban em janela própria (FEAT-005) para usar tela cheia e Split View.
+    /// Kanban em janela própria (FEAT-005) para usar tela cheia e Split View — uma janela por
+    /// quadro (FEAT-008): o `WindowGroup(for:)` reaproveita a janela já aberta do mesmo quadro.
+    /// Nunca abre sozinho no lançamento (o `MenuBarExtra` é a primeira cena).
     private var kanbanWindow: some Scene {
-        Window("Kanban", id: "kanban") {
-            KanbanBoardView(viewModel: container.kanbanViewModel, documentIndex: container.documentIndex)
+        WindowGroup("Kanban", id: KanbanBoardWindow.sceneID, for: UUID.self) { $boardID in
+            KanbanBoardWindow(boardID: $boardID, documentIndex: container.documentIndex,
+                              viewModel: container.makeKanbanViewModel(boardID: boardID))
                 .frame(minWidth: 840, minHeight: 540)
                 .allowsFullScreen()
         }
@@ -84,14 +90,32 @@ extension TomafocoApp {
     /// `WindowGroup(for:)` reaproveita a janela já aberta do mesmo `UUID`. Nunca abre sozinho no
     /// lançamento (o `MenuBarExtra` é a primeira cena).
     fileprivate var documentWindow: some Scene {
-        WindowGroup("Documento", id: TaskDocumentWindow.sceneID, for: UUID.self) { $taskID in
+        WindowGroup("Documento", id: DocumentWindow.taskSceneID, for: UUID.self) { $taskID in
             if let taskID {
-                TaskDocumentWindow(viewModel: container.makeDocumentViewModel(taskID: taskID))
+                DocumentWindow(viewModel: container.makeDocumentViewModel(taskID: taskID))
                     .id(taskID)
                     .frame(minWidth: 560, minHeight: 420)
                     .allowsFullScreen()
             } else {
                 Text("Nenhuma tarefa selecionada.")
+                    .foregroundStyle(Brand.textFaint)
+                    .frame(minWidth: 400, minHeight: 300)
+            }
+        }
+        .defaultSize(width: 980, height: 720)
+    }
+
+    /// Documento de projeto (FEAT-009) — uma janela por documento; mesma janela do documento da
+    /// tarefa, com o título editável. Nunca abre sozinho no lançamento.
+    fileprivate var projectDocumentWindow: some Scene {
+        WindowGroup("Documento do projeto", id: DocumentWindow.projectSceneID, for: UUID.self) { $documentID in
+            if let documentID {
+                DocumentWindow(viewModel: container.makeProjectDocumentViewModel(documentID: documentID))
+                    .id(documentID)
+                    .frame(minWidth: 560, minHeight: 420)
+                    .allowsFullScreen()
+            } else {
+                Text("Nenhum documento selecionado.")
                     .foregroundStyle(Brand.textFaint)
                     .frame(minWidth: 400, minHeight: 300)
             }
@@ -130,6 +154,11 @@ private struct MenuBarLabel: View {
             if !viewModel.menuBarLabel.isEmpty {
                 Text(viewModel.menuBarLabel)
             }
+            // Build de desenvolvimento roda ao lado do app instalado — dois tomates iguais na
+            // barra confundiriam. Só `Text`/`Image` renderizam aqui.
+            if AppEnvironment.current.isDevelopment {
+                Text("DEV")
+            }
         }
     }
 }
@@ -145,15 +174,19 @@ private struct CheckForUpdatesMenuItem: View {
     }
 }
 
-/// Item "Kanban" (⌥⌘K) do menu Janela. View própria porque `openWindow` vem do ambiente.
+/// Item "Kanban" (⌥⌘K, último quadro usado) do menu Janela e, com mais de um quadro, um submenu
+/// com todos (FEAT-008). View própria porque `openWindow` vem do ambiente.
 private struct OpenKanbanMenuItem: View {
+    @ObservedObject var boards: KanbanBoardList
     @Environment(\.openWindow) private var openWindow
 
     var body: some View {
-        Button("Kanban") {
-            openWindow(id: "kanban")
-            NSApp.activate(ignoringOtherApps: true)
+        Button("Kanban") { openWindow.kanbanBoard(fallback: boards.items) }
+            .keyboardShortcut("k", modifiers: [.command, .option])
+        if boards.items.count > 1 {
+            Menu("Quadros Kanban") {
+                KanbanBoardMenuItems(boards: boards)
+            }
         }
-        .keyboardShortcut("k", modifiers: [.command, .option])
     }
 }

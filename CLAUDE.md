@@ -507,6 +507,97 @@ Conteúdo: FEAT-007 inteira (documento em markdown nas tarefas). **Primeiro lan�
   DMG servido = local.
 - ⚠️ Validação manual da FEAT-007 **não** foi feita antes da release (pedido do usuário) — fazer na 1ª abertura.
 
+**🗂️ FEAT-008 — Vários quadros Kanban (2026-11-27, branch `feat/feat-008-multi-kanban`, NÃO commitado):**
+Plano (P1–P10 aprovadas), implementação e desvios em `../DOCS - Tomafoco/APP/Features/FEAT-008 Possibilitar criar mais de um Kanban.md`; ADR-13.
+- **`FocusTask.laneID` → `laneIDs: [UUID]`** (uma raia por quadro; ids de raia são únicos entre quadros, cada
+  quadro usa o seu). Decode lê a chave antiga `laneID` como `[laneID]`; ela nunca mais é gravada. Use
+  `place(inLane:of:)` / `removeLanes(of:)` — **nunca** atribuir `laneIDs` direto num quadro só.
+- `KanbanBoard` ganhou `id`, `name`, `projectScope: ProjectFilter` (escopo = tag E projeto, `includes(_:in:)`).
+  `ProjectFilter` agora é Codable (manual, `mode`+`projectID`).
+- Persistência: lista de quadros em `SingletonKey.kanbanBoards` (**sem esquema V3**); `loadBoards()` migra o
+  singleton antigo `kanbanBoard` (grava lista + apaga antiga numa transação). `FileKanbanStore` não é mais repo.
+- `ManageKanbanUseCase`: todo método recebe `boardID` (`in:`/`of:`); `boards()` cria o padrão se vazio.
+  Conclusão é global; histórico ganha prefixo `"<quadro>: "` com >1 quadro. Apagar projeto limpa o escopo dos
+  quadros na mesma transação (`ManageProjectsUseCase(kanbanBoards:)`).
+- App: `WindowGroup(for: UUID)` id `"kanban"` → `KanbanBoardWindow` + VM por janela
+  (`container.makeKanbanViewModel`, `@StateObject`); `TaskChangeRelay` com `NSHashTable` fraca de janelas
+  (`Source.board(vm)` poupa só a origem). Abrir quadro: `openWindow.kanbanBoard(id?)` (último usado em
+  `kanbanLastBoardID`). Aba Kanban configura o quadro de `kanbanSettingsBoardID` (notificação troca com a
+  aba aberta). `KanbanBoardList` alimenta os menus (engrenagem e Janela).
+- `make test` **625 verdes** (Domain 172, Application 315, Infra 100, Markdown 38); `xcodebuild` limpo, zero
+  warnings. Migração conferida em **cópia** do banco real (162 tarefas, 68 com `laneID`, raias idênticas).
+- ⚠️ Validar à mão (lista no FEAT-008): 1º lançamento vira quadro "Kanban" igual; 2º quadro com escopo de
+  projeto; mesma tarefa em 2 quadros; janelas lado a lado; apagar raia/quadro; tag/projeto apagados; ⌥⌘K;
+  app abre sem janela (restauração do `WindowGroup`).
+
+**🏷️ Versão mais visível (2026-11-27, mesma branch):** rodapé do popover (`MainView.versionLabel`, overlay na
+margem inferior — não no VStack, o popover tem altura fixa) com "v1.19 · build 20" (+ "· DEV"), selecionável;
+e 1º item do menu da engrenagem ("Tomafoco 1.19 (20)"). `AppInfo.name` lê `CFBundleDisplayName` (Dev aparece
+como "Tomafoco Dev"). Rodapé das Configurações mantido. ⚠️ Conferir à mão o rodapé do popover com seletor +
+erro na tela (não sobrepõe os controles).
+
+**📄 Duplicar tarefa (RF-09.19 / T-58, 2026-11-27, mesma branch):** `FocusTask.duplicated(id:title:parentID:now:)`
++ `duplicateTitle(for:isTaken:)` ("X (cópia)", "(cópia 2)"…, sem empilhar sufixo) no Domain;
+`ManageTasksUseCase.duplicateTask(id:)` — cópia aberta e **manual** (sem `reminderID`: concluir a cópia não
+risca o lembrete da original), sem histórico, mesmas raias/projeto/pai; filhas vêm junto (abertas); subtarefa
+fica no mesmo pai (pai concluído reabre); documentos copiados como estão; tudo num `unitOfWork.perform`.
+UI: "Duplicar" no menu da linha e do cartão (só feedback, **não** abre o formulário — Cancelar pareceria
+desfazer) e no rodapé do formulário (abre a cópia via `onOpenTask`). `ManageTasksDuplicateTests` (8).
+⚠️ Validar à mão: duplicar pela lista/cartão/formulário; pai com filhas; subtarefa; documento copiado.
+
+**📚 FEAT-009 — Documentos do projeto (RF-09.20 / T-59 / ADR-14, 2026-11-27, mesma branch):** vários documentos
+markdown por projeto, com título. Decisão minha (vários, não 1): cobre o caso de um só.
+- Domain: `ProjectDocument` (título normalizado → "Sem título"; em branco **continua existindo**, ≠ tarefa),
+  `ProjectDocumentSummary`, port `ProjectDocumentRepository`. Limite = `TaskDocument.maxByteCount`.
+- Application: `ManageProjectDocumentsUseCase` (create/rename/save/delete/documents);
+  `ManageProjectsUseCase(projectDocuments:)` apaga os documentos no `deleteProject` (transação) + `documentCount`.
+- Infra: **`TomafocoSchemaV3`** = V2 + `ProjectDocumentRecord` (estágio leve V2→V3; `currentSchema` = V3).
+  `SwiftDataProjectDocumentStore` (+ `deleteOrphans()` no lançamento, por linha de `ProjectRecord`). Regra de
+  congelar classes antigas continua valendo para a V4 se ela MUDAR um modelo existente.
+- App: `TaskDocumentViewModel`/`TaskDocumentWindow` → **`DocumentViewModel`/`DocumentWindow`** genéricos via
+  `DocumentSource` (`TaskDocumentSource`, `ProjectDocumentSource`; `canRename` → título editável no cabeçalho).
+  Cenas `task-document` (id da tarefa) e `project-document` (id do documento). `openWindow.projectDocument(id)`.
+  `ProjectsSheet` (760×760) ganhou seção Documentos; lista relê por `ProjectDocumentsChange` (notificação —
+  o sheet não está no relay). `ProjectsHosting` exige `manageProjectDocuments`.
+- Testes: Application +10 (`ManageProjectDocumentsTests`), Infra +5 (store + **migração V2→V3**). Migração
+  conferida em cópia do banco real (111 ms, sem `.bak`, dados intactos).
+- ⚠️ Primeiro lançamento migra o banco para V3. ⚠️ Validar à mão: criar documento (abre janela), renomear no
+  cabeçalho (lista atualiza), apagar documento com janela aberta (vira só leitura), apagar projeto com documentos.
+
+**🔁 Repetição customizada (RF-09.21 / T-60, 2026-11-27, mesma branch):** generaliza a diária (FEAT-004).
+- Domain: **`TaskRecurrence`** (`daily(interval)`, `weekly(weekdays:interval)` — 1=dom…7=sáb, `monthly(day:interval)`
+  — dia inexistente → último do mês, `yearly(month:day)`); presets `.everyDay`/`.weekdays`/`.weekends`;
+  `nextDay(after:calendar:)` = próximo dia da regra **depois do dia da conclusão** (semanal com intervalo conta
+  semanas a partir da semana da conclusão); `normalized`; Codable manual `kind` (desconhecido → diária).
+- `FocusTask.recurrence: TaskRecurrence?` (stored). **`repeatsDaily` virou computado** (get = tem regra; set true
+  sem regra = todo dia) — mantido por lista/Kanban/testes. Decode: `recurrence` ou legado `repeatsDaily: true` →
+  `.everyDay` (`LegacyCodingKeys`). `nextDailyOccurrence`/`nextDailyDueDate` → **`nextOccurrence`/
+  `nextOccurrenceDueDate`** (clone leva a mesma regra).
+- Application: `TaskEdit.recurrence` (`repeatsDaily` computado); forma curta do `editTask` **preserva a regra**
+  existente; `setRecurrence(id:_:)`.
+- App: `RecurrenceEditor.swift` — `RecurrenceEditor` (Picker de tipo + detalhes), `RecurrenceKind`,
+  `RecurrenceBadge`, `RecurrenceMenu` (menu de contexto "Repetir ▸" na linha e no cartão), textos pt-BR
+  (`badgeText`/`summary`). Feedback de conclusão mostra a data do próximo vencimento.
+- Testes: Domain +13 (`TaskRecurrenceTests`), Application +3. Cópia do banco real: 34 diárias → todas `.everyDay`.
+- ⚠️ Validar à mão: escolher cada tipo no formulário, marcar dias da semana, concluir e ver o vencimento do clone.
+
+**🔢 Código de tarefa por projeto (RF-09.22 / T-61, 2026-11-27, mesma branch):** projeto com `code` ("PSC", ≤5,
+maiúsculas, sem espaço, **único**) + `nextCodeNumber` (≥1); tarefa com `code` livre + `displayTitle`
+("PSC0001 - Título"). Formato `Project.taskCode` = prefixo + `%04d`.
+- Geração em `ManageTasksUseCase`: `takeCode(for:reserved:)` reserva numa cópia do projeto e `save(_:reservingCodesIn:)`
+  grava **tarefas + projetos na mesma `unitOfWork`** (falhou → número não é gasto). Gera em `addTask`, `addTasks`
+  (sequência do lote), `applyEdit` quando o **projeto muda** e o usuário **não mexeu no código** (tarefa de topo; projeto
+  sem código mantém o antigo) e `duplicateTask` (cópia de topo; filhas sem código). **Subtarefa nunca gera.**
+  Clone da repetição **mantém** o código (decisão minha: mesma tarefa, não gastar número a cada ocorrência).
+- ⚠️ `TaskEdit(code:)` default `nil` = **apaga** o código — quem monta `TaskEdit` completo tem que passar o atual
+  (o formulário passa; a forma curta do `editTask` preserva).
+- UI: campos Código / Número inicial (Próximo número) no `ProjectsSheet` (VM limita a 5 e põe maiúsculas na
+  digitação; prévia "Próxima tarefa: PSC0001"), campo Código no `TaskEditorSheet`, `displayTitle` em lista, cartão,
+  seletor do popover, concluídas dos relatórios, subtarefas do formulário e janela de documento. `TaskFilter` busca
+  pelo código. Testes: `TaskCodeTests` (16).
+- ⚠️ Validar à mão: criar projeto com código, criar tarefa nele (lista/Kanban/lote), associar tarefa existente,
+  editar código, duplicar, ver "PSC0001 - …" nas listas.
+
 ## Como retomar
 
 ```bash
@@ -551,6 +642,17 @@ Pré-requisitos: `brew install xcodegen` (e opcional `brew install swiftlint`). 
 - Publicação: DMG + notas + `appcast.xml` em `site/downloads/`, bump nos 5 arquivos do site (regex pegou `1.9` mas não `Tomafoco-1.9.dmg` — conferir com `grep 1\.9` depois do bump), commit + push nos 2 repos, tag `v1.10`. Deploy no ar em ~60s. Verificado ao vivo: `/`, DMG, appcast, `app.js` **200**; DMG servido com o **mesmo SHA-256** do local; notas `.html` **301** (normal no Azure SWA).
 
 ## Convenções / gotchas
+
+- **Build Debug = "Tomafoco Dev" (2026-11-27), separado da produção.** Bundle ID `com.dsdumba.tomafoco.dev`
+  (UserDefaults, chaveiro `…dev.unlock`, TCC e item de login próprios), dados em
+  `~/Library/Application Support/Tomafoco-Dev/` (`AppEnvironment` lê `TomafocoDataFolder` do Info.plist,
+  definido por config no `project.yml`), Sparkle desligado e "DEV" na barra de menus. Release/DMG inalterado
+  (`com.dsdumba.tomafoco`, pasta `Tomafoco`). **`make dev-data`** copia a produção: banco por
+  `sqlite3 .backup` (consistente com o app aberto) + preferências com sync do Lembretes e bloqueio contínuo
+  **desligados** na cópia. Precisa rodar fora de sandbox (o `cfprefsd` não responde de dentro).
+  ⚠️ `defaults … com.dsdumba.tomafoco` por NOME lê um container de sandbox antigo
+  (`~/Library/Containers/com.dsdumba.tomafoco`, vazio) — usar o caminho do `.plist` em `~/Library/Preferences`.
+  Dev ainda fala com o **Lembretes real** ao importar/concluir se o usuário religar o sync.
 
 - Nunca usar `Date()`/`Timer` no Domain/Application — tudo via `SessionClock` (testabilidade).
 - Efeitos colaterais saem da máquina como `SessionEffect`; quem executa é o `SessionCoordinator`.

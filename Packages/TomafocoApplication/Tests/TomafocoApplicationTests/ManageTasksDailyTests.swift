@@ -153,4 +153,37 @@ final class ManageTasksDailyTests: XCTestCase {
         XCTAssertFalse(stored(task.id).repeatsDaily)
         XCTAssertEqual(stored(task.id).history.count, 1)
     }
+
+    // MARK: - Repetição customizada (RF-09.21)
+
+    /// Terça 27/10: fim de semana → clone vence sábado 31/10, mantendo a regra.
+    func test_concluir_fimDeSemana_cloneNoSabadoComAMesmaRegra() async throws {
+        let task = try sut.addTask(title: "Feira")
+        try sut.setRecurrence(id: task.id, .weekends)
+
+        try await sut.completeTask(id: task.id)
+
+        let next = try XCTUnwrap(clone(of: task.id))
+        XCTAssertEqual(next.dueDate, date(31, 23, 59))
+        XCTAssertEqual(next.recurrence, .weekends)
+    }
+
+    func test_editTaskCompleto_gravaRegraNormalizada() throws {
+        let task = try sut.addTask(title: "Relatório")
+        let edited = try sut.editTask(id: task.id, TaskEdit(
+            title: "Relatório", recurrence: .monthly(day: 40, interval: 0)))
+        XCTAssertEqual(edited?.recurrence, .monthly(day: 31, interval: 1))
+    }
+
+    /// A forma curta (`repeatsDaily: true`) é edição parcial: não troca a regra que já existia.
+    func test_editTaskCurto_mantemRegraExistente() throws {
+        let task = try sut.addTask(title: "Academia")
+        try sut.setRecurrence(id: task.id, .weekly(weekdays: [2, 4, 6], interval: 1))
+        _ = try sut.editTask(id: task.id, title: "Academia", tags: [], dueDate: nil, priority: .none,
+                             repeatsDaily: true)
+        XCTAssertEqual(stored(task.id).recurrence, .weekly(weekdays: [2, 4, 6], interval: 1))
+        _ = try sut.editTask(id: task.id, title: "Academia", tags: [], dueDate: nil, priority: .none,
+                             repeatsDaily: false)
+        XCTAssertNil(stored(task.id).recurrence)
+    }
 }

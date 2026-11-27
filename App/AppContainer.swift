@@ -29,15 +29,20 @@ final class AppContainer: ObservableObject {
     /// mudança de flag ou de lista.
     let persistentBlocking: PersistentBlockingController
     let tasksViewModel: TasksViewModel
-    /// Janela Kanban + aba Kanban das Configurações (FEAT-005).
-    let kanbanViewModel: KanbanViewModel
+    /// Aba Kanban das Configurações (FEAT-005) e lista de quadros dos menus (FEAT-008). As
+    /// janelas Kanban têm um VM cada (`makeKanbanViewModel`).
     let kanbanSettingsViewModel: KanbanSettingsViewModel
+    let kanbanBoardList: KanbanBoardList
+    private let manageKanban: ManageKanbanUseCase
+    private let manageProjects: ManageProjectsUseCase
     let reportsViewModel: ReportsViewModel
     /// Relatórios › Projetos (FEAT-006 / RF-10.7).
     let projectReportsViewModel: ProjectReportsViewModel
     /// Documento em markdown das tarefas (FEAT-007): selo da lista/Kanban + janelas de documento.
     let documentIndex: TaskDocumentIndex
     private let manageDocuments: ManageTaskDocumentsUseCase
+    /// Documentos dos projetos (FEAT-009) — usados pelo cadastro de projetos e pelas janelas.
+    let manageProjectDocuments: ManageProjectDocumentsUseCase
     private let manageTasks: ManageTasksUseCase
     private let relay: TaskChangeRelay
     /// Atualização automática (ADR-9). Criado aqui — e não sob demanda numa View — porque o
@@ -60,6 +65,7 @@ final class AppContainer: ObservableObject {
         manageKanban: ManageKanbanUseCase,
         manageProjects: ManageProjectsUseCase,
         manageDocuments: ManageTaskDocumentsUseCase,
+        manageProjectDocuments: ManageProjectDocumentsUseCase,
         settings: SettingsRepository,
         sessions: SessionRepository,
         tasks: TaskRepository,
@@ -75,7 +81,10 @@ final class AppContainer: ObservableObject {
         self.manageBlockList = manageBlockList
         self.notificationAdapter = notificationAdapter
         self.manageDocuments = manageDocuments
+        self.manageProjectDocuments = manageProjectDocuments
         self.manageTasks = manageTasks
+        self.manageKanban = manageKanban
+        self.manageProjects = manageProjects
         let documentIndex = TaskDocumentIndex(useCase: manageDocuments)
         self.documentIndex = documentIndex
         let timer = TimerViewModel(coordinator: coordinator, settings: settings, manageTasks: manageTasks)
@@ -96,17 +105,16 @@ final class AppContainer: ObservableObject {
         // `refresh()` — que não avisa de volta, senão as janelas ficariam se avisando em laço.
         let relay = TaskChangeRelay(timer: self.timerViewModel, documentIndex: documentIndex)
         self.relay = relay
-        self.tasksViewModel = TasksViewModel(useCase: manageTasks, manageProjects: manageProjects) {
+        self.tasksViewModel = TasksViewModel(
+            useCase: manageTasks, manageProjects: manageProjects, manageProjectDocuments: manageProjectDocuments
+        ) {
             relay.tasksChanged(from: .list)
         }
-        self.kanbanViewModel = KanbanViewModel(
-            useCase: manageKanban, manageTasks: manageTasks, manageProjects: manageProjects
-        ) {
-            relay.tasksChanged(from: .board)
-        }
         self.kanbanSettingsViewModel = KanbanSettingsViewModel(
-            useCase: manageKanban, manageTasks: manageTasks) { relay.tasksChanged(from: .settings) }
-        relay.connect(list: tasksViewModel, board: kanbanViewModel,
+            useCase: manageKanban, manageTasks: manageTasks, manageProjects: manageProjects
+        ) { relay.tasksChanged(from: .settings) }
+        self.kanbanBoardList = KanbanBoardList(useCase: manageKanban)
+        relay.connect(list: tasksViewModel, boardList: kanbanBoardList,
                       boardSettings: kanbanSettingsViewModel, focusSettings: settingsViewModel)
         self.reportsViewModel = ReportsViewModel(sessions: sessions, tasks: tasks)
         self.projectReportsViewModel = ProjectReportsViewModel(
@@ -142,7 +150,7 @@ final class AppContainer: ObservableObject {
             redirectURLProvider: { settings.loadConfiguration().blockedRedirectURL }
         )
         // Senha de desbloqueio (FEAT-002): abrir app bloqueado pede a senha em vez de só encerrar.
-        let passwordStore = KeychainAppUnlockPasswordStore()
+        let passwordStore = KeychainAppUnlockPasswordStore(service: AppEnvironment.current.keychainService)
         let unlockPrompt = AppUnlockPromptPresenter()
         let authorizer = ProtectedActionAuthorizer(store: passwordStore, presenter: unlockPrompt)
         let rawAppBlocker = WorkspaceAppBlocker(
@@ -165,8 +173,9 @@ final class AppContainer: ObservableObject {
         let tagCatalog = SwiftDataTagCatalog(database: database)
         let projectStore = SwiftDataProjectStore(database: database)
         let documentStore = SwiftDataTaskDocumentStore(database: database)
+        let projectDocumentStore = SwiftDataProjectDocumentStore(database: database)
         Self.importLegacyJSON(database: database, tasks: taskStore, sessions: sessions, tags: tagCatalog)
-        Self.deleteOrphanDocuments(documents: documentStore)
+        Self.deleteOrphanDocuments(documents: documentStore, projectDocuments: projectDocumentStore)
 
         let coordinator = SessionCoordinator(
             clock: clock, appBlocker: appBlocker, websiteBlocker: persistentWebsiteBlocker,
@@ -190,19 +199,22 @@ final class AppContainer: ObservableObject {
             documents: documentStore, unitOfWork: database, checklistResetter: MarkdownChecklistResetter())
         let manageDocuments = ManageTaskDocumentsUseCase(
             documents: documentStore, tasks: taskStore, now: { clock.now })
-        // Quadro Kanban (FEAT-005): raias + config numa linha do banco.
+        // Quadros Kanban (FEAT-005/FEAT-008): lista de quadros numa linha do banco.
         let manageKanban = ManageKanbanUseCase(boards: kanbanStore, tasks: manageTasks, now: { clock.now })
         // Projetos (FEAT-006): apagar projeto + tirar das tarefas numa transação do banco.
         let manageProjects = ManageProjectsUseCase(
             projects: projectStore, tasks: taskStore, unitOfWork: database, now: { clock.now },
-            calendar: .autoupdatingCurrent)
+            calendar: .autoupdatingCurrent, kanbanBoards: kanbanStore, projectDocuments: projectDocumentStore)
+        // Documentos dos projetos (FEAT-009): vários por projeto, saem junto com o projeto.
+        let manageProjectDocuments = ManageProjectDocumentsUseCase(
+            documents: projectDocumentStore, projects: projectStore, now: { clock.now })
 
         notificationAdapter.requestAuthorization()
 
         let container = AppContainer(
             coordinator: coordinator, recover: recover, manageBlockList: manageBlockList,
             manageTasks: manageTasks, manageKanban: manageKanban, manageProjects: manageProjects,
-            manageDocuments: manageDocuments, settings: settings, sessions: sessions, tasks: taskStore,
+            manageDocuments: manageDocuments, manageProjectDocuments: manageProjectDocuments, settings: settings, sessions: sessions, tasks: taskStore,
             appPicker: appPicker, persistentBlocking: persistentBlocking,
             authorizer: authorizer, passwordStore: passwordStore,
             notificationAdapter: notificationAdapter
@@ -222,7 +234,7 @@ final class AppContainer: ObservableObject {
     /// o app sobe com um banco em memória em vez de não abrir — e avisa que nada será salvo.
     private static func openDatabase() -> TomafocoDatabase {
         do {
-            return try TomafocoDatabase.open(at: TomafocoDatabase.defaultURL())
+            return try TomafocoDatabase.open(at: AppEnvironment.current.databaseURL)
         } catch {
             logger.fault("Banco não abriu, usando memória: \(String(describing: error), privacy: .public)")
             let openError = error
@@ -250,7 +262,7 @@ final class AppContainer: ObservableObject {
         if database.wasReset { DatabaseAlert.presentReset() }
         let importer = JSONToSwiftDataImporter(
             database: database, tasks: tasks, sessions: sessions, tags: tags,
-            directory: TomafocoDatabase.defaultURL().deletingLastPathComponent(),
+            directory: AppEnvironment.current.databaseURL.deletingLastPathComponent(),
             legacyTags: UserDefaultsTagCatalog(), now: { Date() })
         do {
             let report = try importer.run()
@@ -265,21 +277,50 @@ final class AppContainer: ObservableObject {
 
     /// Rede de segurança do FEAT-007: documento de tarefa que não existe mais é apagado. Falha
     /// aqui só deixa o órfão para o próximo lançamento.
-    private static func deleteOrphanDocuments(documents: SwiftDataTaskDocumentStore) {
+    private static func deleteOrphanDocuments(documents: SwiftDataTaskDocumentStore,
+                                              projectDocuments: SwiftDataProjectDocumentStore) {
         do {
             try documents.deleteOrphans()
+            try projectDocuments.deleteOrphans()
         } catch {
             logger.error("Limpeza de documentos órfãos falhou: \(String(describing: error), privacy: .public)")
         }
     }
 
-    /// VM de uma janela de documento (FEAT-007) — registrado no relay para acompanhar renomear/
-    /// apagar a tarefa em outra janela.
-    func makeDocumentViewModel(taskID: UUID) -> TaskDocumentViewModel {
+    /// VM de uma janela Kanban (FEAT-008). Registrado no relay (referência fraca): mudança feita
+    /// numa janela reflete nas dos outros quadros.
+    func makeKanbanViewModel(boardID: UUID?) -> KanbanViewModel {
+        let relay = relay
+        // Fraca: o VM guarda este closure — forte seria ciclo e a janela fechada nunca liberaria.
+        weak var origin: KanbanViewModel?
+        let created = KanbanViewModel(
+            boardID: boardID, useCase: manageKanban, manageTasks: manageTasks, manageProjects: manageProjects,
+            manageProjectDocuments: manageProjectDocuments
+        ) {
+            if let origin { relay.tasksChanged(from: .board(origin)) }
+        }
+        origin = created
+        relay.register(board: created)
+        return created
+    }
+
+    /// VM de uma janela de documento de tarefa (FEAT-007) — registrado no relay para acompanhar
+    /// renomear/apagar a tarefa em outra janela.
+    func makeDocumentViewModel(taskID: UUID) -> DocumentViewModel {
         let index = documentIndex
-        let viewModel = TaskDocumentViewModel(
-            taskID: taskID, documents: manageDocuments, tasks: manageTasks,
+        let viewModel = DocumentViewModel(
+            source: TaskDocumentSource(taskID: taskID, documents: manageDocuments, tasks: manageTasks),
             onPresenceChanged: { index.reload() })
+        relay.register(documentWindow: viewModel)
+        return viewModel
+    }
+
+    /// Janela de um documento de projeto (FEAT-009). No relay para ver projeto/documento apagado.
+    func makeProjectDocumentViewModel(documentID: UUID) -> DocumentViewModel {
+        let viewModel = DocumentViewModel(
+            source: ProjectDocumentSource(documentID: documentID, documents: manageProjectDocuments,
+                                          projects: manageProjects),
+            onPresenceChanged: { ProjectDocumentsChange.post() })
         relay.register(documentWindow: viewModel)
         return viewModel
     }

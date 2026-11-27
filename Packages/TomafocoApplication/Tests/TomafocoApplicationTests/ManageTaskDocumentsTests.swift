@@ -189,7 +189,8 @@ final class ManageTaskDocumentsTests: XCTestCase {
         let task = try addDaily()
         try sut.save(taskID: task.id, markdown: "- [x] a")
 
-        try await kanban.moveTask(id: task.id, toLane: try kanban.board().doneLane.id)
+        let board = try kanban.boards()[0]
+        try await kanban.moveTask(id: task.id, toLane: board.doneLane.id, in: board.id)
 
         let clone = try clone(of: task)
         XCTAssertEqual(try sut.document(taskID: clone.id)?.markdown, "- [ ] a")

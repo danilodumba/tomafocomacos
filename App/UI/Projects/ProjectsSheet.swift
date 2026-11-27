@@ -4,6 +4,7 @@ import TomafocoDomain
 /// Cadastro de projetos (FEAT-006): lista à esquerda, formulário à direita.
 struct ProjectsSheet: View {
     @ObservedObject var viewModel: ProjectsViewModel
+    @Environment(\.openWindow) private var openWindow
 
     /// Grades que quebram linha conforme a largura — paleta e ícones cresceram (18 e 64).
     private let colorColumns = [GridItem(.adaptive(minimum: 22), spacing: 6)]
@@ -37,7 +38,7 @@ struct ProjectsSheet: View {
             }
         }
         .padding(16)
-        .frame(width: 760, height: 660)
+        .frame(width: 760, height: 760)
         .confirmationDialog(
             deletionTitle,
             isPresented: Binding(
@@ -50,6 +51,18 @@ struct ProjectsSheet: View {
         } message: {
             Text(deletionMessage)
         }
+        .confirmationDialog(
+            "Apagar o documento \"\(viewModel.pendingDocumentDeletion?.title ?? "")\"?",
+            isPresented: Binding(
+                get: { viewModel.pendingDocumentDeletion != nil },
+                set: { if !$0 { viewModel.pendingDocumentDeletion = nil } }),
+            titleVisibility: .visible
+        ) {
+            Button("Apagar documento", role: .destructive) { viewModel.confirmDocumentDeletion() }
+            Button("Cancelar", role: .cancel) { viewModel.pendingDocumentDeletion = nil }
+        } message: {
+            Text("O texto é apagado de vez.")
+        }
     }
 
     private var deletionTitle: String {
@@ -59,11 +72,17 @@ struct ProjectsSheet: View {
 
     private var deletionMessage: String {
         guard let pending = viewModel.pendingDeletion else { return "" }
-        switch pending.taskCount {
-        case 0: return "Nenhuma tarefa está neste projeto."
-        case 1: return "1 tarefa fica sem projeto. Nenhuma tarefa é apagada."
-        default: return "\(pending.taskCount) tarefas ficam sem projeto. Nenhuma tarefa é apagada."
+        let tasks = switch pending.taskCount {
+        case 0: "Nenhuma tarefa está neste projeto."
+        case 1: "1 tarefa fica sem projeto. Nenhuma tarefa é apagada."
+        default: "\(pending.taskCount) tarefas ficam sem projeto. Nenhuma tarefa é apagada."
         }
+        let documents = switch pending.documentCount {
+        case 0: ""
+        case 1: " O documento do projeto também é apagado."
+        default: " Os \(pending.documentCount) documentos do projeto também são apagados."
+        }
+        return tasks + documents
     }
 
     // MARK: - Lista
@@ -101,7 +120,7 @@ struct ProjectsSheet: View {
                 .foregroundStyle(project.color.color)
                 .frame(width: 18)
             VStack(alignment: .leading, spacing: 2) {
-                Text(project.title)
+                Text(project.code.map { "\($0) · \(project.title)" } ?? project.title)
                     .foregroundStyle(Brand.textPrimary)
                     .lineLimit(1)
                 if let due = project.dueDate {
@@ -129,6 +148,29 @@ struct ProjectsSheet: View {
             Form {
                 TextField("Título", text: $viewModel.title)
                     .onSubmit { viewModel.save() }
+
+                // RF-09.22: "PSC" + número → tarefas criadas/associadas ganham "PSC0001", "PSC0002"…
+                LabeledContent("Código") {
+                    HStack(spacing: 8) {
+                        TextField("", text: $viewModel.code, prompt: Text("ex.: PSC"))
+                            .labelsHidden()
+                            .frame(width: 80)
+                        Text(viewModel.selectedID == nil ? "Número inicial" : "Próximo número")
+                            .foregroundStyle(Brand.textSecondary)
+                        TextField("", value: $viewModel.nextCodeNumber, format: .number.grouping(.never))
+                            .labelsHidden()
+                            .frame(width: 70)
+                            .disabled(viewModel.code.isEmpty)
+                        Stepper("", value: $viewModel.nextCodeNumber, in: 1...9_999_999)
+                            .labelsHidden()
+                            .disabled(viewModel.code.isEmpty)
+                    }
+                }
+                if !viewModel.code.isEmpty {
+                    Text("Próxima tarefa: \(Project.taskCode(prefix: viewModel.code, number: max(viewModel.nextCodeNumber, 1))). Subtarefas não ganham código.")
+                        .font(.system(size: 11))
+                        .foregroundStyle(Brand.textSecondary)
+                }
 
                 LabeledContent("Data de cadastro") {
                     Text(viewModel.createdAtText ?? "—")
@@ -182,8 +224,76 @@ struct ProjectsSheet: View {
                     .help("Filtra a janela por este projeto — tarefas criadas lá entram nele")
                     Spacer()
                 }
+                documentsSection
             }
         }
+    }
+
+    // MARK: - Documentos (FEAT-009)
+
+    /// Documentos em markdown do projeto: cada um abre na própria janela (a mesma do documento
+    /// da tarefa, com o título editável lá).
+    private var documentsSection: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Documentos")
+                .font(.system(size: 13, weight: .semibold))
+            HStack(spacing: 8) {
+                TextField("Título do novo documento", text: $viewModel.newDocumentTitle)
+                    .textFieldStyle(.roundedBorder)
+                    .onSubmit(createDocument)
+                Button(action: createDocument) {
+                    Label("Novo documento", systemImage: "doc.badge.plus")
+                }
+            }
+            if viewModel.documents.isEmpty {
+                Text("Nenhum documento. Use para especificação, atas, referências…")
+                    .font(.system(size: 11))
+                    .foregroundStyle(Brand.textFaint)
+            } else {
+                ScrollView {
+                    VStack(spacing: 2) {
+                        ForEach(viewModel.documents) { document in
+                            documentRow(document)
+                        }
+                    }
+                }
+                .frame(maxHeight: 130)
+            }
+        }
+    }
+
+    private func createDocument() {
+        if let id = viewModel.createDocument() { openWindow.projectDocument(id) }
+    }
+
+    private func documentRow(_ document: ProjectDocumentSummary) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: "doc.text")
+                .foregroundStyle(Brand.cyan)
+            Button(document.title) { openWindow.projectDocument(document.id) }
+                .buttonStyle(.plain)
+                .foregroundStyle(Brand.textPrimary)
+                .lineLimit(1)
+                .help("Abrir o documento")
+            Spacer(minLength: 8)
+            Text(document.updatedAt.formatted(date: .abbreviated, time: .shortened))
+                .font(.system(size: 10))
+                .foregroundStyle(Brand.textFaint)
+                .help("Última alteração")
+            Button {
+                viewModel.pendingDocumentDeletion = document
+            } label: {
+                Image(systemName: "trash")
+            }
+            .buttonStyle(.borderless)
+            .help("Apagar documento")
+            .accessibilityLabel("Apagar documento \(document.title)")
+        }
+        .padding(.vertical, 3)
+        .padding(.horizontal, 6)
+        .background(RoundedRectangle(cornerRadius: 6).fill(Brand.surface))
+        .contentShape(Rectangle())
+        .onTapGesture(count: 2) { openWindow.projectDocument(document.id) }
     }
 
     private func colorSwatch(_ color: ProjectColor) -> some View {

@@ -1,13 +1,15 @@
 import SwiftUI
 import TomafocoDomain
 
-/// Aba Kanban das Configurações (FEAT-005): raias, por quantos dias a concluída fica no Done e
-/// quais tarefas entram no quadro. Observa o VM direto (nested ObservableObject não propaga).
+/// Aba Kanban das Configurações (FEAT-005; vários quadros desde a FEAT-008): quadros e, para o
+/// quadro selecionado, raias, por quantos dias a concluída fica no Done e quais tarefas entram.
+/// Observa o VM direto (nested ObservableObject não propaga).
 struct KanbanSettingsTab: View {
     @ObservedObject var viewModel: KanbanSettingsViewModel
 
     var body: some View {
         Form {
+            boardsSection
             lanesSection
             doneSection
             scopeSection
@@ -36,6 +38,65 @@ struct KanbanSettingsTab: View {
             Text(pending.openTaskCount == 1
                  ? "1 tarefa volta para \"\(viewModel.firstOpenLaneTitle)\"."
                  : "\(pending.openTaskCount) tarefas voltam para \"\(viewModel.firstOpenLaneTitle)\".")
+        }
+        .confirmationDialog(
+            "Apagar o quadro \"\(viewModel.pendingBoardDeletion?.board.name ?? "")\"?",
+            isPresented: Binding(
+                get: { viewModel.pendingBoardDeletion != nil },
+                set: { if !$0 { viewModel.pendingBoardDeletion = nil } }),
+            presenting: viewModel.pendingBoardDeletion
+        ) { _ in
+            Button("Apagar quadro", role: .destructive) { viewModel.confirmBoardDeletion() }
+            Button("Cancelar", role: .cancel) { viewModel.pendingBoardDeletion = nil }
+        } message: { pending in
+            Text(boardDeletionMessage(pending.openTaskCount))
+        }
+    }
+
+    private func boardDeletionMessage(_ count: Int) -> String {
+        let tasks = count == 0 ? "Nenhuma tarefa aberta está nele."
+            : count == 1 ? "1 tarefa aberta está nele." : "\(count) tarefas abertas estão nele."
+        return "\(tasks) As tarefas não são apagadas — continuam na lista e nos outros quadros."
+    }
+
+    // MARK: - Quadros (FEAT-008)
+
+    private var boardsSection: some View {
+        Section {
+            Picker("Quadro", selection: Binding(
+                get: { viewModel.selectedBoardID },
+                set: { if let id = $0 { viewModel.selectBoard(id) } }
+            )) {
+                ForEach(viewModel.boards) { board in
+                    Text(board.name).tag(Optional(board.id))
+                }
+            }
+
+            if let board = viewModel.board {
+                HStack(spacing: 8) {
+                    BoardNameField(board: board, viewModel: viewModel)
+                    Button(role: .destructive) { viewModel.requestDeleteBoard() } label: {
+                        Label("Apagar quadro", systemImage: "trash")
+                    }
+                    .disabled(!viewModel.canDeleteBoard)
+                    .help(viewModel.canDeleteBoard ? "Apagar este quadro" : "É preciso ter pelo menos um quadro")
+                }
+            }
+
+            HStack(spacing: 8) {
+                TextField("Novo quadro", text: $viewModel.newBoardName)
+                    .textFieldStyle(.roundedBorder)
+                    .onSubmit { viewModel.createBoard() }
+                Button("Criar quadro") { viewModel.createBoard() }
+                    .disabled(viewModel.newBoardName.trimmingCharacters(in: .whitespaces).isEmpty)
+            }
+        } header: {
+            Text("Quadros")
+        } footer: {
+            Text("As configurações abaixo valem para o quadro selecionado. Uma tarefa pode aparecer em vários quadros, cada um com sua raia; concluir em qualquer um conclui a tarefa.")
+                .font(.system(size: 11))
+                .foregroundStyle(Brand.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 
@@ -93,6 +154,18 @@ struct KanbanSettingsTab: View {
 
     private var scopeSection: some View {
         Section("Tarefas no quadro") {
+            Picker("Projeto", selection: Binding(
+                get: { viewModel.projectScope },
+                set: { viewModel.setProjectScope($0) }
+            )) {
+                Text("Todos os projetos").tag(ProjectFilter.all)
+                Text("Sem projeto").tag(ProjectFilter.none)
+                if !viewModel.projects.isEmpty { Divider() }
+                ForEach(viewModel.projects) { project in
+                    Text(project.title).tag(ProjectFilter.project(project.id))
+                }
+            }
+
             Picker("", selection: Binding(
                 get: { viewModel.scopeIsByTag },
                 set: { viewModel.setScopeByTag($0) }
@@ -122,11 +195,38 @@ struct KanbanSettingsTab: View {
                         .font(.system(size: 11))
                         .foregroundStyle(Brand.danger)
                 } else {
-                    Text("Entra no quadro a tarefa que tiver qualquer uma das tags marcadas.")
+                    Text("Entra no quadro a tarefa que tiver qualquer uma das tags marcadas (e for do projeto escolhido).")
                         .font(.system(size: 11))
                         .foregroundStyle(Brand.textSecondary)
                 }
             }
+        }
+    }
+}
+
+/// Nome do quadro selecionado: grava ao confirmar ou ao sair do campo; vazio volta ao atual.
+private struct BoardNameField: View {
+    let board: KanbanBoard
+    @ObservedObject var viewModel: KanbanSettingsViewModel
+    @State private var draft = ""
+    @FocusState private var focused: Bool
+
+    var body: some View {
+        TextField("Nome do quadro", text: $draft)
+            .textFieldStyle(.roundedBorder)
+            .focused($focused)
+            .onSubmit(commit)
+            .onChange(of: focused) { _, isFocused in
+                if !isFocused { commit() }
+            }
+            .onAppear { draft = board.name }
+            .onChange(of: board) { _, board in draft = board.name }
+    }
+
+    private func commit() {
+        viewModel.renameBoard(to: draft)
+        if draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || viewModel.feedback != nil {
+            draft = board.name
         }
     }
 }

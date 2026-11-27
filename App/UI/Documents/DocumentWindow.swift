@@ -1,15 +1,20 @@
 import SwiftUI
 import TomafocoMarkdown
 
-/// Janela do documento em markdown de uma tarefa (FEAT-007 / RF-09.17): editar, visualizar ou os
-/// dois lado a lado. Salva sozinha — não há Salvar/Cancelar.
-struct TaskDocumentWindow: View {
-    static let sceneID = "task-document"
+/// Janela de um documento em markdown — da tarefa (FEAT-007 / RF-09.17) ou do projeto (FEAT-009 /
+/// RF-09.20): editar, visualizar ou os dois lado a lado. Salva sozinha — não há Salvar/Cancelar.
+struct DocumentWindow: View {
+    /// Cena do documento da tarefa (valor = id da tarefa).
+    static let taskSceneID = "task-document"
+    /// Cena do documento do projeto (valor = id do documento).
+    static let projectSceneID = "project-document"
 
-    @StateObject private var viewModel: TaskDocumentViewModel
+    @StateObject private var viewModel: DocumentViewModel
+    @State private var titleDraft = ""
+    @FocusState private var titleFocused: Bool
 
     /// `@autoclosure`: o `WindowGroup` reavalia o conteúdo, mas o VM nasce uma vez por janela.
-    init(viewModel: @autoclosure @escaping () -> TaskDocumentViewModel) {
+    init(viewModel: @autoclosure @escaping () -> DocumentViewModel) {
         _viewModel = StateObject(wrappedValue: viewModel())
     }
 
@@ -18,7 +23,7 @@ struct TaskDocumentWindow: View {
             header
             Divider()
             if let banner = viewModel.loadError
-                ?? (viewModel.isTaskMissing ? "A tarefa foi apagada. O documento está só para leitura e não será salvo." : nil) {
+                ?? (viewModel.isOwnerMissing ? viewModel.source.missingMessage : nil) {
                 Label(banner, systemImage: "exclamationmark.triangle.fill")
                     .font(.system(size: 11))
                     .foregroundStyle(Brand.danger)
@@ -39,12 +44,30 @@ struct TaskDocumentWindow: View {
     private var header: some View {
         HStack(alignment: .center, spacing: 12) {
             VStack(alignment: .leading, spacing: 2) {
-                Text(viewModel.taskTitle.isEmpty ? "Documento" : viewModel.taskTitle)
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundStyle(Brand.textPrimary)
-                    .lineLimit(1)
-                if let parentTitle = viewModel.parentTitle {
-                    Label(parentTitle, systemImage: "arrow.turn.down.right")
+                if viewModel.source.canRename {
+                    // Documento de projeto: o título se edita aqui (grava ao confirmar ou sair do campo).
+                    TextField("Título do documento", text: $titleDraft)
+                        .textFieldStyle(.plain)
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(Brand.textPrimary)
+                        .focused($titleFocused)
+                        .disabled(viewModel.isReadOnly)
+                        .onSubmit { viewModel.rename(to: titleDraft) }
+                        .onChange(of: titleFocused) { _, focused in
+                            if !focused { viewModel.rename(to: titleDraft) }
+                        }
+                        .onAppear { titleDraft = viewModel.header.title }
+                        .onChange(of: viewModel.header.title) { _, title in
+                            if !titleFocused { titleDraft = title }
+                        }
+                } else {
+                    Text(viewModel.header.title.isEmpty ? "Documento" : viewModel.header.title)
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(Brand.textPrimary)
+                        .lineLimit(1)
+                }
+                if let subtitle = viewModel.header.subtitle {
+                    Label(subtitle, systemImage: viewModel.header.subtitleSymbol)
                         .font(.system(size: 11))
                         .foregroundStyle(Brand.textFaint)
                         .lineLimit(1)
@@ -57,7 +80,7 @@ struct TaskDocumentWindow: View {
                 .lineLimit(2)
                 .multilineTextAlignment(.trailing)
             Picker("Modo", selection: $viewModel.mode) {
-                ForEach(TaskDocumentViewModel.Mode.allCases) { mode in
+                ForEach(DocumentViewModel.Mode.allCases) { mode in
                     Text(mode.title).tag(mode)
                 }
             }

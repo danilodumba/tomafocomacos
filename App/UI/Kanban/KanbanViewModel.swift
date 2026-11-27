@@ -2,13 +2,20 @@ import Foundation
 import TomafocoDomain
 import TomafocoApplication
 
-/// ViewModel da janela Kanban (FEAT-005): colunas filtradas/ordenadas, movimentação entre raias
-/// e criação rápida. Configuração do quadro (raias, dias no Done, escopo por tag) fica nas
-/// Configurações › Kanban (`KanbanSettingsViewModel`).
+/// ViewModel de UMA janela Kanban (FEAT-005; uma por quadro desde a FEAT-008): colunas
+/// filtradas/ordenadas, movimentação entre raias, criação rápida e troca/criação de quadro.
+/// Configuração do quadro (raias, dias no Done, escopo) fica nas Configurações › Kanban
+/// (`KanbanSettingsViewModel`).
 @MainActor
 final class KanbanViewModel: ObservableObject, TaskRowActionRunning, ProjectsHosting, MinuteClockHosting {
 
+    /// Quadro desta janela. `nil` só até a primeira leitura de uma janela aberta sem valor.
+    @Published private(set) var boardID: UUID?
     @Published private(set) var board: KanbanBoard?
+    /// Todos os quadros — seletor da barra.
+    @Published private(set) var boards: [KanbanBoard] = []
+    /// Alerta "Novo quadro…" — `nil` = fechado.
+    @Published var newBoardName: String?
     @Published private(set) var tasks: [FocusTask] = []
     @Published private(set) var knownTags: [String] = []
 
@@ -42,21 +49,25 @@ final class KanbanViewModel: ObservableObject, TaskRowActionRunning, ProjectsHos
     private let useCase: ManageKanbanUseCase
     private let manageTasks: ManageTasksUseCase
     let manageProjects: ManageProjectsUseCase
+    /// Documentos dos projetos (FEAT-009) — para o cadastro de projetos aberto daqui.
+    let manageProjectDocuments: ManageProjectDocumentsUseCase
     private let defaults: UserDefaults
     /// Avisa que as tarefas mudaram por aqui — a lista e o seletor do timer recarregam.
     private let onTasksChanged: () -> Void
     private static let sortOrderKey = "kanbanSortOrder"
 
-    init(useCase: ManageKanbanUseCase, manageTasks: ManageTasksUseCase, manageProjects: ManageProjectsUseCase,
+    init(boardID: UUID?, useCase: ManageKanbanUseCase, manageTasks: ManageTasksUseCase,
+         manageProjects: ManageProjectsUseCase, manageProjectDocuments: ManageProjectDocumentsUseCase,
          defaults: UserDefaults = .standard, onTasksChanged: @escaping () -> Void) {
+        self.boardID = boardID
         self.useCase = useCase
         self.manageTasks = manageTasks
         self.manageProjects = manageProjects
+        self.manageProjectDocuments = manageProjectDocuments
         self.defaults = defaults
         self.onTasksChanged = onTasksChanged
         sortOrder = TaskSortOrder.stored(in: defaults, key: Self.sortOrderKey)
-        // Sem `refresh()` aqui de propósito: o VM nasce no lançamento, mas a janela pode nunca
-        // abrir — a primeira leitura fica para o `onAppear` (`didAppear`).
+        // Sem `refresh()` aqui: a primeira leitura fica para o `onAppear` (`didAppear`).
     }
 
     /// A janela está na tela. Fora dela o relay não manda `refresh()` (leitura de disco à toa
@@ -66,6 +77,7 @@ final class KanbanViewModel: ObservableObject, TaskRowActionRunning, ProjectsHos
     func didAppear() {
         isPresented = true
         refresh()
+        if let boardID { KanbanLastBoard.save(boardID, defaults: defaults) }
         startMinuteClock()
     }
 
@@ -74,11 +86,22 @@ final class KanbanViewModel: ObservableObject, TaskRowActionRunning, ProjectsHos
         stopMinuteClock()
     }
 
-    /// Só relê (quadro, tarefas, tags). Chamado pelas outras janelas quando a mudança veio delas.
+    /// Só relê (quadros, tarefas, tags). Chamado pelas outras janelas quando a mudança veio delas.
+    /// Quadro desta janela apagado em outro lugar → mostra o último usado (ou o primeiro) e avisa.
     func refresh() {
         resetNow()
         do {
-            board = try useCase.board()
+            boards = try useCase.boards()
+            if let current = boards.first(where: { $0.id == boardID }) {
+                board = current
+            } else {
+                let fallback = boards.first { $0.id == KanbanLastBoard.load(defaults: defaults) } ?? boards.first
+                if boardID != nil, let fallback {
+                    feedback = "O quadro desta janela foi apagado — mostrando \"\(fallback.name)\"."
+                }
+                board = fallback
+                boardID = fallback?.id
+            }
         } catch {
             feedback = "Não foi possível abrir o quadro: \(error.localizedDescription)"
         }
@@ -94,6 +117,11 @@ final class KanbanViewModel: ObservableObject, TaskRowActionRunning, ProjectsHos
             newTag = nil
         }
         if newTag == nil, case .tags(let selected)? = board?.taskScope { newTag = selected.first }
+        // Quadro com escopo de projeto (FEAT-008): o filtro da barra não se aplica — contradizer o
+        // escopo esvaziaria o quadro, e a tarefa criada nasceria fora dele.
+        if let scope = board?.projectScope, scope != .all, projectFilter != .all {
+            projectFilter = .all
+        }
         if let editor, !tasks.contains(where: { $0.id == editor.task.id }) { self.editor = nil }
     }
 
@@ -101,6 +129,49 @@ final class KanbanViewModel: ObservableObject, TaskRowActionRunning, ProjectsHos
     func reload() {
         refresh()
         onTasksChanged()
+    }
+
+    // MARK: - Quadros (FEAT-008)
+
+    /// Troca o quadro desta janela. Filtros da barra continuam, menos os que não fazem sentido
+    /// no quadro novo (o `refresh` limpa tag fora do escopo).
+    func selectBoard(_ id: UUID) {
+        guard id != boardID else { return }
+        feedback = nil
+        boardID = id
+        newTag = nil
+        KanbanLastBoard.save(id, defaults: defaults)
+        refresh()
+    }
+
+    func beginCreatingBoard() {
+        feedback = nil
+        newBoardName = ""
+    }
+
+    /// Cria o quadro e já o mostra nesta janela.
+    func createBoard() {
+        guard let name = newBoardName else { return }
+        newBoardName = nil
+        do {
+            let created = try useCase.createBoard(name: name)
+            boardID = created.id
+            newTag = nil
+            KanbanLastBoard.save(created.id, defaults: defaults)
+            reload()
+        } catch DomainError.emptyBoardName {
+            feedback = "Informe um nome para o quadro."
+        } catch DomainError.duplicateBoardName(let name) {
+            feedback = "Já existe um quadro chamado \"\(name)\"."
+        } catch {
+            feedback = "Não foi possível criar o quadro: \(error.localizedDescription)"
+        }
+    }
+
+    /// Projeto do escopo do quadro, para o título e o aviso de quadro vazio.
+    var scopeProject: Project? {
+        guard case .project(let id)? = board?.projectScope else { return nil }
+        return projects.first { $0.id == id }
     }
 
     // MARK: - Exibição
@@ -130,6 +201,9 @@ final class KanbanViewModel: ObservableObject, TaskRowActionRunning, ProjectsHos
         guard case .tags(let selected)? = board?.taskScope else { return knownTags }
         return selected
     }
+
+    /// Filtro de projeto da barra só faz sentido em quadro de todos os projetos (FEAT-008).
+    var showsProjectFilter: Bool { board?.projectScope == .all }
 
     var scopeIsByTag: Bool {
         if case .tags? = board?.taskScope { return true }
@@ -161,7 +235,7 @@ final class KanbanViewModel: ObservableObject, TaskRowActionRunning, ProjectsHos
     func move(_ task: FocusTask, to lane: KanbanLane) {
         guard let board, board.lane(for: task).id != lane.id else { return }
         runRowAction(task.id) {
-            let outcome = try await self.useCase.moveTask(id: task.id, toLane: lane.id)
+            let outcome = try await self.useCase.moveTask(id: task.id, toLane: lane.id, in: board.id)
             self.reload()
             // Diária (FEAT-004): o cartão vai para a Done e um clone aparece na 1ª raia. O aviso
             // que existia aqui foi removido a pedido do usuário (2026-10-27) — o clone na 1ª raia
@@ -210,8 +284,11 @@ final class KanbanViewModel: ObservableObject, TaskRowActionRunning, ProjectsHos
             return
         }
         do {
+            // Nasce no projeto filtrado na barra ou, sem filtro, no projeto do escopo do quadro
+            // (FEAT-008) — senão sumiria do quadro ao criar.
             try manageTasks.addTask(title: newTitle, tags: newTag.map { [$0] } ?? [],
-                                    projectID: projectFilter.projectIDForNewTask)
+                                    projectID: projectFilter.projectIDForNewTask
+                                        ?? board?.projectScope.projectIDForNewTask)
             newTitle = ""
             reload()
         } catch DomainError.emptyTaskTitle {
@@ -233,15 +310,38 @@ final class KanbanViewModel: ObservableObject, TaskRowActionRunning, ProjectsHos
             onChanged: { [weak self] in
                 guard let self else { return }
                 self.reload()
-                // Tirar a tag do escopo pelo formulário faz o cartão sumir — avisar o porquê.
-                // Com herança (FEAT-003): filha sem tag sob pai no escopo continua no quadro.
+                // Tirar a tag ou o projeto do escopo pelo formulário faz o cartão sumir — avisar
+                // o porquê. Com herança (FEAT-003): filha sem tag sob pai no escopo continua.
                 if let board = self.board, let saved = self.tasks.first(where: { $0.id == task.id }),
-                   !board.taskScope.includes(saved, in: self.tasks) {
-                    self.feedback = "\"\(saved.title)\" saiu do quadro (sem tag do escopo)."
+                   !board.includes(saved, in: self.tasks) {
+                    self.feedback = "\"\(saved.title)\" saiu do quadro (fora do escopo de tag ou projeto)."
                 }
             },
             onClose: { [weak self] in self?.editor = nil },
             onOpenTask: { [weak self] other in self?.beginEditing(other) })
+    }
+
+    /// Duplica pelo menu do cartão (RF-09.19): a cópia nasce nas mesmas raias, ao lado da original.
+    func duplicate(_ task: FocusTask) {
+        feedback = nil
+        do {
+            guard let copy = try manageTasks.duplicateTask(id: task.id) else { return }
+            reload()
+            feedback = "Duplicada como \"\(copy.displayTitle)\"."
+        } catch {
+            feedback = "Não foi possível duplicar: \(error.localizedDescription)"
+        }
+    }
+
+    /// Repetição pelo menu de contexto do cartão (RF-09.21).
+    func setRecurrence(_ task: FocusTask, _ recurrence: TaskRecurrence?) {
+        feedback = nil
+        do {
+            try manageTasks.setRecurrence(id: task.id, recurrence)
+            reload()
+        } catch {
+            feedback = "Não foi possível alterar a repetição: \(error.localizedDescription)"
+        }
     }
 
     /// Liga/desliga "Urgente" pelo menu de contexto do cartão (RF-09.13).

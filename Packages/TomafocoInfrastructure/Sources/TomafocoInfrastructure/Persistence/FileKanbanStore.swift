@@ -1,9 +1,10 @@
 import Foundation
 import TomafocoDomain
 
-/// `KanbanBoardRepository` em JSON (`kanban.json`) ao lado do `tasks.json` (FEAT-005) — mesmo
-/// padrão do `FileTaskStore`: escrita atômica e arquivo ilegível preservado como `.bak`.
-public final class FileKanbanStore: KanbanBoardRepository {
+/// Quadro único em JSON (`kanban.json`, FEAT-005) — formato das versões anteriores à 1.17. Hoje só
+/// o `JSONToSwiftDataImporter` lê (por isso não implementa mais o `KanbanBoardRepository`, que
+/// virou lista na FEAT-008). Escrita atômica e arquivo ilegível preservado como `.bak`.
+public final class FileKanbanStore {
 
     private let boardURL: URL
     private let backupURL: URL
@@ -29,7 +30,7 @@ public final class FileKanbanStore: KanbanBoardRepository {
             return try decoder.decode(KanbanBoard.self, from: Data(contentsOf: boardURL))
         } catch {
             // Ilegível: preserva para diagnóstico e recomeça com o quadro padrão. As tarefas
-            // ficam com `laneID` órfão e caem na primeira raia (`KanbanBoard.lane(for:)`).
+            // ficam com `laneIDs` órfãos e caem na primeira raia (`KanbanBoard.lane(for:)`).
             try? fileManager.removeItem(at: backupURL)
             try? fileManager.moveItem(at: boardURL, to: backupURL)
             return nil

@@ -76,7 +76,9 @@ public struct TaskFilter: Equatable, Sendable {
     /// Busca, tag, prioridade e projeto — os critérios que "passam" entre pai e filha. `query` já vem
     /// trimada (uma vez por recorte, não por tarefa).
     private func matchesAttributes(_ task: FocusTask, query: String) -> Bool {
-        if !query.isEmpty && !task.title.localizedCaseInsensitiveContains(query) { return false }
+        // Busca pelo título ou pelo código (RF-09.22): "PSC0012" acha a tarefa.
+        if !query.isEmpty && !task.title.localizedCaseInsensitiveContains(query)
+            && task.code?.localizedCaseInsensitiveContains(query) != true { return false }
         if let tag, !task.tags.contains(where: { $0.caseInsensitiveCompare(tag) == .orderedSame }) { return false }
         if let priority, TaskPriority(rawPriority: task.priority) != priority { return false }
         return project.matches(task)

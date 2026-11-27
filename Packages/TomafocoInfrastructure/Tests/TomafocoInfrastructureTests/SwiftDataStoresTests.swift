@@ -28,7 +28,7 @@ final class SwiftDataStoresTests: XCTestCase {
             priority: 1, sourceURL: "https://globo.com",
             history: [TaskHistoryEntry(id: UUID(), createdAt: Date(timeIntervalSince1970: 1_800_000_500), text: "h")],
             repeatsDaily: true, completionLog: [Date(timeIntervalSince1970: 1_799_000_000)],
-            laneID: UUID(), isUrgent: true, parentID: UUID())
+            laneIDs: [UUID()], isUrgent: true, parentID: UUID())
     }
 
     private func task(_ title: String) -> FocusTask {
@@ -189,12 +189,53 @@ final class SwiftDataStoresTests: XCTestCase {
 
     // MARK: - Quadro e tags
 
-    func test_quadro_roundTrip() throws {
+    func test_quadros_roundTrip() throws {
         let store = SwiftDataKanbanStore(database: database)
-        XCTAssertNil(try store.loadBoard())
-        let board = KanbanBoard.makeDefault(makeID: { UUID() })
-        try store.saveBoard(board)
-        XCTAssertEqual(try SwiftDataKanbanStore(database: database).loadBoard(), board)
+        XCTAssertEqual(try store.loadBoards(), [])
+        let boards = [KanbanBoard.makeDefault(makeID: { UUID() }),
+                      KanbanBoard.makeDefault(name: "Casa", makeID: { UUID() })]
+        try store.saveBoards(boards)
+        XCTAssertEqual(try SwiftDataKanbanStore(database: database).loadBoards(), boards)
+    }
+
+    /// FEAT-008: banco com o quadro único (`kanbanBoard`) vira lista de um quadro — mesmas raias e
+    /// config —, a linha antiga sai no mesmo commit e a 2ª leitura não migra de novo.
+    func test_quadros_migraQuadroUnicoAntigo() throws {
+        let legacy = KanbanBoard(lanes: [
+            KanbanLane(id: UUID(), title: "Fila"), KanbanLane(id: UUID(), title: "Feito", isDone: true),
+        ], doneRetentionDays: 3, taskScope: .tags(["casa"]))
+        // Formato gravado pela 1.17–1.19: sem id/nome/projeto.
+        let json = try JSONSerialization.jsonObject(with: PayloadCoding.encoder.encode(legacy)) as! [String: Any]
+        var old = json
+        old.removeValue(forKey: "id"); old.removeValue(forKey: "name"); old.removeValue(forKey: "projectScope")
+        try database.setSingleton(SingletonKey.kanbanBoard, payload: JSONSerialization.data(withJSONObject: old))
+        try database.commit()
+
+        let store = SwiftDataKanbanStore(database: database)
+        let migrated = try store.loadBoards()
+
+        XCTAssertEqual(migrated.count, 1)
+        XCTAssertEqual(migrated[0].name, "Kanban")
+        XCTAssertEqual(migrated[0].lanes, legacy.lanes)
+        XCTAssertEqual(migrated[0].doneRetentionDays, 3)
+        XCTAssertEqual(migrated[0].taskScope, .tags(["casa"]))
+        XCTAssertFalse(database.context.hasChanges, "migração gravada")
+        XCTAssertNil(try database.singleton(SingletonKey.kanbanBoard))
+        XCTAssertEqual(try store.loadBoards(), migrated, "id estável: não migra de novo")
+    }
+
+    func test_quadros_ilegiveis_devolveVazio_eUmQuadroQuebradoNaoDerrubaOsOutros() throws {
+        try database.setSingleton(SingletonKey.kanbanBoards, payload: Data("nao json".utf8))
+        try database.commit()
+        let store = SwiftDataKanbanStore(database: database)
+        XCTAssertEqual(try store.loadBoards(), [])
+
+        let good = KanbanBoard.makeDefault(name: "Bom", makeID: { UUID() })
+        let goodJSON = try JSONSerialization.jsonObject(with: PayloadCoding.encoder.encode(good))
+        let payload = try JSONSerialization.data(withJSONObject: [goodJSON, ["doneRetentionDays": "x"]])
+        try database.setSingleton(SingletonKey.kanbanBoards, payload: payload)
+        try database.commit()
+        XCTAssertEqual(try store.loadBoards(), [good])
     }
 
     func test_tags_preservaOrdem_eSubstitui() throws {

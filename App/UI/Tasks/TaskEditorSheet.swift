@@ -126,6 +126,8 @@ struct TaskEditorSheet: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
             Spacer()
+            Button("Duplicar") { viewModel.duplicate() }
+                .help("Cria uma cópia desta tarefa (como está salva) e abre a cópia")
             Button("Cancelar") { viewModel.cancel() }
                 .keyboardShortcut(.cancelAction)
             Button("Salvar") { viewModel.save() }
@@ -142,6 +144,10 @@ struct TaskEditorSheet: View {
     private var draftForm: some View {
         Form {
             TextField("Título", text: $viewModel.title)
+                .onSubmit { viewModel.save() }
+
+            // RF-09.22: gerado pelo projeto ao criar/associar; aqui o usuário põe o que quiser.
+            TextField("Código", text: $viewModel.code, prompt: Text("ex.: PSC0001"))
                 .onSubmit { viewModel.save() }
 
             // FEAT-006: subtarefa mostra o projeto do pai, sem editar.
@@ -174,8 +180,9 @@ struct TaskEditorSheet: View {
                 .opacity(viewModel.hasDueDate ? 1 : 0.4)
             }
 
-            // FEAT-004: ao concluir, fecha e cria uma cópia com vencimento amanhã.
-            Toggle("Repetir diariamente", isOn: $viewModel.repeatsDaily)
+            // FEAT-004 / RF-09.21: ao concluir, fecha e cria uma cópia com o próximo vencimento da regra.
+            RecurrenceEditor(recurrence: $viewModel.recurrence,
+                             reference: viewModel.hasDueDate ? viewModel.dueDate : Date())
 
             // RF-09.13: destaque forte na lista e no quadro; vai para o topo.
             Toggle(isOn: $viewModel.isUrgent) {
@@ -288,7 +295,7 @@ struct TaskEditorSheet: View {
             if priority != .none {
                 Text(priority.glyph).fontWeight(.bold).foregroundStyle(priority.displayColor)
             }
-            Text(subtask.title)
+            Text(subtask.displayTitle)
                 .strikethrough(subtask.isCompleted)
                 .foregroundStyle(subtask.isCompleted ? Brand.textFaint : Brand.textPrimary)
                 .lineLimit(1)

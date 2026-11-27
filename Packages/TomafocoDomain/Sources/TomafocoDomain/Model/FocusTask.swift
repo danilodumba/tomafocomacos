@@ -33,18 +33,27 @@ public struct FocusTask: Equatable, Codable, Sendable, Identifiable {
     /// Histórico da tarefa (FEAT-001): entradas com data de inclusão e descrição, na ordem em
     /// que foram acrescentadas. É log — só acrescenta e apaga, nunca edita.
     public var history: [TaskHistoryEntry]
-    /// Tarefa diária (FEAT-004): concluir **fecha** a tarefa como qualquer outra e cria um
-    /// **clone** (`nextDailyOccurrence`) com vencimento no dia seguinte. A concluída fica no
-    /// histórico e nunca é reaberta pelo app; o clone é a ocorrência de amanhã.
-    public var repeatsDaily: Bool
+    /// Repetição (FEAT-004, generalizada no RF-09.21): concluir **fecha** a tarefa como qualquer
+    /// outra e cria um **clone** (`nextOccurrence`) com vencimento na próxima data da regra. A
+    /// concluída fica no histórico e nunca é reaberta pelo app. `nil` = não repete.
+    public var recurrence: TaskRecurrence?
+    /// Atalho da época da diária (FEAT-004): "repete de algum jeito". Ligar sem regra = todo dia;
+    /// desligar = não repete. Mantido porque lista, Kanban e testes falam em "diária".
+    public var repeatsDaily: Bool {
+        get { recurrence != nil }
+        set { recurrence = newValue ? (recurrence ?? .everyDay) : nil }
+    }
     /// Legado da 1ª versão da diária (até 2026-10-27), em que a mesma tarefa seguia aberta e
     /// cada conclusão entrava aqui. Hoje nada mais grava neste log — ele continua sendo lido
     /// (`CompletedTaskOccurrence`) para o relatório não perder as conclusões antigas.
     public var completionLog: [Date]
-    /// Raia do Kanban onde a tarefa aberta está (FEAT-005). `nil` = primeira raia. Não decide
-    /// conclusão: tarefa concluída fica sempre na raia Done (`KanbanBoard.lane(for:)`), e o valor
-    /// é mantido para reabrir pela lista devolver a tarefa à raia onde estava.
-    public var laneID: UUID?
+    /// Raias do Kanban onde a tarefa aberta está — **uma por quadro** (FEAT-005, FEAT-008).
+    /// IDs de raia são únicos entre quadros, então cada quadro usa o primeiro id que é raia
+    /// aberta dele e ignora os demais; sem nenhum → primeira raia daquele quadro. Não decide
+    /// conclusão: tarefa concluída fica sempre na raia Done (`KanbanBoard.lane(for:)`), e os ids
+    /// são mantidos para reabrir pela lista devolver a tarefa às raias onde estava.
+    /// Era `laneID: UUID?` (um quadro só) até a FEAT-008 — o decode ainda lê a chave antiga.
+    public var laneIDs: [UUID]
     /// Urgente (RF-09.13): destaque forte na lista e no quadro e vai para o topo da ordenação.
     /// Independente da prioridade — prioridade é importância, urgente é "agora".
     public var isUrgent: Bool
@@ -56,8 +65,23 @@ public struct FocusTask: Equatable, Codable, Sendable, Identifiable {
     /// Projeto da tarefa (FEAT-006). `nil` = sem projeto. Subtarefa tem sempre o projeto do pai
     /// — a regra é do use case (herança na criação e propagação na edição do pai).
     public var projectID: UUID?
+    /// Código da tarefa (RF-09.22), ex.: "PSC0001" — gerado pelo projeto (`Project.takeNextTaskCode`)
+    /// ao criar/associar, ou digitado pelo usuário. Só tarefa de topo ganha código gerado.
+    public var code: String?
 
     public var isCompleted: Bool { completedAt != nil }
+
+    /// "PSC0001 - Título" com código; só o título sem. É o que as listas mostram.
+    public var displayTitle: String {
+        guard let code else { return title }
+        return "\(code) - \(title)"
+    }
+
+    /// Código digitado: trim; vazio vira `nil`. Livre — o usuário escolhe o que quiser.
+    public static func normalizeCode(_ raw: String?) -> String? {
+        let trimmed = (raw ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
 
     public var isSubtask: Bool { parentID != nil }
 
@@ -75,11 +99,13 @@ public struct FocusTask: Equatable, Codable, Sendable, Identifiable {
         sourceURL: String? = nil,
         history: [TaskHistoryEntry] = [],
         repeatsDaily: Bool = false,
+        recurrence: TaskRecurrence? = nil,
         completionLog: [Date] = [],
-        laneID: UUID? = nil,
+        laneIDs: [UUID] = [],
         isUrgent: Bool = false,
         parentID: UUID? = nil,
-        projectID: UUID? = nil
+        projectID: UUID? = nil,
+        code: String? = nil
     ) {
         self.id = id
         self.title = title
@@ -93,12 +119,13 @@ public struct FocusTask: Equatable, Codable, Sendable, Identifiable {
         self.priority = priority
         self.sourceURL = sourceURL
         self.history = history
-        self.repeatsDaily = repeatsDaily
+        self.recurrence = recurrence?.normalized ?? (repeatsDaily ? .everyDay : nil)
         self.completionLog = completionLog
-        self.laneID = laneID
+        self.laneIDs = laneIDs
         self.isUrgent = isUrgent
         self.parentID = parentID
         self.projectID = projectID
+        self.code = code
     }
 
     // Decode manual por causa de `tags` e dos campos ricos de importação: JSON gravado antes
@@ -107,8 +134,13 @@ public struct FocusTask: Equatable, Codable, Sendable, Identifiable {
     private enum CodingKeys: String, CodingKey {
         case id, title, source, reminderID, createdAt, completedAt, tags
         case notes, dueDate, priority, sourceURL, history
-        case repeatsDaily, completionLog, laneID, isUrgent, parentID, projectID
+        case recurrence, completionLog, laneIDs, isUrgent, parentID, projectID, code
     }
+
+    /// Chave da versão de um quadro só (FEAT-005, até a FEAT-008) — só lida, nunca gravada.
+    /// `laneID`: quadro único (FEAT-005, até a FEAT-008). `repeatsDaily`: diária (FEAT-004, até o
+    /// RF-09.21) — `true` vira repetição todo dia.
+    private enum LegacyCodingKeys: String, CodingKey { case laneID, repeatsDaily }
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -124,12 +156,23 @@ public struct FocusTask: Equatable, Codable, Sendable, Identifiable {
         self.priority = try c.decodeIfPresent(Int.self, forKey: .priority)
         self.sourceURL = try c.decodeIfPresent(String.self, forKey: .sourceURL)
         self.history = try c.decodeIfPresent([TaskHistoryEntry].self, forKey: .history) ?? []
-        self.repeatsDaily = try c.decodeIfPresent(Bool.self, forKey: .repeatsDaily) ?? false
+        let legacy = try decoder.container(keyedBy: LegacyCodingKeys.self)
+        if let recurrence = try? c.decodeIfPresent(TaskRecurrence.self, forKey: .recurrence) {
+            self.recurrence = recurrence
+        } else {
+            let wasDaily = (try? legacy.decodeIfPresent(Bool.self, forKey: .repeatsDaily)) ?? false
+            self.recurrence = wasDaily ? .everyDay : nil
+        }
         self.completionLog = try c.decodeIfPresent([Date].self, forKey: .completionLog) ?? []
-        self.laneID = try c.decodeIfPresent(UUID.self, forKey: .laneID)
+        if let laneIDs = try c.decodeIfPresent([UUID].self, forKey: .laneIDs) {
+            self.laneIDs = laneIDs
+        } else {
+            self.laneIDs = try legacy.decodeIfPresent(UUID.self, forKey: .laneID).map { [$0] } ?? []
+        }
         self.isUrgent = try c.decodeIfPresent(Bool.self, forKey: .isUrgent) ?? false
         self.parentID = try c.decodeIfPresent(UUID.self, forKey: .parentID)
         self.projectID = try c.decodeIfPresent(UUID.self, forKey: .projectID)
+        self.code = try c.decodeIfPresent(String.self, forKey: .code)
     }
 
     // MARK: - Nota e link (RF-09.13)
@@ -152,15 +195,47 @@ public struct FocusTask: Equatable, Codable, Sendable, Identifiable {
         return withScheme
     }
 
-    // MARK: - Tarefa diária (FEAT-004)
+    // MARK: - Duplicar (RF-09.19)
 
-    /// Clone da diária para o dia seguinte, criado ao concluí-la: tarefa **nova** (`id` próprio,
+    /// Cópia da tarefa para "duplicar": tarefa **nova e aberta** (`id` próprio, `createdAt = now`)
+    /// com título, tags, nota, link, vencimento, prioridade, urgência, diária, pai, projeto e
+    /// raias do Kanban (a cópia aparece ao lado da original em cada quadro). **Não** leva
+    /// histórico (é log da original), conclusão nem o vínculo com o Lembretes — a cópia é manual:
+    /// concluí-la não pode riscar o lembrete da original, e o `reminderID` repetido confundiria a
+    /// deduplicação da importação.
+    public func duplicated(id: UUID, title: String, parentID: UUID?, now: Date) -> FocusTask {
+        FocusTask(
+            id: id, title: title, source: .manual, createdAt: now,
+            tags: tags, notes: notes, dueDate: dueDate, priority: priority, sourceURL: sourceURL,
+            recurrence: recurrence, laneIDs: laneIDs, isUrgent: isUrgent,
+            parentID: parentID, projectID: projectID)
+    }
+
+    /// Título da cópia: "X (cópia)", ou "X (cópia 2)", "X (cópia 3)"… até `isTaken` devolver
+    /// `false`. Duplicar uma cópia não empilha sufixos — "X (cópia)" vira "X (cópia 2)".
+    public static func duplicateTitle(for title: String, isTaken: (String) -> Bool) -> String {
+        var base = title
+        if let range = base.range(of: #" \(cópia( \d+)?\)$"#, options: .regularExpression) {
+            base.removeSubrange(range)
+        }
+        var candidate = "\(base) (cópia)"
+        var n = 2
+        while isTaken(candidate) {
+            candidate = "\(base) (cópia \(n))"
+            n += 1
+        }
+        return candidate
+    }
+
+    // MARK: - Repetição (FEAT-004 / RF-09.21)
+
+    /// Clone da tarefa que repete, criado ao concluí-la: tarefa **nova** (`id` próprio,
     /// `createdAt = now`, aberta, **sem histórico** — decisão do usuário em 2026-10-27, não
-    /// copiar), com os mesmos título, tags, nota, link, prioridade, urgência, pai e origem (o
-    /// `reminderID` vai junto — concluir o clone amanhã espelha a próxima ocorrência do lembrete
-    /// recorrente) e o projeto (FEAT-006). Vencimento = `nextDailyDueDate`. Sem raia (`laneID = nil`): o dia novo
-    /// começa na primeira raia do Kanban.
-    public func nextDailyOccurrence(id: UUID, now: Date, calendar: Calendar) -> FocusTask {
+    /// copiar), com os mesmos título, tags, nota, link, prioridade, urgência, pai, origem (o
+    /// `reminderID` vai junto — concluir o clone espelha a próxima ocorrência do lembrete
+    /// recorrente), projeto (FEAT-006), código (RF-09.22) e **a mesma regra**. Vencimento = `nextOccurrenceDueDate`.
+    /// Sem raia (`laneIDs` vazio): a próxima ocorrência começa na primeira raia de cada quadro.
+    public func nextOccurrence(id: UUID, now: Date, calendar: Calendar) -> FocusTask {
         FocusTask(
             id: id,
             title: title,
@@ -169,27 +244,29 @@ public struct FocusTask: Equatable, Codable, Sendable, Identifiable {
             createdAt: now,
             tags: tags,
             notes: notes,
-            dueDate: nextDailyDueDate(now: now, calendar: calendar),
+            dueDate: nextOccurrenceDueDate(now: now, calendar: calendar),
             priority: priority,
             sourceURL: sourceURL,
-            repeatsDaily: true,
+            recurrence: recurrence ?? .everyDay,
             isUrgent: isUrgent,
             parentID: parentID,
-            projectID: projectID
+            projectID: projectID,
+            // Mesma tarefa, próxima ocorrência: mantém o código (RF-09.22) em vez de gastar um
+            // número do projeto a cada repetição.
+            code: code
         )
     }
 
-    /// Vencimento do clone da diária: **amanhã** (dia seguinte ao de `now`), no mesmo horário
-    /// do vencimento atual. Sem vencimento → amanhã 23:59, para não aparecer atrasada antes de
-    /// o dia acabar.
-    public func nextDailyDueDate(now: Date, calendar: Calendar) -> Date {
-        let today = calendar.startOfDay(for: now)
-        let tomorrow = calendar.date(byAdding: .day, value: 1, to: today) ?? today.addingTimeInterval(86_400)
+    /// Vencimento do clone: o **próximo dia da regra** depois do dia de `now`
+    /// (`TaskRecurrence.nextDay`; sem regra = amanhã), no mesmo horário do vencimento atual. Sem
+    /// vencimento → 23:59, para não aparecer atrasada antes de o dia acabar.
+    public func nextOccurrenceDueDate(now: Date, calendar: Calendar) -> Date {
+        let day = (recurrence ?? .everyDay).nextDay(after: now, calendar: calendar)
         let time = dueDate.map { calendar.dateComponents([.hour, .minute, .second], from: $0) }
             ?? DateComponents(hour: 23, minute: 59, second: 0)
         return calendar.date(
-            bySettingHour: time.hour ?? 0, minute: time.minute ?? 0, second: time.second ?? 0, of: tomorrow
-        ) ?? tomorrow
+            bySettingHour: time.hour ?? 0, minute: time.minute ?? 0, second: time.second ?? 0, of: day
+        ) ?? day
     }
 
     /// Limpa uma lista de tags crua: trim, descarta vazias, deduplica por caixa (mantém a

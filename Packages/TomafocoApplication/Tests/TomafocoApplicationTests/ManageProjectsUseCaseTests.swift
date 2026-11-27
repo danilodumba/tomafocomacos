@@ -105,6 +105,25 @@ final class ManageProjectsUseCaseTests: XCTestCase {
         XCTAssertEqual(taskRepo.tasks.count, 3, "não apaga tarefa")
     }
 
+    /// FEAT-008 (P4): quadro com escopo no projeto apagado volta a "todos os projetos"; os outros
+    /// quadros não mudam.
+    func test_deleteProject_quadroComEscopoNoProjeto_voltaParaTodos() throws {
+        let boards = InMemoryKanbanBoardRepository()
+        let sut = ManageProjectsUseCase(projects: projectRepo, tasks: taskRepo, unitOfWork: unitOfWork,
+                                        now: { self.now }, calendar: calendar, kanbanBoards: boards)
+        let project = try sut.addProject(ProjectDraft(title: "Site"))
+        let other = try sut.addProject(ProjectDraft(title: "Outro"))
+        boards.boards = [
+            KanbanBoard(name: "Site", lanes: [], projectScope: .project(project.id)),
+            KanbanBoard(name: "Outro", lanes: [], projectScope: .project(other.id)),
+            KanbanBoard(name: "Sem", lanes: [], projectScope: .none),
+        ]
+
+        try sut.deleteProject(id: project.id)
+
+        XCTAssertEqual(boards.boards.map(\.projectScope), [.all, .project(other.id), .none])
+    }
+
     func test_deleteProject_falhaNoMeio_desfazTudo() throws {
         let project = try sut.addProject(ProjectDraft(title: "Site"))
         let a = try tasks.addTask(title: "A", projectID: project.id)

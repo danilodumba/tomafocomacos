@@ -1,6 +1,32 @@
 import SwiftUI
 import TomafocoDomain
 
+/// Uma janela por quadro (FEAT-008): o `WindowGroup(for: UUID)` passa o id do quadro, e trocar de
+/// quadro pelo seletor da barra atualiza esse valor — reabrir o mesmo quadro traz esta janela, e
+/// a restauração de janelas reabre o quadro certo. O VM é `@StateObject`: nasce uma vez por janela.
+struct KanbanBoardWindow: View {
+    static let sceneID = "kanban"
+
+    @Binding var boardID: UUID?
+    @StateObject private var viewModel: KanbanViewModel
+    let documentIndex: TaskDocumentIndex
+
+    init(boardID: Binding<UUID?>, documentIndex: TaskDocumentIndex,
+         viewModel: @autoclosure @escaping () -> KanbanViewModel) {
+        _boardID = boardID
+        self.documentIndex = documentIndex
+        _viewModel = StateObject(wrappedValue: viewModel())
+    }
+
+    var body: some View {
+        KanbanBoardView(viewModel: viewModel, documentIndex: documentIndex)
+            .navigationTitle(viewModel.board?.name ?? "Kanban")
+            .onChange(of: viewModel.boardID) { _, id in
+                if id != boardID { boardID = id }
+            }
+    }
+}
+
 /// Janela Kanban (FEAT-005): uma coluna por raia, cartões arrastáveis entre colunas. Soltar na
 /// raia Done conclui; cada movimentação vai para o histórico da tarefa. Janela própria para
 /// poder usar tela cheia e Split View.
@@ -39,12 +65,56 @@ struct KanbanBoardView: View {
         .sheet(item: $viewModel.projectsSheet) { projects in
             ProjectsSheet(viewModel: projects)
         }
+        .alert("Novo quadro", isPresented: Binding(
+            get: { viewModel.newBoardName != nil },
+            set: { if !$0 { viewModel.newBoardName = nil } }
+        )) {
+            TextField("Nome do quadro", text: Binding(
+                get: { viewModel.newBoardName ?? "" },
+                set: { viewModel.newBoardName = $0 }))
+            Button("Criar") { viewModel.createBoard() }
+            Button("Cancelar", role: .cancel) { viewModel.newBoardName = nil }
+        } message: {
+            Text("O quadro novo começa com as raias A fazer, Em andamento e Concluído, e mostra todas as tarefas.")
+        }
+    }
+
+    // MARK: - Seletor de quadro (FEAT-008)
+
+    private var boardPicker: some View {
+        Menu {
+            ForEach(viewModel.boards) { board in
+                // `Toggle` dá o checkmark nativo do NSMenu no quadro atual.
+                Toggle(board.name, isOn: Binding(
+                    get: { board.id == viewModel.boardID },
+                    set: { if $0 { viewModel.selectBoard(board.id) } }))
+            }
+            Divider()
+            Button("Novo quadro…") { viewModel.beginCreatingBoard() }
+        } label: {
+            Label(viewModel.board?.name ?? "Kanban", systemImage: "rectangle.split.3x1")
+                .font(.system(size: 13, weight: .semibold))
+        }
+        .fixedSize()
+        .help("Trocar de quadro ou criar um novo")
+    }
+
+    private var configureBoardButton: some View {
+        OpenSettingsControl(tab: .kanban, onOpen: {
+            if let id = viewModel.boardID { KanbanSettingsBoard.save(id) }
+        }) {
+            Label("Configurar quadro…", systemImage: "slider.horizontal.3")
+        }
     }
 
     // MARK: - Barra superior
 
     private var toolbar: some View {
         HStack(spacing: 10) {
+            boardPicker
+
+            Divider().frame(height: 18)
+
             TextField("Nova tarefa", text: $viewModel.newTitle)
                 .textFieldStyle(.roundedBorder)
                 .frame(maxWidth: 260)
@@ -95,7 +165,9 @@ struct KanbanBoardView: View {
             }
             .fixedSize()
 
-            ProjectFilterMenu(projects: viewModel.projects, filter: $viewModel.projectFilter)
+            if viewModel.showsProjectFilter {
+                ProjectFilterMenu(projects: viewModel.projects, filter: $viewModel.projectFilter)
+            }
 
             Picker("Vencimento", selection: $viewModel.dueFilter) {
                 ForEach(TaskDueFilter.allCases, id: \.self) { filter in
@@ -131,9 +203,7 @@ struct KanbanBoardView: View {
                 Label("Projetos…", systemImage: "folder")
             }
 
-            OpenSettingsControl(tab: .kanban) {
-                Label("Configurar quadro…", systemImage: "slider.horizontal.3")
-            }
+            configureBoardButton
         }
         .font(.system(size: 12))
     }
@@ -152,9 +222,7 @@ struct KanbanBoardView: View {
             Text("Nenhuma tag selecionada — ajuste em Configurações › Kanban.")
                 .font(.system(size: 13))
                 .foregroundStyle(Brand.textSecondary)
-            OpenSettingsControl(tab: .kanban) {
-                Label("Configurar quadro…", systemImage: "slider.horizontal.3")
-            }
+            configureBoardButton
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
@@ -262,7 +330,7 @@ struct KanbanBoardView: View {
                         .font(.system(size: 12, weight: .bold))
                         .foregroundStyle(priority.displayColor)
                 }
-                Text(task.title)
+                Text(task.displayTitle)
                     .font(.system(size: 12, weight: urgent ? .bold : .medium))
                     .strikethrough(task.isCompleted)
                     .foregroundStyle(task.isCompleted ? Brand.textFaint
@@ -322,8 +390,8 @@ struct KanbanBoardView: View {
                 let hasDocument = documentIndex.contains(task.id)
                 if task.repeatsDaily || !task.history.isEmpty || hasDocument {
                     HStack(spacing: 8) {
-                        if task.repeatsDaily {
-                            Label("Diária", systemImage: "repeat").foregroundStyle(Brand.cyan)
+                        if let recurrence = task.recurrence {
+                            RecurrenceBadge(recurrence: recurrence)
                         }
                         if !task.history.isEmpty {
                             Label("\(task.history.count)", systemImage: "clock.arrow.circlepath")
@@ -378,6 +446,7 @@ struct KanbanBoardView: View {
     private func cardMenu(_ task: FocusTask) -> some View {
         Button("Editar…") { viewModel.beginEditing(task) }
         Button("Abrir documento") { openWindow.taskDocument(task.id) }
+        Button("Duplicar") { viewModel.duplicate(task) }
         if !task.isSubtask {
             // A criação fica no formulário do pai (campo "Nova subtarefa").
             Button("Adicionar subtarefa…") { viewModel.beginEditing(task) }
@@ -385,6 +454,9 @@ struct KanbanBoardView: View {
         Toggle("Urgente", isOn: Binding(
             get: { task.isUrgent },
             set: { viewModel.setUrgent(task, $0) }))
+        RecurrenceMenu(task: task,
+                       set: { viewModel.setRecurrence(task, $0) },
+                       customize: { viewModel.beginEditing(task) })
         if let url = task.linkURL {
             Link("Abrir link", destination: url)
         }
