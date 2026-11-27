@@ -598,6 +598,20 @@ maiúsculas, sem espaço, **único**) + `nextCodeNumber` (≥1); tarefa com `cod
 - ⚠️ Validar à mão: criar projeto com código, criar tarefa nele (lista/Kanban/lote), associar tarefa existente,
   editar código, duplicar, ver "PSC0001 - …" nas listas.
 
+**🚀 Release 1.20 publicada (2026-11-27)** — `MARKETING_VERSION 1.20` / `CURRENT_PROJECT_VERSION 21`.
+Conteúdo: FEAT-008 (vários quadros Kanban), FEAT-009 (documentos do projeto), duplicar tarefa, repetição
+customizada, código de tarefa por projeto, versão visível, build Dev separado. **Primeiro lançamento migra o banco
+V2 → V3** (tabela de documentos de projeto) e o quadro único → lista de quadros.
+- `make release`: notarização **Accepted** (app e DMG), staple ok, `spctl` → `Notarized Developer ID`, universal
+  (`x86_64 arm64`), bundle `com.dsdumba.tomafoco` / pasta `Tomafoco` (Release não é afetado pelo build Dev),
+  DMG 8,1 MB. Appcast `sparkle:version 21`, `minimumSystemVersion 14.0`, sem `hardwareRequirements`.
+- Commits `feat:` + `release:` na branch `feat/feat-008-multi-kanban`, merge fast-forward na `main`, tag `v1.20`.
+  Site: sed `1\.19` nos 4 arquivos, textos dos cards Tarefas/Projetos e `featureList` (Kanban, código, documentos,
+  repetição), DMG + notas + appcast no mesmo commit. Verificado ao vivo: `/`, DMG, notas, appcast, `app.js` **200**
+  (notas agora 200 direto), appcast versão 21, SHA-256 do DMG servido = local.
+- ⚠️ Validação manual das features da 1.20 **não** foi feita antes da release — fazer na 1ª abertura (listas nas
+  entradas acima).
+
 ## Como retomar
 
 ```bash
